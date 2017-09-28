@@ -1,5 +1,5 @@
 extern crate bindgen;
-extern crate gcc;
+extern crate cc;
 extern crate walkdir;
 
 use walkdir::{WalkDir};
@@ -21,7 +21,7 @@ fn main() {
     println!("cargo:rerun-if-changed={}", entry.path().display());
   }
 
-  gcc::Build::new()
+  cc::Build::new()
     .cuda(true)
     .opt_level(2)
     .pic(true)
@@ -45,8 +45,15 @@ fn main() {
     .header("kernels_gpu/lib.h")
     .link("anode_kernels_gpu")
     .whitelist_recursively(false)
+    // "bcast_linear.cu"
+    .whitelisted_function("anode_gpu_bcast_flat_mult_I1b_I2ab_Oab_packed_f32")
+    .whitelisted_function("anode_gpu_bcast_flat_mult_I1b_I2ab_I3b_Oab_packed_f32")
+    .whitelisted_function("anode_gpu_bcast_flat_mult_I1b_I2abc_Oabc_packed_f32")
+    .whitelisted_function("anode_gpu_bcast_flat_mult_I1b_I2abc_I3b_Oabc_packed_f32")
+    // "flat_linear.cu"
     .whitelisted_function("anode_gpu_flat_mult_f32")
     .whitelisted_function("anode_gpu_flat_mult_add_f32")
+    // "flat_map.cu"
     .whitelisted_function("anode_gpu_copy_flat_map_f32")
     .whitelisted_function("anode_gpu_modulus_flat_map_f32")
     .whitelisted_function("anode_gpu_square_flat_map_f32")
@@ -54,6 +61,8 @@ fn main() {
     .whitelisted_function("anode_gpu_unit_step_flat_map_f32")
     .whitelisted_function("anode_gpu_log_positive_clip_flat_map_f32")
     .whitelisted_function("anode_gpu_positive_reciprocal_flat_map_f32")
+    // "reduce.cu"
+    .whitelisted_function("anode_gpu_sum_reduce_I1ab_Ob_packed_deterministic_f32")
     .generate()
     .expect("bindgen failed to generate cuda kernel bindings")
     .write_to_file(out_dir.join("kernels_gpu_bind.rs"))
