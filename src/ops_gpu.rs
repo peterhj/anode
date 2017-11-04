@@ -19,11 +19,11 @@ use ops::*;
 
 use arithmetic::*;
 use cuda_blas::new::*;
-use devicemem_cuda::v2::*;
+use devicemem_gpu::*;
+use devicemem_gpu::array::*;
 
 use std::marker::{PhantomData};
 use std::ops::{Range, RangeFrom, RangeTo, RangeFull};
-use std::ptr::{Shared};
 use std::sync::{Arc};
 
 #[inline]
@@ -38,6 +38,7 @@ struct KernelConfig {
   pub max_blocks:   u32,
 }
 
+/*
 pub type Index0d = ();
 pub type Index1d = usize;
 pub type Index2d = [usize; 2];
@@ -762,6 +763,7 @@ impl<Idx, Range, T> View<Range> for DeviceArrayView<Idx, T> where Idx: ArrayShap
     }
   }
 }
+*/
 
 pub trait DeviceMemIoReader<'a> {
   fn read_dev_mem(&mut self, src: &'a Any) -> Option<()>;
@@ -769,6 +771,59 @@ pub trait DeviceMemIoReader<'a> {
 
 pub trait DeviceMemIoWriter<'a> {
   fn write_dev_mem(&mut self, mode: WriteMode, dst: &'a mut Any) -> Option<()>;
+}
+
+pub struct GPUDeviceCtxPushOp;
+pub struct GPUDeviceCtxPopOp;
+
+impl<T, V> SrcOpExt<DeviceArray1d<T>, V> for ()
+where T: Copy,
+      V: RWVal<T=DeviceArray1d<T>> + 'static,
+{
+  fn build() -> Rc<SrcOp<(), V>> {
+    // TODO
+    unimplemented!();
+  }
+}
+
+impl<T, V> SrcOpExt<DeviceArray2d<T>, V> for ()
+where T: Copy,
+      V: RWVal<T=DeviceArray2d<T>> + 'static,
+{
+  fn build() -> Rc<SrcOp<(), V>> {
+    // TODO
+    unimplemented!();
+  }
+}
+
+impl<T, V> SrcOpExt<DeviceArray4d<T>, V> for ()
+where T: Copy,
+      V: RWVal<T=DeviceArray4d<T>> + 'static,
+{
+  fn build() -> Rc<SrcOp<(), V>> {
+    // TODO
+    unimplemented!();
+  }
+}
+
+impl<T, V> SrcOpExt<DeviceOuterBatchArray1d<T>, V> for ()
+where T: Copy,
+      V: RWVal<T=DeviceOuterBatchArray1d<T>> + 'static,
+{
+  fn build() -> Rc<SrcOp<(), V>> {
+    // TODO
+    unimplemented!();
+  }
+}
+
+impl<T, V> SrcOpExt<DeviceOuterBatchArray3d<T>, V> for ()
+where T: Copy,
+      V: RWVal<T=DeviceOuterBatchArray3d<T>> + 'static,
+{
+  fn build() -> Rc<SrcOp<(), V>> {
+    // TODO
+    unimplemented!();
+  }
 }
 
 impl SumJoinOp {
@@ -783,10 +838,10 @@ impl SumJoinOp {
       Rc::new(move || {
         let x0 = inputs_[0].value();
         <V as RWVal>::from(Rc::new(move |txn: Txn| {
-          let x0_dim = x0.get(txn).dim();
+          let x0_size = x0.get(txn).size();
           let pool = DeviceStreamPool::implicit();
           let conn = pool.conn();
-          A::zeros(x0_dim, &conn)
+          A::zeros(x0_size, &conn)
         }))
       })
     };
@@ -828,7 +883,7 @@ impl SumJoinOp {
       },
       tangent:  None,
       adjoint:  None,
-      adjoint2: None,
+      //adjoint2: None,
     };
     let output = (ext.make)();
     Rc::new(JoinOp::new(SumJoinOp, ext, inputs_, output))
@@ -845,11 +900,11 @@ impl SumJoinOp {
       Rc::new(move || {
         let x0 = inputs_[0].value();
         <V as RWVal>::from(Rc::new(move |txn: Txn| {
-          let x0_dim = x0.get(txn).dim();
+          let x0_size = x0.get(txn).size();
           let x0_batch_sz = x0.get(txn).batch_size();
           let pool = DeviceStreamPool::implicit();
           let conn = pool.conn();
-          A::zeros(x0_dim, x0_batch_sz, &conn)
+          A::zeros(x0_size, x0_batch_sz, &conn)
         }))
       })
     };
@@ -895,7 +950,7 @@ impl SumJoinOp {
       },
       tangent:  None,
       adjoint:  None,
-      adjoint2: None,
+      //adjoint2: None,
     };
     let output = (ext.make)();
     Rc::new(JoinOp::new(SumJoinOp, ext, inputs_, output))
@@ -954,17 +1009,17 @@ impl LinearMapOp {
         V1: RWVal<T=DeviceArray1d<T>> + 'static,
         V2: RWVal<T=DeviceArray2d<T>> + 'static,
         W:  RWVal<T=DeviceArray1d<T>> + 'static,
-        CublasHandle: CublasExt<T>,
+        CublasHandle: CublasBlasExt<T>,
   {
     let make = {
       let map_ = map_.clone();
       Rc::new(move || {
         let map = map_.value();
         <W as RWVal>::from(Rc::new(move |txn| {
-          let a_dim = map.get(txn).dim();
+          let a_size = map.get(txn).size();
           let pool = DeviceStreamPool::implicit();
           let conn = pool.conn();
-          DeviceArray1d::zeros(a_dim[0], &conn)
+          DeviceArray1d::zeros(a_size[0], &conn)
         }))
       })
     };
@@ -983,13 +1038,13 @@ impl LinearMapOp {
             };
             let pool = DeviceStreamPool::implicit();
             let conn = pool.conn();
-            assert_eq!(input.get(txn).dim(), map.get(txn).dim()[1]);
-            assert_eq!(output.get_mut(txn, token).dim(), map.get(txn).dim()[0]);
+            assert_eq!(input.get(txn).size(), map.get(txn).size()[1]);
+            assert_eq!(output.get_mut(txn, token).size(), map.get(txn).size()[0]);
             assert_eq!(1, map.get(txn).as_view().stride()[0]);
             let res = unsafe { conn.cublas().gemv(
                 CublasTranspose::N,
-                sz2int(map.get(txn).as_view().dim()[0]),
-                sz2int(map.get(txn).as_view().dim()[1]),
+                sz2int(map.get(txn).as_view().size()[0]),
+                sz2int(map.get(txn).as_view().size()[1]),
                 &alpha,
                 map.get(txn).as_view().as_dptr(),
                 sz2int(map.get(txn).as_view().stride()[1]),
@@ -1034,7 +1089,7 @@ impl LinearMapOp {
           }
         })
       }),
-      adjoint2: Some({
+      /*adjoint2: Some({
         let input_ = input_.clone();
         let map_ = map_.clone();
         Rc::new(move |y_: Rc<AOp<V=W>>, sink: &Sink, sink2: &mut Sink| {
@@ -1050,7 +1105,7 @@ impl LinearMapOp {
             //sink2.put_adj::<V1, _>(input_.var(), adj_x_);
           }
         })
-      }),
+      }),*/
     };
     let output = (ext.make)();
     Rc::new(F2Op::new(LinearMapOp, ext, input_, map_, output))
@@ -1085,7 +1140,7 @@ where T: Copy + PseudoField,
       V1: RWVal<T=DeviceArray1d<T>> + 'static,
       V2: RWVal<T=DeviceArray2d<T>> + 'static,
       W:  RWVal<T=DeviceArray1d<T>> + 'static,
-      CublasHandle: CublasExt<T>,
+      CublasHandle: CublasBlasExt<T>,
 {
   fn mult(self, x: Rc<AOp<V=V1>>) -> Rc<F2Op<LinearMapOp, V1, V2, W>> {
     LinearMapOp::build_device_op(x, self)

@@ -58,11 +58,11 @@ impl<'a, Mem, T> MemIoWriter<'a> for FlatWriter<'a, Mem> where Mem: DerefMut<Tar
   }
 }
 
+pub struct PassOp;
 pub struct StopOp;
 pub struct CopyOp;
 pub struct CastOp;
 
-pub struct PassOp;
 pub struct FlatViewOp;
 pub struct ReshapeViewOp;
 pub struct AutoMap<AutoMapF> { f: AutoMapF, }
@@ -112,7 +112,11 @@ pub struct Pool2dShape {
   pub pad:      [usize; 2],
 }
 
-pub trait SumJoinOpExt<A, V> where V: AVal {
+pub trait SrcOpExt<X, V> where V: AVal {
+  fn build() -> Rc<SrcOp<(), V>>;
+}
+
+pub trait SumJoinOpExt<X, V> where V: AVal {
   fn build(xs_: Vec<Rc<AOp<V=V>>>) -> Rc<JoinOp<SumJoinOp, V, V>>;
 }
 
