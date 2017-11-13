@@ -36,7 +36,7 @@ fn main() {
     .flag("-Xcompiler").flag("-Werror")
     .include("kernels_gpu")
     .include("/usr/local/cuda/include")
-    .file("kernels_gpu/bcast_linear.cu")
+    .file("kernels_gpu/bcast_flat_linear.cu")
     .file("kernels_gpu/flat_linear.cu")
     .file("kernels_gpu/flat_map.cu")
     .file("kernels_gpu/reduce.cu")
@@ -46,7 +46,7 @@ fn main() {
     .header("kernels_gpu/lib.h")
     .link("anode_kernels_gpu")
     .whitelist_recursively(false)
-    // "bcast_linear.cu"
+    // "bcast_flat_linear.cu"
     .whitelisted_function("anode_gpu_bcast_flat_mult_I1b_I2ab_Oab_packed_f32")
     .whitelisted_function("anode_gpu_bcast_flat_mult_I1b_I2ab_I3b_Oab_packed_f32")
     .whitelisted_function("anode_gpu_bcast_flat_mult_I1b_I2abc_Oabc_packed_f32")

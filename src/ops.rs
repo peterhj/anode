@@ -59,7 +59,7 @@ impl<'a, Mem, T> MemIoWriter<'a> for FlatWriter<'a, Mem> where Mem: DerefMut<Tar
 }
 
 pub struct PassOp;
-pub struct StopOp;
+pub struct FreezeOp;
 pub struct CopyOp;
 pub struct CastOp;
 
@@ -82,6 +82,10 @@ pub struct Resample2dOp<ResampleF> { f: ResampleF, }
 pub struct SoftmaxNLLFusedOp;
 pub struct SoftmaxCrossEntropyFusedOp;
 pub struct SoftmaxEntropyFusedOp;
+
+// TODO: distribution parameters?
+pub struct UniformSrcOp;
+pub struct NormalSrcOp;
 
 pub struct SquareFlatMapF;
 pub struct ModulusFlatMapF;

@@ -167,7 +167,7 @@ pub trait ANode {
   fn _io(&self) -> &AIo;
   fn _eval(&self, txn: Txn);
 
-  fn load_forward(&self, txn: Txn, priority: &NodeRefMap<usize>, writer: &mut Any) {
+  /*fn load_forward(&self, txn: Txn, priority: &NodeRefMap<usize>, writer: &mut Any) {
     let epoch = Epoch::default();
     self._push(epoch, priority, &|_| true, &mut |node| node._io()._load(txn, writer));
     self._pop(epoch, priority, &|_| true, &mut |_node| {});
@@ -189,6 +189,26 @@ pub trait ANode {
     let epoch = Epoch::default();
     self._push(epoch, priority, &|_| true, &mut |_node| {});
     self._pop(epoch, priority, &|_| true, &mut |node| node._io()._store(txn, reader));
+  }*/
+
+  fn v_deserialize_forward(&self, txn: Txn, priority: &NodeRefMap<usize>, writer: &mut FnMut(WriteMode, &mut Any)) {
+    // TODO
+    unimplemented!();
+  }
+
+  fn v_deserialize_reverse(&self, txn: Txn, priority: &NodeRefMap<usize>, writer: &mut FnMut(WriteMode, &mut Any)) {
+    // TODO
+    unimplemented!();
+  }
+
+  fn v_serialize_forward(&self, txn: Txn, priority: &NodeRefMap<usize>, reader: &mut FnMut(&mut Any)) {
+    // TODO
+    unimplemented!();
+  }
+
+  fn v_serialize_reverse(&self, txn: Txn, priority: &NodeRefMap<usize>, reader: &mut FnMut(&mut Any)) {
+    // TODO
+    unimplemented!();
   }
 
   fn eval(&self, txn: Txn, priority: &NodeRefMap<usize>) {
@@ -219,14 +239,12 @@ pub trait AOp: ANode {
   fn tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>);
   fn _pop_adjoint(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) { unimplemented!(); }
   fn adjoint(&self, sink: &mut Sink);
-  /*fn _pop_adjoint2(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &Sink, sink2: &mut Sink) { unimplemented!(); }
-  fn adjoint2(&self, sink: &mut Sink);*/
 }
 
 pub trait AIo {
   fn _persist(&self, txn: Txn);
-  fn _load(&self, txn: Txn, writer: &mut Any);
-  fn _store(&self, txn: Txn, reader: &mut Any);
+  //fn _load(&self, txn: Txn, writer: &mut Any);
+  //fn _store(&self, txn: Txn, reader: &mut Any);
   fn _deserialize(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any));
   fn _serialize(&self, txn: Txn, reader: &mut FnMut(&Any));
 }
@@ -396,10 +414,10 @@ impl<'a> WriteToken<'a> {
 pub trait RWVal: AVal {
   fn from(alloc: Rc<Fn(Txn) -> Self::T>) -> Self where Self: Sized;
 
-  // Set `WriteMode`.
+  /*// Set `WriteMode`.
   fn set_exclusive(&self);
   fn set_accumulate(&self);
-  fn set_clobber(&self);
+  fn set_clobber(&self);*/
 
   fn reset(&self);
   fn dealloc(&self);
@@ -482,7 +500,7 @@ impl<T> AIo for Val<T> where T: 'static {
     self.force_persist(txn);
   }
 
-  fn _load(&self, txn: Txn, writer: &mut Any) {
+  /*fn _load(&self, txn: Txn, writer: &mut Any) {
     // TODO
     unimplemented!();
   }
@@ -490,7 +508,7 @@ impl<T> AIo for Val<T> where T: 'static {
   fn _store(&self, txn: Txn, reader: &mut Any) {
     // TODO
     unimplemented!();
-  }
+  }*/
 
   fn _deserialize(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any)) {
     if let Some((mode, token)) = self.write(txn) {
@@ -542,7 +560,7 @@ impl<T> RWVal for Val<T> where T: 'static {
     }
   }
 
-  fn set_exclusive(&self) {
+  /*fn set_exclusive(&self) {
     let mut buf = self.buf.borrow_mut();
     assert!(!buf.dirty);
     buf.mode = WriteMode::Exclusive;
@@ -558,7 +576,7 @@ impl<T> RWVal for Val<T> where T: 'static {
     let mut buf = self.buf.borrow_mut();
     assert!(!buf.dirty);
     buf.mode = WriteMode::Clobber;
-  }
+  }*/
 
   fn reset(&self) {
     let mut buf = self.buf.borrow_mut();
@@ -751,13 +769,13 @@ impl<T> AIo for ClkVal<T> where T: 'static {
     self.force_persist(txn);
   }
 
-  fn _load(&self, txn: Txn, writer: &mut Any) {
+  /*fn _load(&self, txn: Txn, writer: &mut Any) {
     // TODO
   }
 
   fn _store(&self, txn: Txn, reader: &mut Any) {
     // TODO
-  }
+  }*/
 
   fn _deserialize(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any)) {
     // TODO
@@ -807,7 +825,7 @@ impl<T> RWVal for ClkVal<T> where T: 'static {
     unimplemented!();
   }
 
-  fn set_exclusive(&self) {
+  /*fn set_exclusive(&self) {
     // FIXME
     //let mut buf = self.buf.borrow_mut();
     //buf.mode = WriteMode::Exclusive;
@@ -826,7 +844,7 @@ impl<T> RWVal for ClkVal<T> where T: 'static {
     //let mut buf = self.buf.borrow_mut();
     //buf.mode = WriteMode::Accumulate;
     unimplemented!();
-  }
+  }*/
 
   fn reset(&self) {
     // FIXME
@@ -898,9 +916,9 @@ impl<'a, R> IoReader<'a> for R where R: MemIoReader<'a> {
     if self.read_mem(src).is_some() {
       return;
     }
-    if self.read_mem(src).is_some() {
+    /*if self.read_mem(src).is_some() {
       return;
-    }
+    }*/
     panic!("IoReader: `src` has an unhandled type: {:?}", ty_id);
   }
 }
@@ -915,9 +933,9 @@ impl<'a, W> IoWriter<'a> for W where W: MemIoWriter<'a> {
     if self.write_mem(mode, &mut dst).is_some() {
       return;
     }
-    if self.write_mem(mode, &mut dst).is_some() {
+    /*if self.write_mem(mode, &mut dst).is_some() {
       return;
-    }
+    }*/
     panic!("IoWriter: `dst` has an unhandled type: {:?}", ty_id);
   }
 }
@@ -983,30 +1001,28 @@ pub struct OpExt<V> {
   func:     Rc<Fn(Txn, V)>,
   tangent:  Option<Rc<Fn() -> (Rc<ANode>, Rc<AOp<V=V>>)>>,
   adjoint:  Option<Rc<Fn(Rc<AOp<V=V>>, &mut Sink)>>,
-  //adjoint2: Option<Rc<Fn(Rc<AOp<V=V>>, &Sink, &mut Sink)>>,
 }
 
-pub struct SrcOp<Q, V> where V: AVal {
+pub struct SrcOp<S, V> where V: AVal {
   base: OpBase<V>,
   ext:  OpExt<V>,
-  qual: Q,
+  spec: S,
   val:  V,
 }
 
-impl<Q, V> SrcOp<Q, V>
+impl<S, V> SrcOp<S, V>
 where V: AVal {
-  pub fn new(qualifier: Q, ext: OpExt<V>, val: V) -> Self {
+  pub fn new(spec: S, ext: OpExt<V>, val: V) -> Self {
     SrcOp{
       base: OpBase::default(),
       ext:  ext,
-      qual: qualifier,
+      spec: spec,
       val:  val,
     }
   }
 }
 
-impl<Q, V> ANode for SrcOp<Q, V>
-//where F: Fn(Txn, &V),
+impl<S, V> ANode for SrcOp<S, V>
 where V: AVal {
   fn _push(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     // TODO
@@ -1025,8 +1041,7 @@ where V: AVal {
   }
 }
 
-impl<Q, V> AOp for SrcOp<Q, V>
-//where M: Fn() -> V, F: Fn(Txn, &V),
+impl<S, V> AOp for SrcOp<S, V>
 where V: AVal {
   type V = V;
 
@@ -1063,123 +1078,47 @@ where V: AVal {
     // TODO
     unimplemented!();
   }
-
-  /*fn _pop_adjoint2(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &Sink, sink2: &mut Sink) {
-    if self.base.stack.pop(epoch) {
-      if let Some(ref adjoint2) = self.ext.adjoint2 {
-        (adjoint2)(this, sink, sink2);
-      } else {
-        unimplemented!();
-      }
-    }
-  }
-
-  fn adjoint2(&self, sink: &mut Sink) {
-    // TODO
-    unimplemented!();
-  }*/
 }
 
-pub struct Pipe1Op<Q, V, W> where W: AVal {
+/*pub struct Pipe1Op<S, V, W> where W: AVal {
   base: OpBase<W>,
   ext:  OpExt<W>,
-  qual: Q,
+  spec: S,
   // TODO: should not contain an input `x` but instead a "slot" in which to
   // pipe an input of the same type.
   x_:   Rc<AOp<V=V>>,
   y:    W,
 }
 
-/*impl<Q, V, W> BitOr<Rc<Pipe1Op<Q, V, W>>> for Rc<AOp<V=V>> {
-  type Output = ;
-}*/
-
-impl<Q, V, W> Pipe1Op<Q, V, W>
+impl<S, V, W> Pipe1Op<S, V, W>
 where V: AVal, W: AVal {
   pub fn attach(&self, txn: Txn, input: Rc<AOp<V=V>>) {
     // TODO: figure out `attach` semantics.
   }
-}
-
-/*pub struct F1Op<M, F, V, W> where V: AVal, W: AVal {
-  base: OpBase<W>,
-  make: M,
-  fun:  F,
-  x_:   Rc<AOp<V=V>>,
-  x:    V,
-  y:    W,
-}
-
-impl<M, F, V, W> ANode for F1Op<M, F, V, W>
-where F: Fn(Txn, &V, &W), V: AVal, W: AVal {
-  fn _push(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
-    if self.base.stack.push(epoch) {
-      self.x_._push(epoch, priority, filter, apply);
-      apply(self);
-    }
-  }
-
-  fn _pop(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
-    if self.base.stack.pop(epoch) {
-      apply(self);
-      self.x_._push(epoch, priority, filter, apply);
-    }
-  }
-
-  fn _io(&self) -> &AIo {
-    &self.y
-  }
-
-  fn _eval(&self, txn: Txn) {
-    (self.fun)(txn, &self.x, &self.y);
-  }
-}
-
-impl<M, F, V, W> AOp for F1Op<M, F, V, W>
-where M: Fn(Txn, &V) -> W, F: Fn(Txn, &V, &W), V: AVal, W: AVal {
-  type V = W;
-
-  fn _make_value(&self) -> Self::V {
-    (self.make)(&self.x)
-  }
-
-  fn value(&self) -> Self::V {
-    self.y.clone()
-  }
-
-  fn tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
-    // TODO
-    unimplemented!();
-  }
-
-  fn adjoint(&self, sink: &mut Sink) {
-    // TODO
-    unimplemented!();
-  }
 }*/
 
-pub struct F1Op<Q, V1, W> where W: AVal {
+pub struct F1Op<S, V1, W> where W: AVal {
   base: OpBase<W>,
   ext:  OpExt<W>,
-  qual: Q,
+  spec: S,
   x_:   Rc<AOp<V=V1>>,
   y:    W,
 }
 
-impl<Q, V1, W> F1Op<Q, V1, W>
+impl<S, V1, W> F1Op<S, V1, W>
 where V1: AVal, W: AVal {
-  pub fn new(qualifier: Q, ext: OpExt<W>, x_: Rc<AOp<V=V1>>, y: W) -> Self {
+  pub fn new(spec: S, ext: OpExt<W>, x_: Rc<AOp<V=V1>>, y: W) -> Self {
     F1Op{
       base: OpBase::default(),
       ext:  ext,
-      qual: qualifier,
+      spec: spec,
       x_:   x_,
       y:    y,
     }
   }
 }
 
-impl<Q, V1, W> ANode for F1Op<Q, V1, W>
+impl<S, V1, W> ANode for F1Op<S, V1, W>
 where V1: AVal, W: AVal {
   fn _push(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
@@ -1206,7 +1145,7 @@ where V1: AVal, W: AVal {
   }
 }
 
-impl<Q, V1, W> AOp for F1Op<Q, V1, W>
+impl<S, V1, W> AOp for F1Op<S, V1, W>
 where V1: AVal, W: AVal {
   type V = W;
 
@@ -1248,39 +1187,24 @@ where V1: AVal, W: AVal {
     // TODO
     unimplemented!();
   }
-
-  /*fn _pop_adjoint2(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &Sink, sink2: &mut Sink) {
-    if self.base.stack.pop(epoch) {
-      match self.ext.adjoint2 {
-        None => panic!(),
-        Some(ref adjoint2) => (adjoint2)(this, sink, sink2),
-      }
-      self.x_._pop_adjoint2(epoch, priority, filter, self.x_.clone(), sink, sink2);
-    }
-  }
-
-  fn adjoint2(&self, sink: &mut Sink) {
-    // TODO
-    unimplemented!();
-  }*/
 }
 
-pub struct F2Op<Q, V1, V2, W> where W: AVal {
+pub struct F2Op<S, V1, V2, W> where W: AVal {
   base: OpBase<W>,
   ext:  OpExt<W>,
-  qual: Q,
+  spec: S,
   x1_:  Rc<AOp<V=V1>>,
   x2_:  Rc<AOp<V=V2>>,
   y:    W,
 }
 
-impl<Q, V1, V2, W> F2Op<Q, V1, V2, W>
+impl<S, V1, V2, W> F2Op<S, V1, V2, W>
 where V1: AVal, V2: AVal, W: AVal {
-  pub fn new(qualifier: Q, ext: OpExt<W>, x1_: Rc<AOp<V=V1>>, x2_: Rc<AOp<V=V2>>, y: W) -> Self {
+  pub fn new(spec: S, ext: OpExt<W>, x1_: Rc<AOp<V=V1>>, x2_: Rc<AOp<V=V2>>, y: W) -> Self {
     F2Op{
       base: OpBase::default(),
       ext:  ext,
-      qual: qualifier,
+      spec: spec,
       x1_:  x1_,
       x2_:  x2_,
       y:    y,
@@ -1288,7 +1212,7 @@ where V1: AVal, V2: AVal, W: AVal {
   }
 }
 
-impl<Q, V1, V2, W> ANode for F2Op<Q, V1, V2, W>
+impl<S, V1, V2, W> ANode for F2Op<S, V1, V2, W>
 where V1: AVal, V2: AVal, W: AVal {
   fn _push(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
@@ -1317,7 +1241,7 @@ where V1: AVal, V2: AVal, W: AVal {
   }
 }
 
-impl<Q, V1, V2, W> AOp for F2Op<Q, V1, V2, W>
+impl<S, V1, V2, W> AOp for F2Op<S, V1, V2, W>
 where V1: AVal, V2: AVal, W: AVal {
   type V = W;
 
@@ -1360,35 +1284,19 @@ where V1: AVal, V2: AVal, W: AVal {
     // TODO
     unimplemented!();
   }
-
-  /*fn _pop_adjoint2(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &Sink, sink2: &mut Sink) {
-    if self.base.stack.pop(epoch) {
-      match self.ext.adjoint2 {
-        None => panic!(),
-        Some(ref adjoint2) => (adjoint2)(this, sink, sink2),
-      }
-      self.x2_._pop_adjoint2(epoch, priority, filter, self.x2_.clone(), sink, sink2);
-      self.x1_._pop_adjoint2(epoch, priority, filter, self.x1_.clone(), sink, sink2);
-    }
-  }
-
-  fn adjoint2(&self, sink: &mut Sink) {
-    // TODO
-    unimplemented!();
-  }*/
 }
 
-pub struct F3Op<Q, V1, V2, V3, W> where W: AVal {
+pub struct F3Op<S, V1, V2, V3, W> where W: AVal {
   base: OpBase<W>,
   ext:  OpExt<W>,
-  qual: Q,
+  spec: S,
   x1_:  Rc<AOp<V=V1>>,
   x2_:  Rc<AOp<V=V2>>,
   x3_:  Rc<AOp<V=V3>>,
   y:    W,
 }
 
-impl<Q, V1, V2, V3, W> ANode for F3Op<Q, V1, V2, V3, W>
+impl<S, V1, V2, V3, W> ANode for F3Op<S, V1, V2, V3, W>
 where V1: AVal, V2: AVal, V3: AVal, W: AVal {
   fn _push(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
@@ -1419,7 +1327,7 @@ where V1: AVal, V2: AVal, V3: AVal, W: AVal {
   }
 }
 
-impl<Q, V1, V2, V3, W> AOp for F3Op<Q, V1, V2, V3, W>
+impl<S, V1, V2, V3, W> AOp for F3Op<S, V1, V2, V3, W>
 where V1: AVal, V2: AVal, V3: AVal, W: AVal {
   type V = W;
 
@@ -1460,47 +1368,30 @@ where V1: AVal, V2: AVal, V3: AVal, W: AVal {
     // TODO
     unimplemented!();
   }
-
-  /*fn _pop_adjoint2(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &Sink, sink2: &mut Sink) {
-    if self.base.stack.pop(epoch) {
-      match self.ext.adjoint2 {
-        None => panic!(),
-        Some(ref adjoint2) => (adjoint2)(this, sink, sink2),
-      }
-      self.x3_._pop_adjoint2(epoch, priority, filter, self.x3_.clone(), sink, sink2);
-      self.x2_._pop_adjoint2(epoch, priority, filter, self.x2_.clone(), sink, sink2);
-      self.x1_._pop_adjoint2(epoch, priority, filter, self.x1_.clone(), sink, sink2);
-    }
-  }
-
-  fn adjoint2(&self, sink: &mut Sink) {
-    // TODO
-    unimplemented!();
-  }*/
 }
 
-pub struct JoinOp<Q, V, W> where W: AVal {
+pub struct JoinOp<S, V, W> where W: AVal {
   base: OpBase<W>,
   ext:  OpExt<W>,
-  qual: Q,
+  spec: S,
   xs_:  Vec<Rc<AOp<V=V>>>,
   y:    W,
 }
 
-impl<Q, V, W> JoinOp<Q, V, W>
+impl<S, V, W> JoinOp<S, V, W>
 where V: AVal, W: AVal {
-  pub fn new(qualifier: Q, ext: OpExt<W>, xs_: Vec<Rc<AOp<V=V>>>, y: W) -> Self {
+  pub fn new(spec: S, ext: OpExt<W>, xs_: Vec<Rc<AOp<V=V>>>, y: W) -> Self {
     JoinOp{
       base: OpBase::default(),
       ext:  ext,
-      qual: qualifier,
+      spec: spec,
       xs_:  xs_,
       y:    y,
     }
   }
 }
 
-impl<Q, V, W> ANode for JoinOp<Q, V, W>
+impl<S, V, W> ANode for JoinOp<S, V, W>
 where V: AVal, W: AVal {
   fn _push(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
@@ -1531,7 +1422,7 @@ where V: AVal, W: AVal {
   }
 }
 
-impl<Q, V, W> AOp for JoinOp<Q, V, W>
+impl<S, V, W> AOp for JoinOp<S, V, W>
 where V: AVal, W: AVal {
   type V = W;
 
@@ -1564,58 +1455,4 @@ where V: AVal, W: AVal {
     // TODO
     unimplemented!();
   }
-
-  /*fn _pop_adjoint2(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &Sink, sink2: &mut Sink) {
-    if self.base.stack.pop(epoch) {
-      match self.ext.adjoint2 {
-        None => panic!(),
-        Some(ref adjoint2) => (adjoint2)(this, sink, sink2),
-      }
-      for x_ in self.xs_.iter().rev() {
-        x_._pop_adjoint2(epoch, priority, filter, x_.clone(), sink, sink2);
-      }
-    }
-  }
-
-  fn adjoint2(&self, sink: &mut Sink) {
-    // TODO
-    unimplemented!();
-  }*/
 }
-
-/*pub struct JoinAccumulateOp;
-
-impl JoinAccumulateOp {
-  pub fn build<V>(inputs_: Vec<Rc<AOp<V=V>>>) -> Rc<JoinOp<Self, V, V>> where V: RWVal + 'static {
-    let make = {
-      let input = inputs_[0].clone();
-      Rc::new(move || {
-        input._make_value()
-      })
-    };
-    let func = {
-      Rc::new(move |txn: Txn, output: V| {
-        // Do nothing.
-      })
-    };
-    let ext = OpExt{
-      make,
-      func,
-      tangent: Some({
-        Rc::new(move || {
-          // TODO
-          unimplemented!();
-        })
-      }),
-      adjoint: Some({
-        Rc::new(move |y_: Rc<AOp<V=V>>, sink: &mut Sink| {
-          // TODO
-          unimplemented!();
-        })
-      }),
-      //adjoint2: None,
-    };
-    let output = inputs_[0].value();
-    Rc::new(JoinOp::new(JoinAccumulateOp, ext, inputs_, output))
-  }
-}*/
