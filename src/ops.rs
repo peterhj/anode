@@ -63,6 +63,12 @@ pub struct FreezeOp;
 pub struct CopyOp;
 pub struct CastOp;
 
+pub struct ZerosSrcOp;
+pub struct OnesSrcOp;
+// TODO: distribution parameters?
+pub struct UniformSrcOp;
+pub struct NormalSrcOp;
+
 pub struct FlatViewOp;
 pub struct ReshapeViewOp;
 pub struct AutoMap<AutoMapF> { f: AutoMapF, }
@@ -82,10 +88,6 @@ pub struct Resample2dOp<ResampleF> { f: ResampleF, }
 pub struct SoftmaxNLLFusedOp;
 pub struct SoftmaxCrossEntropyFusedOp;
 pub struct SoftmaxEntropyFusedOp;
-
-// TODO: distribution parameters?
-pub struct UniformSrcOp;
-pub struct NormalSrcOp;
 
 pub struct SquareFlatMapF;
 pub struct ModulusFlatMapF;
@@ -116,8 +118,20 @@ pub struct Pool2dShape {
   pub pad:      [usize; 2],
 }
 
-pub trait SrcOpExt<X, V> where V: AVal {
-  fn build() -> Rc<SrcOp<(), V>>;
+pub trait SrcOpExt<X, Init, V> where V: AVal {
+  fn build(init: Init) -> Rc<SrcOp<(), V>>;
+}
+
+pub fn src<X, Init, V>(init: Init) -> Rc<SrcOp<(), V>> where (): SrcOpExt<X, Init, V>, V: AVal {
+  <() as SrcOpExt<X, Init, V>>::build(init)
+}
+
+pub trait ZerosSrcOpExt<X, Init, V> where V: AVal {
+  fn build(init: Init) -> Rc<SrcOp<ZerosSrcOp, V>>;
+}
+
+pub fn zeros<X, Init, V>(init: Init) -> Rc<SrcOp<ZerosSrcOp, V>> where ZerosSrcOp: ZerosSrcOpExt<X, Init, V>, V: AVal {
+  <ZerosSrcOp as ZerosSrcOpExt<X, Init, V>>::build(init)
 }
 
 pub trait SumJoinOpExt<X, V> where V: AVal {

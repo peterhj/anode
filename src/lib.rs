@@ -42,6 +42,7 @@ use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::{Entry};
 use std::rc::{Rc};
 
+pub mod context;
 pub mod ops;
 #[cfg(feature = "gpu")] pub mod ops_gpu;
 
@@ -64,10 +65,10 @@ pub struct Txn(u64);
 pub struct Epoch(u64);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Var(u64);
+pub struct TmpVar(u64);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
-pub struct RootVar(Var);
+pub struct RootVar(TmpVar);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeRef(u64);
@@ -95,9 +96,9 @@ impl Default for Epoch {
   }
 }
 
-impl Default for Var {
+impl Default for TmpVar {
   fn default() -> Self {
-    Var(gen_thread_local_uid())
+    TmpVar(gen_thread_local_uid())
   }
 }
 
@@ -211,8 +212,14 @@ pub trait ANode {
     unimplemented!();
   }
 
-  fn eval(&self, txn: Txn, priority: &NodeRefMap<usize>) {
+  fn eval(&self, txn: Txn) {
+    // TODO
+    self._eval(txn);
+  }
+
+  fn eval_prioritized(&self, txn: Txn, priority: &NodeRefMap<usize>) {
     let epoch = Epoch::default();
+    // TODO
     self._push(epoch, priority, &|_| true, &mut |node| node._eval(txn));
     self._pop(epoch, priority, &|_| true, &mut |_node| {});
   }
@@ -254,7 +261,7 @@ pub trait AVal: AIo + Clone {
 
   fn duplicate(&self) -> Self where Self: Sized;
   fn root_var(&self) -> RootVar;
-  fn var(&self) -> Var;
+  fn var(&self) -> TmpVar;
   //fn load(&self, txn: Txn, writer: &mut Any);
   //fn store(&self, txn: Txn, reader: &mut Any);
 }
@@ -383,7 +390,7 @@ impl ANode for NodeCollection {
 
 #[derive(Default)]
 pub struct VarCollection {
-  vars:     Vec<Var>,
+  vars:     Vec<TmpVar>,
 }
 
 #[derive(Default)]
@@ -400,7 +407,7 @@ pub enum WriteMode {
 
 #[derive(Clone, Copy)]
 pub struct WriteToken<'a> {
-  var:      Var,
+  var:      TmpVar,
   first:    bool,
   borrow:   &'a (),
 }
@@ -431,10 +438,10 @@ pub struct RWValBuf<T> {
   mode:         WriteMode,
   curr_txn:     Option<Txn>,
   dirty:        bool,
-  l_consumers:  HashSet<Var>,
-  d_consumers:  HashSet<Var>,
-  l_producers:  HashSet<Var>,
-  d_producers:  HashSet<Var>,
+  l_consumers:  HashSet<TmpVar>,
+  d_consumers:  HashSet<TmpVar>,
+  l_producers:  HashSet<TmpVar>,
+  d_producers:  HashSet<TmpVar>,
   data:         Option<T>,
 }
 
@@ -457,7 +464,7 @@ pub struct Val<T> {
   ref_:     ValRef,
   alloc:    Rc<Fn(Txn) -> T>,
   root:     RootVar,
-  var:      Var,
+  var:      TmpVar,
   buf:      Rc<RefCell<RWValBuf<T>>>,
   borrow:   (),
 }
@@ -465,7 +472,7 @@ pub struct Val<T> {
 impl<T> Val<T> {
   pub fn new(alloc: Rc<Fn(Txn) -> T>) -> Self {
     let ref_ = ValRef::default();
-    let var = Var::default();
+    let var = TmpVar::default();
     Val{
       ref_:     ref_,
       alloc:    alloc,
@@ -488,7 +495,7 @@ impl<T> Clone for Val<T> {
       ref_:     self.ref_,
       alloc:    self.alloc.clone(),
       root:     self.root,
-      var:      Var::default(),
+      var:      TmpVar::default(),
       buf:      self.buf.clone(),
       borrow:   (),
     }
@@ -541,14 +548,14 @@ impl<T> AVal for Val<T> where T: 'static {
     self.root
   }
 
-  fn var(&self) -> Var {
+  fn var(&self) -> TmpVar {
     self.var
   }
 }
 
 impl<T> RWVal for Val<T> where T: 'static {
   fn from(alloc: Rc<Fn(Txn) -> T>) -> Self {
-    let var = Var::default();
+    let var = TmpVar::default();
     Val{
       ref_:     ValRef::default(),
       //mode:     mode,
@@ -742,7 +749,7 @@ pub struct ClkVal<T> {
   val:      ValRef,
   clock:    Rc<Cell<usize>>,
   alloc:    Rc<Fn(Txn) -> T>,
-  clk_vars: Vec<Var>,
+  clk_vars: Vec<TmpVar>,
   clk_bufs: Rc<RefCell<Vec<RWValBuf<T>>>>,
   borrow:   (),
 }
@@ -751,7 +758,7 @@ impl<T> Clone for ClkVal<T> {
   fn clone(&self) -> Self {
     let mut new_clk_vars = Vec::with_capacity(self.clk_vars.len());
     for _ in 0 .. self.clk_vars.len() {
-      new_clk_vars.push(Var::default());
+      new_clk_vars.push(TmpVar::default());
     }
     ClkVal{
       val:      self.val,
@@ -805,7 +812,7 @@ impl<T> AVal for ClkVal<T> where T: 'static {
     unimplemented!();
   }
 
-  fn var(&self) -> Var {
+  fn var(&self) -> TmpVar {
     let clk = self.clock.get();
     self.clk_vars[clk]
   }
