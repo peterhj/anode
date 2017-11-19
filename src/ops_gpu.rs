@@ -50,6 +50,50 @@ pub trait GPUDeviceMemIoWriter<'a> {
 pub struct GPUDeviceCtxPushOp;
 pub struct GPUDeviceCtxPopOp;
 
+impl<T, F, V> SrcOpExt<GPUDeviceArray1d<T>, Rc<F>, V> for ()
+where T: Copy + 'static,
+      F: (Fn(GPUDeviceStreamPool) -> GPUDeviceArray1d<T>) + 'static,
+      V: RWVal<T=GPUDeviceArray1d<T>> + 'static,
+{
+  fn build(init_val: Rc<F>) -> Rc<SrcOp<(), V>> {
+    let ext = OpExt{
+      make: {
+        Rc::new(move || {
+          println!("DEBUG: SrcOpExt<|| GPUDeviceArray1d>: make...");
+          let init_val = init_val.clone();
+          <V as RWVal>::from(Rc::new(move |txn: Txn| {
+            println!("DEBUG: SrcOpExt<|| GPUDeviceArray1d>: make: allocating...");
+            let ctx = implicit_ctx().gpu_device().unwrap();
+            let pool = ctx.pool();
+            // TODO: actually, duplicate the closure.
+            init_val(pool)
+          }))
+        })
+      },
+      func: {
+        Rc::new(move |txn: Txn, output: V| {
+          if let Some((mode, token)) = output.write(txn) {
+            unreachable!("should never evaluate a pure source");
+          }
+        })
+      },
+      tangent: Some({
+        Rc::new(move || {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      adjoint: Some({
+        Rc::new(move |x_: Rc<AOp<V=V>>, sink: &mut Sink| {
+          // Do nothing.
+        })
+      }),
+    };
+    let value = (ext.make)();
+    Rc::new(SrcOp::new((), ext, value))
+  }
+}
+
 impl<T, V> SrcOpExt<GPUDeviceArray1d<T>, GPUDeviceArray1d<T>, V> for ()
 where T: Copy + 'static,
       V: RWVal<T=GPUDeviceArray1d<T>> + 'static,
@@ -66,7 +110,6 @@ where T: Copy + 'static,
             let pool = ctx.pool();
             let conn = pool.conn();
             // TODO: actually, duplicate the data.
-            //init_val.clone()
             GPUDeviceArray1d::<T>::zeros(init_val.size(), conn)
           }))
         })
@@ -92,6 +135,61 @@ where T: Copy + 'static,
     };
     let value = (ext.make)();
     Rc::new(SrcOp::new((), ext, value))
+  }
+}
+
+impl<T, F, V> ZerosSrcOpExt<GPUDeviceArray1d<T>, Rc<F>, V> for ZerosSrcOp
+where T: Copy + 'static,
+      F: (Fn(GPUDeviceStreamPool) -> GPUDeviceArray1d<T>) + 'static,
+      V: RWVal<T=GPUDeviceArray1d<T>> + 'static,
+{
+  fn build(init_val: Rc<F>) -> Rc<SrcOp<ZerosSrcOp, V>> {
+    let ext = OpExt{
+      make: {
+        Rc::new(move || {
+          println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: make...");
+          let init_val = init_val.clone();
+          <V as RWVal>::from(Rc::new(move |txn: Txn| {
+            println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: make: allocating...");
+            let ctx = implicit_ctx().gpu_device().unwrap();
+            let pool = ctx.pool();
+            // TODO: actually, duplicate the closure.
+            init_val(pool)
+          }))
+        })
+      },
+      func: {
+        Rc::new(move |txn: Txn, output: V| {
+          if let Some((mode, token)) = output.write(txn) {
+            let ctx = implicit_ctx().gpu_device().unwrap();
+            let pool = ctx.pool();
+            let conn = pool.conn();
+            let overwrite = match (mode, token.first_write()) {
+              (WriteMode::Accumulate, false) => false,
+              (_, true) => true,
+              _ => unreachable!(),
+            };
+            if overwrite {
+              // TODO: zero out the whole thing.
+              println!("DEBUG: zeroing...");
+            }
+          }
+        })
+      },
+      tangent: Some({
+        Rc::new(move || {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      adjoint: Some({
+        Rc::new(move |x_: Rc<AOp<V=V>>, sink: &mut Sink| {
+          // Do nothing.
+        })
+      }),
+    };
+    let value = (ext.make)();
+    Rc::new(SrcOp::new(ZerosSrcOp, ext, value))
   }
 }
 
@@ -128,6 +226,7 @@ where T: Copy + 'static,
             };
             if overwrite {
               // TODO: zero out the whole thing.
+              println!("DEBUG: zeroing...");
             }
           }
         })

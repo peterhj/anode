@@ -52,13 +52,15 @@ impl Drop for CtxGuard {
 
 #[cfg(not(feature = "gpu"))]
 pub type DefaultCtx = NullCtx;
-#[cfg(feature = "gpu")]
-pub type DefaultCtx = GPUDeviceCtx;
 //#[cfg(feature = "gpu")]
-//pub type DefaultCtx = MultiGPUDeviceCtx;
+//pub type DefaultCtx = GPUDeviceCtx;
+#[cfg(feature = "gpu")]
+pub type DefaultCtx = MultiGPUDeviceCtx;
 
+#[derive(Clone)]
 pub struct NullCtx;
 
+#[derive(Clone)]
 pub struct ThreadPoolCtx {
 }
 
@@ -79,6 +81,12 @@ impl ExecutionCtx for GPUDeviceCtx {
   fn gpu_device(&self) -> Option<GPUDeviceCtx> {
     Some(self.clone())
   }
+
+  fn multi_gpu_device(&self) -> Option<MultiGPUDeviceCtx> {
+    Some(MultiGPUDeviceCtx{
+      md_pools: vec![self.pool.clone()],
+    })
+  }
 }
 
 #[cfg(feature = "gpu")]
@@ -89,28 +97,46 @@ impl GPUDeviceCtx {
     }
   }
 
-  pub fn pool(&self) -> &GPUDeviceStreamPool {
-    &self.pool
+  pub fn pool(&self) -> GPUDeviceStreamPool {
+    self.pool.clone()
+  }
+
+  pub fn conn(&self) -> GPUDeviceConn {
+    self.pool.conn()
   }
 }
 
 #[cfg(feature = "gpu")]
+#[derive(Clone)]
 pub struct MultiGPUDeviceCtx {
   md_pools: Vec<GPUDeviceStreamPool>,
 }
 
-/*#[cfg(feature = "gpu")]
-impl ExecutionCtx for Rc<MultiGPUDeviceCtx> {
-  fn gpu_device(&self) -> Option<Rc<GPUDeviceCtx>> {
-    // TODO
-    unimplemented!();
+#[cfg(feature = "gpu")]
+impl ExecutionCtx for MultiGPUDeviceCtx {
+  fn gpu_device(&self) -> Option<GPUDeviceCtx> {
+    Some(self.gpu_device(0))
   }
-}*/
+
+  fn multi_gpu_device(&self) -> Option<MultiGPUDeviceCtx> {
+    Some(self.clone())
+  }
+}
 
 #[cfg(feature = "gpu")]
 impl MultiGPUDeviceCtx {
-  pub fn gpu_device(&self, device_index: usize) -> GPUDeviceCtx {
+  pub fn new() -> Self {
     // TODO
-    unimplemented!();
+    MultiGPUDeviceCtx{
+      md_pools: vec![GPUDeviceStreamPool::new(GPUDeviceId(0))],
+    }
+  }
+
+  pub fn num_gpu_devices(&self) -> usize {
+    self.md_pools.len()
+  }
+
+  pub fn gpu_device(&self, device_index: usize) -> GPUDeviceCtx {
+    GPUDeviceCtx{pool: self.md_pools[device_index].clone()}
   }
 }

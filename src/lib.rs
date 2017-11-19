@@ -162,67 +162,45 @@ impl NodeStack {
 }
 
 pub trait ANode {
-  fn _push(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode));
-  fn _pop(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode));
+  fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode));
+  fn _pop(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode));
 
   fn _io(&self) -> &AIo;
   fn _eval(&self, txn: Txn);
 
-  /*fn load_forward(&self, txn: Txn, priority: &NodeRefMap<usize>, writer: &mut Any) {
-    let epoch = Epoch::default();
-    self._push(epoch, priority, &|_| true, &mut |node| node._io()._load(txn, writer));
-    self._pop(epoch, priority, &|_| true, &mut |_node| {});
-  }
-
-  fn load_reverse(&self, txn: Txn, priority: &NodeRefMap<usize>, writer: &mut Any) {
-    let epoch = Epoch::default();
-    self._push(epoch, priority, &|_| true, &mut |_node| {});
-    self._pop(epoch, priority, &|_| true, &mut |node| node._io()._load(txn, writer));
-  }
-
-  fn store_forward(&self, txn: Txn, priority: &NodeRefMap<usize>, reader: &mut Any) {
-    let epoch = Epoch::default();
-    self._push(epoch, priority, &|_| true, &mut |node| node._io()._store(txn, reader));
-    self._pop(epoch, priority, &|_| true, &mut |_node| {});
-  }
-
-  fn store_reverse(&self, txn: Txn, priority: &NodeRefMap<usize>, reader: &mut Any) {
-    let epoch = Epoch::default();
-    self._push(epoch, priority, &|_| true, &mut |_node| {});
-    self._pop(epoch, priority, &|_| true, &mut |node| node._io()._store(txn, reader));
-  }*/
-
-  fn v_deserialize_forward(&self, txn: Txn, priority: &NodeRefMap<usize>, writer: &mut FnMut(WriteMode, &mut Any)) {
+  fn v_deserialize_forward(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any)) {
     // TODO
     unimplemented!();
   }
 
-  fn v_deserialize_reverse(&self, txn: Txn, priority: &NodeRefMap<usize>, writer: &mut FnMut(WriteMode, &mut Any)) {
+  fn v_deserialize_reverse(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any)) {
     // TODO
     unimplemented!();
   }
 
-  fn v_serialize_forward(&self, txn: Txn, priority: &NodeRefMap<usize>, reader: &mut FnMut(&mut Any)) {
+  fn v_serialize_forward(&self, txn: Txn, reader: &mut FnMut(&mut Any)) {
     // TODO
     unimplemented!();
   }
 
-  fn v_serialize_reverse(&self, txn: Txn, priority: &NodeRefMap<usize>, reader: &mut FnMut(&mut Any)) {
+  fn v_serialize_reverse(&self, txn: Txn, reader: &mut FnMut(&mut Any)) {
     // TODO
     unimplemented!();
   }
 
   fn eval(&self, txn: Txn) {
+    let epoch = Epoch::default();
     // TODO
-    self._eval(txn);
+    self._push(epoch, &|_| true, &mut |node| node._eval(txn));
+    self._pop(epoch, &|_| true, &mut |_node| {});
   }
 
-  fn eval_prioritized(&self, txn: Txn, priority: &NodeRefMap<usize>) {
+  /*fn eval_prioritized(&self, txn: Txn, priority: &NodeRefMap<isize>) {
     let epoch = Epoch::default();
     // TODO
     self._push(epoch, priority, &|_| true, &mut |node| node._eval(txn));
     self._pop(epoch, priority, &|_| true, &mut |_node| {});
-  }
+  }*/
 }
 
 pub fn swap_val<V, Op>(this: &mut Rc<Op>, new_val: V) where V: AVal, Op: AOp<V=V> {
@@ -244,7 +222,7 @@ pub trait AOp: ANode {
   fn value(&self) -> Self::V;
   fn _make_tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) { unimplemented!(); }
   fn tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>);
-  fn _pop_adjoint(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) { unimplemented!(); }
+  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) { unimplemented!(); }
   fn adjoint(&self, sink: &mut Sink);
 }
 
@@ -365,17 +343,17 @@ pub struct NodeCollection {
 }
 
 impl ANode for NodeCollection {
-  fn _push(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
+  fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     // FIXME: priority.
     for node in self.nodes.iter() {
-      node._push(epoch, priority, filter, apply);
+      node._push(epoch, filter, apply);
     }
   }
 
-  fn _pop(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
+  fn _pop(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     // FIXME: priority.
     for node in self.nodes.iter().rev() {
-      node._pop(epoch, priority, filter, apply);
+      node._pop(epoch, filter, apply);
     }
   }
 
@@ -1031,11 +1009,11 @@ where V: AVal {
 
 impl<S, V> ANode for SrcOp<S, V>
 where V: AVal {
-  fn _push(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
+  fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     // TODO
   }
 
-  fn _pop(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
+  fn _pop(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     // TODO
   }
 
@@ -1072,7 +1050,7 @@ where V: AVal {
     unimplemented!();
   }
 
-  fn _pop_adjoint(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
+  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
     if self.base.stack.pop(epoch) {
       match self.ext.adjoint {
         None => panic!(),
@@ -1127,19 +1105,19 @@ where V1: AVal, W: AVal {
 
 impl<S, V1, W> ANode for F1Op<S, V1, W>
 where V1: AVal, W: AVal {
-  fn _push(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
+  fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
       // TODO: apply priority.
-      self.x_._push(epoch, priority, filter, apply);
+      self.x_._push(epoch, filter, apply);
       apply(self);
     }
   }
 
-  fn _pop(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
+  fn _pop(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.pop(epoch) {
       // TODO: apply priority.
       apply(self);
-      self.x_._pop(epoch, priority, filter, apply);
+      self.x_._pop(epoch, filter, apply);
     }
   }
 
@@ -1179,14 +1157,14 @@ where V1: AVal, W: AVal {
     tng_op.as_ref().unwrap().clone()
   }
 
-  fn _pop_adjoint(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
+  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
     if self.base.stack.pop(epoch) {
       // TODO: priority.
       match self.ext.adjoint {
         None => panic!(),
         Some(ref adjoint) => (adjoint)(this, sink),
       }
-      self.x_._pop_adjoint(epoch, priority, filter, self.x_.clone(), sink);
+      self.x_._pop_adjoint(epoch, filter, self.x_.clone(), sink);
     }
   }
 
@@ -1221,21 +1199,21 @@ where V1: AVal, V2: AVal, W: AVal {
 
 impl<S, V1, V2, W> ANode for F2Op<S, V1, V2, W>
 where V1: AVal, V2: AVal, W: AVal {
-  fn _push(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
+  fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
       // TODO: apply priority.
-      self.x1_._push(epoch, priority, filter, apply);
-      self.x2_._push(epoch, priority, filter, apply);
+      self.x1_._push(epoch, filter, apply);
+      self.x2_._push(epoch, filter, apply);
       apply(self);
     }
   }
 
-  fn _pop(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
+  fn _pop(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.pop(epoch) {
       // TODO: apply priority.
       apply(self);
-      self.x2_._pop(epoch, priority, filter, apply);
-      self.x1_._pop(epoch, priority, filter, apply);
+      self.x2_._pop(epoch, filter, apply);
+      self.x1_._pop(epoch, filter, apply);
     }
   }
 
@@ -1275,15 +1253,15 @@ where V1: AVal, V2: AVal, W: AVal {
     tng_op.as_ref().unwrap().clone()
   }
 
-  fn _pop_adjoint(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
+  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
     if self.base.stack.pop(epoch) {
       // TODO: priority.
       match self.ext.adjoint {
         None => panic!(),
         Some(ref adjoint) => (adjoint)(this, sink),
       }
-      self.x2_._pop_adjoint(epoch, priority, filter, self.x2_.clone(), sink);
-      self.x1_._pop_adjoint(epoch, priority, filter, self.x1_.clone(), sink);
+      self.x2_._pop_adjoint(epoch, filter, self.x2_.clone(), sink);
+      self.x1_._pop_adjoint(epoch, filter, self.x1_.clone(), sink);
     }
   }
 
@@ -1305,23 +1283,23 @@ pub struct F3Op<S, V1, V2, V3, W> where W: AVal {
 
 impl<S, V1, V2, V3, W> ANode for F3Op<S, V1, V2, V3, W>
 where V1: AVal, V2: AVal, V3: AVal, W: AVal {
-  fn _push(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
+  fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
       // TODO: apply priority.
-      self.x1_._push(epoch, priority, filter, apply);
-      self.x2_._push(epoch, priority, filter, apply);
-      self.x3_._push(epoch, priority, filter, apply);
+      self.x1_._push(epoch, filter, apply);
+      self.x2_._push(epoch, filter, apply);
+      self.x3_._push(epoch, filter, apply);
       apply(self);
     }
   }
 
-  fn _pop(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
+  fn _pop(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.pop(epoch) {
       // TODO: apply priority.
       apply(self);
-      self.x3_._pop(epoch, priority, filter, apply);
-      self.x2_._pop(epoch, priority, filter, apply);
-      self.x1_._pop(epoch, priority, filter, apply);
+      self.x3_._pop(epoch, filter, apply);
+      self.x2_._pop(epoch, filter, apply);
+      self.x1_._pop(epoch, filter, apply);
     }
   }
 
@@ -1358,16 +1336,16 @@ where V1: AVal, V2: AVal, V3: AVal, W: AVal {
     unimplemented!();
   }
 
-  fn _pop_adjoint(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
+  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
     if self.base.stack.pop(epoch) {
       // TODO: priority.
       match self.ext.adjoint {
         None => panic!(),
         Some(ref adjoint) => (adjoint)(this, sink),
       }
-      self.x3_._pop_adjoint(epoch, priority, filter, self.x3_.clone(), sink);
-      self.x2_._pop_adjoint(epoch, priority, filter, self.x2_.clone(), sink);
-      self.x1_._pop_adjoint(epoch, priority, filter, self.x1_.clone(), sink);
+      self.x3_._pop_adjoint(epoch, filter, self.x3_.clone(), sink);
+      self.x2_._pop_adjoint(epoch, filter, self.x2_.clone(), sink);
+      self.x1_._pop_adjoint(epoch, filter, self.x1_.clone(), sink);
     }
   }
 
@@ -1400,22 +1378,22 @@ where V: AVal, W: AVal {
 
 impl<S, V, W> ANode for JoinOp<S, V, W>
 where V: AVal, W: AVal {
-  fn _push(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
+  fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
       // TODO: apply priority.
       for x_ in self.xs_.iter() {
-        x_._push(epoch, priority, filter, apply);
+        x_._push(epoch, filter, apply);
       }
       apply(self);
     }
   }
 
-  fn _pop(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
+  fn _pop(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.pop(epoch) {
       // TODO: apply priority.
       apply(self);
       for x_ in self.xs_.iter().rev() {
-        x_._pop(epoch, priority, filter, apply);
+        x_._pop(epoch, filter, apply);
       }
     }
   }
@@ -1446,14 +1424,14 @@ where V: AVal, W: AVal {
     unimplemented!();
   }
 
-  fn _pop_adjoint(&self, epoch: Epoch, priority: &NodeRefMap<usize>, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
+  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
     if self.base.stack.pop(epoch) {
       match self.ext.adjoint {
         None => panic!(),
         Some(ref adjoint) => (adjoint)(this, sink),
       }
       for x_ in self.xs_.iter().rev() {
-        x_._pop_adjoint(epoch, priority, filter, x_.clone(), sink);
+        x_._pop_adjoint(epoch, filter, x_.clone(), sink);
       }
     }
   }

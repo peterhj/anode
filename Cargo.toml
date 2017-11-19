@@ -13,7 +13,7 @@ gpu = ["cuda", "cuda_blas", "cuda_dnn", "devicemem_gpu"]
 
 [build-dependencies]
 bindgen = "*"
-cc = { path = "../gcc-rs-devel" }
+cc = { path = "../gcc-rs-devel", features = ["parallel"] }
 walkdir = "*"
 
 [dependencies]

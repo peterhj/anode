@@ -25,6 +25,7 @@ fn main() {
     .cuda(true)
     .opt_level(2)
     .pic(true)
+    .flag("-gencode").flag("arch=compute_35,code=sm_35")
     .flag("-gencode").flag("arch=compute_37,code=sm_37")
     .flag("-gencode").flag("arch=compute_52,code=sm_52")
     .flag("-gencode").flag("arch=compute_60,code=sm_60")
