@@ -13,7 +13,8 @@ gpu = ["cuda", "cuda_blas", "cuda_dnn", "devicemem_gpu"]
 
 [build-dependencies]
 bindgen = "*"
-cc = { path = "../gcc-rs-devel", features = ["parallel"] }
+#cc = "*"
+cc = { path = "../cc-rs-devel", features = ["parallel"] }
 walkdir = "*"
 
 [dependencies]
@@ -26,4 +27,5 @@ cuda_blas = { path = "../libcuda_blas", optional = true }
 cuda_dnn = { path = "../libcuda_dnn", optional = true }
 #devicemem_cuda = { path = "../libdevicemem_cuda", optional = true }
 devicemem_gpu = { path = "../devicemem_gpu", optional = true }
+memarray = { path = "../memarray" }
 rng = "*"

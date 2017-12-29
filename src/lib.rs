@@ -34,7 +34,7 @@ extern crate rng;
 //extern crate libc;
 extern crate rand;
 
-use ops::{MemIoReader, MemIoWriter, SumJoinOp, SumJoinOpExt};
+use ops::{MemIoReader, MemIoWriter, SumJoinOp, SumJoinOpMaybeExt, SumJoinOpExt};
 
 use std::any::{Any};
 use std::cell::{Cell, RefCell, Ref, RefMut};
@@ -165,35 +165,24 @@ pub trait ANode {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode));
   fn _pop(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode));
 
-  fn _io(&self) -> &AIo;
+  fn _io(&self) -> &IOVal;
+
+  fn _txn(&self) -> Option<Txn>;
+  fn _persist(&self, txn: Txn);
   fn _eval(&self, txn: Txn);
 
-  fn v_deserialize_forward(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any)) {
-    // TODO
-    unimplemented!();
-  }
+  /*fn deserialize_forward(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any));
+  fn deserialize_reverse(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any));
+  fn serialize_forward(&self, txn: Txn, reader: &mut FnMut(&mut Any));
+  fn serialize_reverse(&self, txn: Txn, reader: &mut FnMut(&mut Any));*/
+  fn eval(&self, txn: Txn);
 
-  fn v_deserialize_reverse(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any)) {
-    // TODO
-    unimplemented!();
-  }
-
-  fn v_serialize_forward(&self, txn: Txn, reader: &mut FnMut(&mut Any)) {
-    // TODO
-    unimplemented!();
-  }
-
-  fn v_serialize_reverse(&self, txn: Txn, reader: &mut FnMut(&mut Any)) {
-    // TODO
-    unimplemented!();
-  }
-
-  fn eval(&self, txn: Txn) {
+  /*fn eval(&self, txn: Txn) {
     let epoch = Epoch::default();
     // TODO
     self._push(epoch, &|_| true, &mut |node| node._eval(txn));
     self._pop(epoch, &|_| true, &mut |_node| {});
-  }
+  }*/
 
   /*fn eval_prioritized(&self, txn: Txn, priority: &NodeRefMap<isize>) {
     let epoch = Epoch::default();
@@ -213,52 +202,54 @@ pub fn swap_val<V, Op>(this: &mut Rc<Op>, new_val: V) where V: AVal, Op: AOp<V=V
 }
 
 pub trait AOp: ANode {
-  type V: AVal;
+  type V;
 
-  fn _swap(&mut self, new_val: Self::V) { unimplemented!(); }
+  // TODO: deprecated.
+  //fn _swap(&mut self, new_val: Self::V) { unimplemented!(); }
 
   fn var(&self) -> RootVar { unimplemented!(); }
-  fn _make_value(&self) -> Self::V;
-  fn value(&self) -> Self::V;
+  fn _make_value(&self) -> RWVal<Self::V>;
+  fn value(&self) -> RWVal<Self::V>;
   fn _make_tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) { unimplemented!(); }
   fn tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>);
-  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) { unimplemented!(); }
-  fn adjoint(&self, sink: &mut Sink);
+  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut AdjointSink) { unimplemented!(); }
+  fn adjoint(&self, sink: &mut AdjointSink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>);
 }
 
-pub trait AIo {
-  fn _persist(&self, txn: Txn);
+pub trait IOVal {
   //fn _load(&self, txn: Txn, writer: &mut Any);
   //fn _store(&self, txn: Txn, reader: &mut Any);
   fn _deserialize(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any));
   fn _serialize(&self, txn: Txn, reader: &mut FnMut(&Any));
 }
 
-pub trait AVal: AIo + Clone {
+pub trait AVal: IOVal + Clone {
   type T;
 
   fn duplicate(&self) -> Self where Self: Sized;
   fn root_var(&self) -> RootVar;
-  fn var(&self) -> TmpVar;
+  fn tmp_var(&self) -> TmpVar;
+
+  fn txn(&self) -> Option<Txn>;
   //fn load(&self, txn: Txn, writer: &mut Any);
   //fn store(&self, txn: Txn, reader: &mut Any);
+  fn reset(&self);
+  fn release(&self);
+  fn persist(&self, txn: Txn);
 }
 
-/*pub trait ASink {
-  fn get_adj<V>(&mut self, var: RootVar) -> Option<Rc<AOp<V=V>>> where Self: Sized, V: AVal + 'static;
-  fn put_adj<V>(&mut self, var: RootVar, adj_node: Rc<ANode>, adj_op: Rc<AOp<V=V>>) where Self: Sized, V: AVal + 'static;
-}*/
-
-pub struct Sink {
-  freeze:   HashSet<RootVar>,
+pub struct AdjointSink {
+  frozen:   HashSet<RootVar>,
   adj_map:  HashMap<RootVar, Vec<(Rc<ANode>, Rc<Any>)>>,
   join_map: HashMap<RootVar, (Rc<ANode>, Rc<Any>)>,
   adj_seq:  Vec<Rc<ANode>>,
 }
 
-impl Sink {
-  pub fn get_adj<V>(&mut self, var: RootVar) -> Option<Rc<AOp<V=V>>> where V: RWVal + 'static, SumJoinOp: SumJoinOpExt<V::T, V> {
-    self.freeze.insert(var);
+impl AdjointSink {
+  //pub fn get_adj<V>(&mut self, var: RootVar) -> Option<(Rc<ANode>, Rc<AOp<V=V>>)> where V: RWVal + 'static, SumJoinOp: SumJoinOpExt<V::T, V> {
+  //pub fn get_adj<V>(&mut self, var: RootVar) -> Option<(Rc<ANode>, Rc<AOp<V=V>>)> where V: AVal + 'static, SumJoinOp: SumJoinOpExt<V::T, V> {
+  pub fn get_adj<V>(&mut self, var: RootVar) -> Option<(Rc<ANode>, Rc<AOp<V=V>>)> where V: AVal + 'static {
+    self.frozen.insert(var);
     if self.adj_map.contains_key(&var) {
       let adjs = self.adj_map.get(&var).unwrap();
       match adjs.len() {
@@ -266,15 +257,15 @@ impl Sink {
         1 => {
           match (adjs[0].1).downcast_ref::<Rc<AOp<V=V>>>() {
             None => panic!(),
-            Some(adj_op) => return Some(adj_op.clone()),
+            Some(adj_op) => return Some((adjs[0].0.clone(), adj_op.clone())),
           }
         }
         _ => {
           if self.join_map.contains_key(&var) {
-            let &(_, ref join) = self.join_map.get(&var).unwrap();
-            match join.downcast_ref::<Rc<AOp<V=V>>>() {
+            let &(ref join_node, ref join_any_op) = self.join_map.get(&var).unwrap();
+            match join_any_op.downcast_ref::<Rc<AOp<V=V>>>() {
               None => panic!(),
-              Some(join_op) => return Some(join_op.clone()),
+              Some(join_op) => return Some((join_node.clone(), join_op.clone())),
             }
           } else {
             let adj_ops: Vec<_> = adjs.iter().map(|&(_, ref a)| {
@@ -283,11 +274,13 @@ impl Sink {
                 Some(adj_op) => adj_op.clone(),
               }
             }).collect();
-            let join = SumJoinOp::build(adj_ops);
+            //let join = SumJoinOp::build(adj_ops);
+            //let join = SumJoinOp::maybe_build::<V>(adj_ops).unwrap();
+            let join = <SumJoinOp as SumJoinOpMaybeExt<V::T, V>>::maybe_build(adj_ops).unwrap();
             let join_node: Rc<ANode> = join.clone();
-            let join_any_op: Rc<AOp<V=V>> = join;
-            self.join_map.insert(var, (join_node, Rc::new(join_any_op.clone())));
-            return Some(join_any_op);
+            let join_op: Rc<AOp<V=V>> = join;
+            self.join_map.insert(var, (join_node.clone(), Rc::new(join_op.clone())));
+            return Some((join_node, join_op));
           }
         }
       }
@@ -296,7 +289,7 @@ impl Sink {
   }
 
   pub fn put_adj<V, Op>(&mut self, var: RootVar, mut adj_op: Rc<Op>) where V: AVal + 'static, Op: AOp<V=V> + 'static {
-    assert!(!self.freeze.contains(&var));
+    assert!(!self.frozen.contains(&var));
     if self.adj_map.contains_key(&var) {
       let mut adjs = self.adj_map.get_mut(&var).unwrap();
       // NOTE: Not using accumulate-mode join, so do not explicitly swap values.
@@ -357,7 +350,7 @@ impl ANode for NodeCollection {
     }
   }
 
-  fn _io(&self) -> &AIo {
+  fn _io(&self) -> &IOVal {
     unimplemented!();
   }
 
@@ -396,7 +389,7 @@ impl<'a> WriteToken<'a> {
   }
 }
 
-pub trait RWVal: AVal {
+/*pub trait RWVal: AVal {
   fn from(alloc: Rc<Fn(Txn) -> Self::T>) -> Self where Self: Sized;
 
   /*// Set `WriteMode`.
@@ -404,13 +397,10 @@ pub trait RWVal: AVal {
   fn set_accumulate(&self);
   fn set_clobber(&self);*/
 
-  fn reset(&self);
-  fn dealloc(&self);
-  fn force_persist(&self, txn: Txn);
   fn write(&self, txn: Txn) -> Option<(WriteMode, WriteToken)>;
   fn get(&self, txn: Txn) -> Ref<Self::T>;
   fn get_mut(&self, txn: Txn, token: WriteToken) -> RefMut<Self::T>;
-}
+}*/
 
 pub struct RWValBuf<T> {
   mode:         WriteMode,
@@ -438,7 +428,7 @@ impl<T> Default for RWValBuf<T> {
   }
 }
 
-pub struct Val<T> {
+pub struct RWVal<T> {
   ref_:     ValRef,
   alloc:    Rc<Fn(Txn) -> T>,
   root:     RootVar,
@@ -447,11 +437,11 @@ pub struct Val<T> {
   borrow:   (),
 }
 
-impl<T> Val<T> {
+impl<T> RWVal<T> {
   pub fn new(alloc: Rc<Fn(Txn) -> T>) -> Self {
     let ref_ = ValRef::default();
     let var = TmpVar::default();
-    Val{
+    RWVal{
       ref_:     ref_,
       alloc:    alloc,
       root:     RootVar(var),
@@ -461,15 +451,15 @@ impl<T> Val<T> {
     }
   }
 
-  pub fn mode(self, mode: WriteMode) -> Self {
+  /*pub fn mode(self, mode: WriteMode) -> Self {
     // TODO
     unimplemented!();
-  }
+  }*/
 }
 
-impl<T> Clone for Val<T> {
+impl<T> Clone for RWVal<T> {
   fn clone(&self) -> Self {
-    Val{
+    RWVal{
       ref_:     self.ref_,
       alloc:    self.alloc.clone(),
       root:     self.root,
@@ -480,11 +470,7 @@ impl<T> Clone for Val<T> {
   }
 }
 
-impl<T> AIo for Val<T> where T: 'static {
-  fn _persist(&self, txn: Txn) {
-    self.force_persist(txn);
-  }
-
+impl<T> IOVal for RWVal<T> where T: 'static {
   /*fn _load(&self, txn: Txn, writer: &mut Any) {
     // TODO
     unimplemented!();
@@ -495,24 +481,24 @@ impl<T> AIo for Val<T> where T: 'static {
     unimplemented!();
   }*/
 
-  fn _deserialize(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any)) {
+  fn _deserialize(&self, txn: Txn, write: &mut FnMut(WriteMode, &mut Any)) {
     if let Some((mode, token)) = self.write(txn) {
       let mut buf = self.get_mut(txn, token);
-      writer(mode, &mut *buf);
+      write(mode, &mut *buf);
     }
   }
 
-  fn _serialize(&self, txn: Txn, reader: &mut FnMut(&Any)) {
+  fn _serialize(&self, txn: Txn, read: &mut FnMut(&Any)) {
     let buf = self.get(txn);
-    reader(&*buf);
+    read(&*buf);
   }
 }
 
-impl<T> AVal for Val<T> where T: 'static {
+impl<T> AVal for RWVal<T> where T: 'static {
   type T = T;
 
   fn duplicate(&self) -> Self {
-    Val{
+    RWVal{
       ref_:     self.ref_,
       alloc:    self.alloc.clone(),
       root:     self.root,
@@ -526,15 +512,61 @@ impl<T> AVal for Val<T> where T: 'static {
     self.root
   }
 
-  fn var(&self) -> TmpVar {
+  fn tmp_var(&self) -> TmpVar {
     self.var
+  }
+
+  fn txn(&self) -> Option<Txn> {
+    let buf = self.buf.borrow();
+    buf.curr_txn
+  }
+
+  fn reset(&self) {
+    let mut buf = self.buf.borrow_mut();
+    buf.curr_txn = None;
+    buf.l_consumers.clear();
+    buf.d_consumers.clear();
+    buf.l_producers.clear();
+    buf.d_producers.clear();
+  }
+
+  fn release(&self) {
+    self.reset();
+    let mut buf = self.buf.borrow_mut();
+    buf.data = None;
+  }
+
+  fn persist(&self, txn: Txn) {
+    let new_txn = {
+      let buf = self.buf.borrow();
+      buf.curr_txn.is_none() || buf.curr_txn.unwrap() != txn
+    };
+    if new_txn {
+      self.reset();
+      let mut buf = self.buf.borrow_mut();
+      buf.curr_txn = Some(txn);
+    }
+    let mut buf = self.buf.borrow_mut();
+    assert!(!buf.d_producers.contains(&self.var),
+        "`persist` should be called before all other writes");
+    match buf.l_producers.len() {
+      0 => {}
+      1 => {
+        assert!(buf.l_producers.contains(&self.var),
+            "`persist` should be called before all other writes");
+      }
+      _ => panic!("`persist` should be called before all other writes"),
+    }
+    assert!(buf.l_consumers.is_empty(),
+        "`persist` should be called before reads");
+    buf.l_producers.insert(self.var);
   }
 }
 
-impl<T> RWVal for Val<T> where T: 'static {
-  fn from(alloc: Rc<Fn(Txn) -> T>) -> Self {
+impl<T> RWVal<T> where T: 'static {
+  pub fn from(alloc: Rc<Fn(Txn) -> T>) -> Self {
     let var = TmpVar::default();
-    Val{
+    RWVal{
       ref_:     ValRef::default(),
       //mode:     mode,
       alloc:    alloc,
@@ -563,48 +595,7 @@ impl<T> RWVal for Val<T> where T: 'static {
     buf.mode = WriteMode::Clobber;
   }*/
 
-  fn reset(&self) {
-    let mut buf = self.buf.borrow_mut();
-    buf.curr_txn = None;
-    buf.l_consumers.clear();
-    buf.d_consumers.clear();
-    buf.l_producers.clear();
-    buf.d_producers.clear();
-  }
-
-  fn dealloc(&self) {
-    self.reset();
-    let mut buf = self.buf.borrow_mut();
-    buf.data = None;
-  }
-
-  fn force_persist(&self, txn: Txn) {
-    let new_txn = {
-      let buf = self.buf.borrow();
-      buf.curr_txn.is_none() || buf.curr_txn.unwrap() != txn
-    };
-    if new_txn {
-      self.reset();
-      let mut buf = self.buf.borrow_mut();
-      buf.curr_txn = Some(txn);
-    }
-    let mut buf = self.buf.borrow_mut();
-    assert!(!buf.d_producers.contains(&self.var),
-        "`persist` should be called before all other writes");
-    match buf.l_producers.len() {
-      0 => {}
-      1 => {
-        assert!(buf.l_producers.contains(&self.var),
-            "`persist` should be called before all other writes");
-      }
-      _ => panic!("`persist` should be called before all other writes"),
-    }
-    assert!(buf.l_consumers.is_empty(),
-        "`persist` should be called before reads");
-    buf.l_producers.insert(self.var);
-  }
-
-  fn write(&self, txn: Txn) -> Option<(WriteMode, WriteToken)> {
+  pub fn write(&self, txn: Txn) -> Option<(WriteMode, WriteToken)> {
     let new_txn = {
       let buf = self.buf.borrow();
       buf.curr_txn.is_none() || buf.curr_txn.unwrap() != txn
@@ -671,7 +662,7 @@ impl<T> RWVal for Val<T> where T: 'static {
     Some((buf.mode, WriteToken{var: self.var, first: first, borrow: &self.borrow}))
   }
 
-  fn get(&self, txn: Txn) -> Ref<T> {
+  pub fn get(&self, txn: Txn) -> Ref<T> {
     {
       let mut buf = self.buf.borrow_mut();
 
@@ -695,7 +686,7 @@ impl<T> RWVal for Val<T> where T: 'static {
     Ref::map(buf, |buf| buf.data.as_ref().unwrap())
   }
 
-  fn get_mut(&self, txn: Txn, token: WriteToken) -> RefMut<T> {
+  pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RefMut<T> {
     assert_eq!(self.var, token.var);
     let mut buf = self.buf.borrow_mut();
     {
@@ -723,7 +714,7 @@ impl<T> RWVal for Val<T> where T: 'static {
   }
 }
 
-pub struct ClkVal<T> {
+/*pub struct ClkVal<T> {
   val:      ValRef,
   clock:    Rc<Cell<usize>>,
   alloc:    Rc<Fn(Txn) -> T>,
@@ -749,11 +740,7 @@ impl<T> Clone for ClkVal<T> {
   }
 }
 
-impl<T> AIo for ClkVal<T> where T: 'static {
-  fn _persist(&self, txn: Txn) {
-    self.force_persist(txn);
-  }
-
+impl<T> IOVal for ClkVal<T> where T: 'static {
   /*fn _load(&self, txn: Txn, writer: &mut Any) {
     // TODO
   }
@@ -790,7 +777,7 @@ impl<T> AVal for ClkVal<T> where T: 'static {
     unimplemented!();
   }
 
-  fn var(&self) -> TmpVar {
+  fn tmp_var(&self) -> TmpVar {
     let clk = self.clock.get();
     self.clk_vars[clk]
   }
@@ -802,6 +789,26 @@ impl<T> AVal for ClkVal<T> where T: 'static {
   fn store(&self, txn: Txn, serializer: &mut Any) {
     // TODO
   }*/
+
+  fn txn(&self) -> Option<Txn> {
+    // TODO
+    unimplemented!();
+  }
+
+  fn reset(&self) {
+    // FIXME
+    unimplemented!();
+  }
+
+  fn release(&self) {
+    // FIXME
+    unimplemented!();
+  }
+
+  fn persist(&self, txn: Txn) {
+    // FIXME
+    unimplemented!();
+  }
 }
 
 impl<T> RWVal for ClkVal<T> where T: 'static {
@@ -831,21 +838,6 @@ impl<T> RWVal for ClkVal<T> where T: 'static {
     unimplemented!();
   }*/
 
-  fn reset(&self) {
-    // FIXME
-    unimplemented!();
-  }
-
-  fn dealloc(&self) {
-    // FIXME
-    unimplemented!();
-  }
-
-  fn force_persist(&self, txn: Txn) {
-    // FIXME
-    unimplemented!();
-  }
-
   fn write(&self, txn: Txn) -> Option<(WriteMode, WriteToken)> {
     // FIXME
     //Some((WriteMode::Exclusive, WriteToken{node: node, borrow: &self.borrow}))
@@ -873,7 +865,7 @@ impl<T> ClkVal<T> {
     // TODO
     unimplemented!();
   }
-}
+}*/
 
 /*pub trait KeyValue<K, T>: RWVal<T> {
   fn write_key(&self, key: &K, txn: Txn) -> Option<(WriteMode, WriteToken)>;
@@ -985,19 +977,19 @@ pub struct OpExt<V> {
   make:     Rc<Fn() -> V>,
   func:     Rc<Fn(Txn, V)>,
   tangent:  Option<Rc<Fn() -> (Rc<ANode>, Rc<AOp<V=V>>)>>,
-  adjoint:  Option<Rc<Fn(Rc<AOp<V=V>>, &mut Sink)>>,
+  adjoint:  Option<Rc<Fn(Rc<AOp<V=V>>, &mut AdjointSink)>>,
 }
 
-pub struct SrcOp<S, V> where V: AVal {
+pub struct SrcOp<S, V> {
   base: OpBase<V>,
   ext:  OpExt<V>,
   spec: S,
-  val:  V,
+  val:  RWVal<V>,
 }
 
-impl<S, V> SrcOp<S, V>
-where V: AVal {
-  pub fn new(spec: S, ext: OpExt<V>, val: V) -> Self {
+impl<S, V> SrcOp<S, V> {
+//where V: AVal {
+  pub fn new(spec: S, ext: OpExt<V>, val: RWVal<V>) -> Self {
     SrcOp{
       base: OpBase::default(),
       ext:  ext,
@@ -1007,8 +999,8 @@ where V: AVal {
   }
 }
 
-impl<S, V> ANode for SrcOp<S, V>
-where V: AVal {
+impl<S, V> ANode for SrcOp<S, V> {
+//where V: AVal {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     // TODO
   }
@@ -1017,30 +1009,68 @@ where V: AVal {
     // TODO
   }
 
-  fn _io(&self) -> &AIo {
+  fn _io(&self) -> &IOVal {
     &self.val
+  }
+
+  fn _txn(&self) -> Option<Txn> {
+    self.val.txn()
+  }
+
+  fn _persist(&self, txn: Txn) {
+    self.val.persist(txn);
   }
 
   fn _eval(&self, txn: Txn) {
     (self.ext.func)(txn, self.val.duplicate());
   }
+
+  /*fn deserialize_forward(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any)) {
+    // TODO
+    unimplemented!();
+  }
+
+  fn deserialize_reverse(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any)) {
+    // TODO
+    unimplemented!();
+  }
+
+  fn serialize_forward(&self, txn: Txn, reader: &mut FnMut(&mut Any)) {
+    // TODO
+    unimplemented!();
+  }
+
+  fn serialize_reverse(&self, txn: Txn, reader: &mut FnMut(&mut Any)) {
+    // TODO
+    unimplemented!();
+  }*/
+
+  fn eval(&self, txn: Txn) {
+    if self._txn() != Some(txn) {
+      self._eval(txn);
+    }
+  }
 }
 
-impl<S, V> AOp for SrcOp<S, V>
-where V: AVal {
+impl<S, V> AOp for SrcOp<S, V> {
+//where V: AVal + 'static {
   type V = V;
 
-  fn _make_value(&self) -> Self::V {
+  fn var(&self) -> RootVar {
+    self.val.root_var()
+  }
+
+  fn _make_value(&self) -> RWVal<Self::V> {
     (self.ext.make)()
   }
 
-  fn value(&self) -> Self::V {
+  fn value(&self) -> RWVal<Self::V> {
     self.val.clone()
   }
 
   fn _make_tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
     match self.ext.tangent {
-      None => panic!(),
+      None => unimplemented!(),
       Some(ref tangent) => (tangent)(),
     }
   }
@@ -1050,7 +1080,7 @@ where V: AVal {
     unimplemented!();
   }
 
-  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
+  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut AdjointSink) {
     if self.base.stack.pop(epoch) {
       match self.ext.adjoint {
         None => panic!(),
@@ -1059,9 +1089,11 @@ where V: AVal {
     }
   }
 
-  fn adjoint(&self, sink: &mut Sink) {
-    // TODO
-    unimplemented!();
+  fn adjoint(&self, sink: &mut AdjointSink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
+    match sink.get_adj(self.var()) {
+      None => panic!(),
+      Some(adj) => adj,
+    }
   }
 }
 
@@ -1082,17 +1114,17 @@ where V: AVal, W: AVal {
   }
 }*/
 
-pub struct F1Op<S, V1, W> where W: AVal {
+pub struct F1Op<S, V1, W> {
   base: OpBase<W>,
   ext:  OpExt<W>,
   spec: S,
   x_:   Rc<AOp<V=V1>>,
-  y:    W,
+  y:    RWVal<W>,
 }
 
-impl<S, V1, W> F1Op<S, V1, W>
-where V1: AVal, W: AVal {
-  pub fn new(spec: S, ext: OpExt<W>, x_: Rc<AOp<V=V1>>, y: W) -> Self {
+impl<S, V1, W> F1Op<S, V1, W> {
+//where V1: AVal, W: AVal {
+  pub fn new(spec: S, ext: OpExt<W>, x_: Rc<AOp<V=V1>>, y: RWVal<W>) -> Self {
     F1Op{
       base: OpBase::default(),
       ext:  ext,
@@ -1103,8 +1135,8 @@ where V1: AVal, W: AVal {
   }
 }
 
-impl<S, V1, W> ANode for F1Op<S, V1, W>
-where V1: AVal, W: AVal {
+impl<S, V1, W> ANode for F1Op<S, V1, W> {
+//where V1: AVal, W: AVal {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
       // TODO: apply priority.
@@ -1121,30 +1153,49 @@ where V1: AVal, W: AVal {
     }
   }
 
-  fn _io(&self) -> &AIo {
+  fn _io(&self) -> &IOVal {
     &self.y
+  }
+
+  fn _txn(&self) -> Option<Txn> {
+    self.y.txn()
+  }
+
+  fn _persist(&self, txn: Txn) {
+    self.y.persist(txn);
   }
 
   fn _eval(&self, txn: Txn) {
     (self.ext.func)(txn, self.y.duplicate());
   }
+
+  fn eval(&self, txn: Txn) {
+    if self._txn() != Some(txn) {
+      self.x1_.eval(txn);
+      self._eval(txn);
+    }
+  }
 }
 
-impl<S, V1, W> AOp for F1Op<S, V1, W>
-where V1: AVal, W: AVal {
+impl<S, V1, W> AOp for F1Op<S, V1, W> {
+//where V1: AVal, W: AVal + 'static {
   type V = W;
 
-  fn _make_value(&self) -> Self::V {
+  fn var(&self) -> RootVar {
+    self.y.root_var()
+  }
+
+  fn _make_value(&self) -> RWVal<Self::V> {
     (self.ext.make)()
   }
 
-  fn value(&self) -> Self::V {
+  fn value(&self) -> RWVal<Self::V> {
     self.y.clone()
   }
 
   fn _make_tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
     match self.ext.tangent {
-      None => panic!(),
+      None => unimplemented!(),
       Some(ref tangent) => (tangent)(),
     }
   }
@@ -1157,7 +1208,7 @@ where V1: AVal, W: AVal {
     tng_op.as_ref().unwrap().clone()
   }
 
-  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
+  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut AdjointSink) {
     if self.base.stack.pop(epoch) {
       // TODO: priority.
       match self.ext.adjoint {
@@ -1168,24 +1219,26 @@ where V1: AVal, W: AVal {
     }
   }
 
-  fn adjoint(&self, sink: &mut Sink) {
-    // TODO
-    unimplemented!();
+  fn adjoint(&self, sink: &mut AdjointSink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
+    match sink.get_adj(self.var()) {
+      None => panic!(),
+      Some(adj) => adj,
+    }
   }
 }
 
-pub struct F2Op<S, V1, V2, W> where W: AVal {
+pub struct F2Op<S, V1, V2, W> {
   base: OpBase<W>,
   ext:  OpExt<W>,
   spec: S,
   x1_:  Rc<AOp<V=V1>>,
   x2_:  Rc<AOp<V=V2>>,
-  y:    W,
+  y:    RWVal<W>,
 }
 
-impl<S, V1, V2, W> F2Op<S, V1, V2, W>
-where V1: AVal, V2: AVal, W: AVal {
-  pub fn new(spec: S, ext: OpExt<W>, x1_: Rc<AOp<V=V1>>, x2_: Rc<AOp<V=V2>>, y: W) -> Self {
+impl<S, V1, V2, W> F2Op<S, V1, V2, W> {
+//where V1: AVal, V2: AVal, W: AVal {
+  pub fn new(spec: S, ext: OpExt<W>, x1_: Rc<AOp<V=V1>>, x2_: Rc<AOp<V=V2>>, y: RWVal<W>) -> Self {
     F2Op{
       base: OpBase::default(),
       ext:  ext,
@@ -1197,8 +1250,8 @@ where V1: AVal, V2: AVal, W: AVal {
   }
 }
 
-impl<S, V1, V2, W> ANode for F2Op<S, V1, V2, W>
-where V1: AVal, V2: AVal, W: AVal {
+impl<S, V1, V2, W> ANode for F2Op<S, V1, V2, W> {
+//where V1: AVal, V2: AVal, W: AVal {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
       // TODO: apply priority.
@@ -1217,30 +1270,50 @@ where V1: AVal, V2: AVal, W: AVal {
     }
   }
 
-  fn _io(&self) -> &AIo {
+  fn _io(&self) -> &IOVal {
     &self.y
+  }
+
+  fn _txn(&self) -> Option<Txn> {
+    self.y.txn()
+  }
+
+  fn _persist(&self, txn: Txn) {
+    self.y.persist(txn);
   }
 
   fn _eval(&self, txn: Txn) {
     (self.ext.func)(txn, self.y.duplicate());
   }
+
+  fn eval(&self, txn: Txn) {
+    if self._txn() != Some(txn) {
+      self.x1_.eval(txn);
+      self.x2_.eval(txn);
+      self._eval(txn);
+    }
+  }
 }
 
-impl<S, V1, V2, W> AOp for F2Op<S, V1, V2, W>
-where V1: AVal, V2: AVal, W: AVal {
+impl<S, V1, V2, W> AOp for F2Op<S, V1, V2, W> {
+//where V1: AVal, V2: AVal, W: AVal + 'static {
   type V = W;
 
-  fn _make_value(&self) -> Self::V {
+  fn var(&self) -> RootVar {
+    self.y.root_var()
+  }
+
+  fn _make_value(&self) -> RWVal<Self::V> {
     (self.ext.make)()
   }
 
-  fn value(&self) -> Self::V {
+  fn value(&self) -> RWVal<Self::V> {
     self.y.clone()
   }
 
   fn _make_tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
     match self.ext.tangent {
-      None => panic!(),
+      None => unimplemented!(),
       Some(ref tangent) => (tangent)(),
     }
   }
@@ -1253,7 +1326,7 @@ where V1: AVal, V2: AVal, W: AVal {
     tng_op.as_ref().unwrap().clone()
   }
 
-  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
+  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut AdjointSink) {
     if self.base.stack.pop(epoch) {
       // TODO: priority.
       match self.ext.adjoint {
@@ -1265,24 +1338,26 @@ where V1: AVal, V2: AVal, W: AVal {
     }
   }
 
-  fn adjoint(&self, sink: &mut Sink) {
-    // TODO
-    unimplemented!();
+  fn adjoint(&self, sink: &mut AdjointSink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
+    match sink.get_adj(self.var()) {
+      None => panic!(),
+      Some(adj) => adj,
+    }
   }
 }
 
-pub struct F3Op<S, V1, V2, V3, W> where W: AVal {
+pub struct F3Op<S, V1, V2, V3, W> {
   base: OpBase<W>,
   ext:  OpExt<W>,
   spec: S,
   x1_:  Rc<AOp<V=V1>>,
   x2_:  Rc<AOp<V=V2>>,
   x3_:  Rc<AOp<V=V3>>,
-  y:    W,
+  y:    RWVal<W>,
 }
 
-impl<S, V1, V2, V3, W> ANode for F3Op<S, V1, V2, V3, W>
-where V1: AVal, V2: AVal, V3: AVal, W: AVal {
+impl<S, V1, V2, V3, W> ANode for F3Op<S, V1, V2, V3, W> {
+//where V1: AVal, V2: AVal, V3: AVal, W: AVal {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
       // TODO: apply priority.
@@ -1303,40 +1378,64 @@ where V1: AVal, V2: AVal, V3: AVal, W: AVal {
     }
   }
 
-  fn _io(&self) -> &AIo {
+  fn _io(&self) -> &IOVal {
     &self.y
+  }
+
+  fn _txn(&self) -> Option<Txn> {
+    self.y.txn()
+  }
+
+  fn _persist(&self, txn: Txn) {
+    self.y.persist(txn);
   }
 
   fn _eval(&self, txn: Txn) {
     (self.ext.func)(txn, self.y.duplicate());
   }
+
+  fn eval(&self, txn: Txn) {
+    if self._txn() != Some(txn) {
+      self.x1_.eval(txn);
+      self.x2_.eval(txn);
+      self.x3_.eval(txn);
+      self._eval(txn);
+    }
+  }
 }
 
-impl<S, V1, V2, V3, W> AOp for F3Op<S, V1, V2, V3, W>
-where V1: AVal, V2: AVal, V3: AVal, W: AVal {
+impl<S, V1, V2, V3, W> AOp for F3Op<S, V1, V2, V3, W> {
+//where V1: AVal, V2: AVal, V3: AVal, W: AVal + 'static {
   type V = W;
 
-  fn _make_value(&self) -> Self::V {
+  fn var(&self) -> RootVar {
+    self.y.root_var()
+  }
+
+  fn _make_value(&self) -> RWVal<Self::V> {
     (self.ext.make)()
   }
 
-  fn value(&self) -> Self::V {
+  fn value(&self) -> RWVal<Self::V> {
     self.y.clone()
   }
 
   fn _make_tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
     match self.ext.tangent {
-      None => panic!(),
+      None => unimplemented!(),
       Some(ref tangent) => (tangent)(),
     }
   }
 
   fn tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
-    // TODO
-    unimplemented!();
+    let mut tng_op = self.base.tng_op.borrow_mut();
+    if tng_op.is_none() {
+      *tng_op = Some(self._make_tangent());
+    }
+    tng_op.as_ref().unwrap().clone()
   }
 
-  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
+  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut AdjointSink) {
     if self.base.stack.pop(epoch) {
       // TODO: priority.
       match self.ext.adjoint {
@@ -1349,24 +1448,26 @@ where V1: AVal, V2: AVal, V3: AVal, W: AVal {
     }
   }
 
-  fn adjoint(&self, sink: &mut Sink) {
-    // TODO
-    unimplemented!();
+  fn adjoint(&self, sink: &mut AdjointSink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
+    match sink.get_adj(self.var()) {
+      None => panic!(),
+      Some(adj) => adj,
+    }
   }
 }
 
-pub struct JoinOp<S, V, W> where W: AVal {
+pub struct FJoinOp<S, V, W> {
   base: OpBase<W>,
   ext:  OpExt<W>,
   spec: S,
   xs_:  Vec<Rc<AOp<V=V>>>,
-  y:    W,
+  y:    RWVal<W>,
 }
 
-impl<S, V, W> JoinOp<S, V, W>
-where V: AVal, W: AVal {
-  pub fn new(spec: S, ext: OpExt<W>, xs_: Vec<Rc<AOp<V=V>>>, y: W) -> Self {
-    JoinOp{
+impl<S, V, W> FJoinOp<S, V, W> {
+//where V: AVal, W: AVal {
+  pub fn new(spec: S, ext: OpExt<W>, xs_: Vec<Rc<AOp<V=V>>>, y: RWVal<W>) -> Self {
+    FJoinOp{
       base: OpBase::default(),
       ext:  ext,
       spec: spec,
@@ -1376,8 +1477,8 @@ where V: AVal, W: AVal {
   }
 }
 
-impl<S, V, W> ANode for JoinOp<S, V, W>
-where V: AVal, W: AVal {
+impl<S, V, W> ANode for FJoinOp<S, V, W> {
+//where V: AVal, W: AVal {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
       // TODO: apply priority.
@@ -1398,33 +1499,64 @@ where V: AVal, W: AVal {
     }
   }
 
-  fn _io(&self) -> &AIo {
+  fn _io(&self) -> &IOVal {
     &self.y
+  }
+
+  fn _txn(&self) -> Option<Txn> {
+    self.y.txn()
+  }
+
+  fn _persist(&self, txn: Txn) {
+    self.y.persist(txn);
   }
 
   fn _eval(&self, txn: Txn) {
     (self.ext.func)(txn, self.y.duplicate());
   }
+
+  fn eval(&self, txn: Txn) {
+    if self._txn() != Some(txn) {
+      for x in self.xs_.iter() {
+        x.eval(txn);
+      }
+      self._eval(txn);
+    }
+  }
 }
 
-impl<S, V, W> AOp for JoinOp<S, V, W>
-where V: AVal, W: AVal {
+impl<S, V, W> AOp for FJoinOp<S, V, W> {
+//where V: AVal, W: AVal + 'static {
   type V = W;
 
-  fn _make_value(&self) -> Self::V {
+  fn var(&self) -> RootVar {
+    self.y.root_var()
+  }
+
+  fn _make_value(&self) -> RWVal<Self::V> {
     (self.ext.make)()
   }
 
-  fn value(&self) -> Self::V {
+  fn value(&self) -> RWVal<Self::V> {
     self.y.clone()
   }
 
-  fn tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
-    // TODO
-    unimplemented!();
+  fn _make_tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
+    match self.ext.tangent {
+      None => unimplemented!(),
+      Some(ref tangent) => (tangent)(),
+    }
   }
 
-  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
+  fn tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
+    let mut tng_op = self.base.tng_op.borrow_mut();
+    if tng_op.is_none() {
+      *tng_op = Some(self._make_tangent());
+    }
+    tng_op.as_ref().unwrap().clone()
+  }
+
+  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut AdjointSink) {
     if self.base.stack.pop(epoch) {
       match self.ext.adjoint {
         None => panic!(),
@@ -1436,8 +1568,10 @@ where V: AVal, W: AVal {
     }
   }
 
-  fn adjoint(&self, sink: &mut Sink) {
-    // TODO
-    unimplemented!();
+  fn adjoint(&self, sink: &mut AdjointSink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
+    match sink.get_adj(self.var()) {
+      None => panic!(),
+      Some(adj) => adj,
+    }
   }
 }

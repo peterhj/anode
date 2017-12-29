@@ -83,6 +83,9 @@ pub struct LinearMapOp;
 pub struct Conv1dLinearMapOp;
 pub struct Conv2dLinearMapOp;
 pub struct Conv3dLinearMapOp;
+pub struct TransposeConv1dLinearMapOp;
+pub struct TransposeConv2dLinearMapOp;
+pub struct TransposeConv3dLinearMapOp;
 pub struct Resample2dOp<ResampleF> { f: ResampleF, }
 
 pub struct SoftmaxNLLFusedOp;
@@ -118,29 +121,45 @@ pub struct Pool2dShape {
   pub pad:      [usize; 2],
 }
 
-pub trait SrcOpExt<X, Init, V> where V: AVal {
+pub trait SrcOpExt<V, Init> {
   fn build(init: Init) -> Rc<SrcOp<(), V>>;
 }
 
-pub fn src<X, Init, V>(init: Init) -> Rc<SrcOp<(), V>> where (): SrcOpExt<X, Init, V>, V: AVal {
-  <() as SrcOpExt<X, Init, V>>::build(init)
+pub fn src<V, Init>(init: Init) -> Rc<SrcOp<(), V>> where (): SrcOpExt<V, Init> {
+  <() as SrcOpExt<V, Init>>::build(init)
 }
 
-pub trait ZerosSrcOpExt<X, Init, V> where V: AVal {
+pub trait ZerosSrcOpExt<V, Init> {
   fn build(init: Init) -> Rc<SrcOp<ZerosSrcOp, V>>;
 }
 
-pub fn zeros<X, Init, V>(init: Init) -> Rc<SrcOp<ZerosSrcOp, V>> where ZerosSrcOp: ZerosSrcOpExt<X, Init, V>, V: AVal {
-  <ZerosSrcOp as ZerosSrcOpExt<X, Init, V>>::build(init)
+pub fn zeros<V, Init>(init: Init) -> Rc<SrcOp<ZerosSrcOp, V>> where ZerosSrcOp: ZerosSrcOpExt<V, Init> {
+  <ZerosSrcOp as ZerosSrcOpExt<V, Init>>::build(init)
 }
 
-pub trait SumJoinOpExt<X, V> where V: AVal {
-  fn build(xs_: Vec<Rc<AOp<V=V>>>) -> Rc<JoinOp<SumJoinOp, V, V>>;
+pub trait SumJoinOpMaybeExt<V> {
+  fn maybe_build(xs_: Vec<Rc<AOp<V=V>>>) -> Option<Rc<FJoinOp<SumJoinOp, V, V>>>;
+}
+
+impl<V> SumJoinOpMaybeExt<V> for SumJoinOp {
+  default fn maybe_build(xs_: Vec<Rc<AOp<V=V>>>) -> Option<Rc<FJoinOp<SumJoinOp, V, V>>> {
+    None
+  }
+}
+
+impl<V> SumJoinOpMaybeExt<V> for SumJoinOp where SumJoinOp: SumJoinOpExt<V> {
+  fn maybe_build(xs_: Vec<Rc<AOp<V=V>>>) -> Option<Rc<FJoinOp<SumJoinOp, V, V>>> {
+    Some(<SumJoinOp as SumJoinOpExt<V>>::build(xs_))
+  }
+}
+
+pub trait SumJoinOpExt<V> {
+  fn build(xs_: Vec<Rc<AOp<V=V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>>;
 }
 
 pub trait SumExt<X, V> where V: AVal {
-  fn sum(xs_: Vec<Rc<AOp<V=V>>>) -> Rc<JoinOp<SumJoinOp, V, V>>;
-  fn add(self, x_: Rc<AOp<V=V>>) -> Rc<JoinOp<SumJoinOp, V, V>>;
+  fn sum(xs_: Vec<Rc<AOp<V=V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>>;
+  fn add(self, x_: Rc<AOp<V=V>>) -> Rc<FJoinOp<SumJoinOp, V, V>>;
 }
 
 pub trait FlatMultOpExt<X, V1, A, V2, Y, W>
