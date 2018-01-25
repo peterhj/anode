@@ -34,7 +34,7 @@ extern crate rng;
 //extern crate libc;
 extern crate rand;
 
-use ops::{MemIoReader, MemIoWriter, SumJoinOp, SumJoinOpMaybeExt, SumJoinOpExt};
+use ops::{MemIoReader, MemIoWriter, OnesSrcOp, OnesSrcOpMaybeExt, SumJoinOp, SumJoinOpMaybeExt, SumJoinOpExt};
 
 use std::any::{Any};
 use std::cell::{Cell, RefCell, Ref, RefMut};
@@ -61,7 +61,7 @@ pub fn gen_thread_local_uid() -> u64 {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Txn(u64);
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Epoch(u64);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -128,23 +128,21 @@ pub struct NodeStack {
 impl NodeStack {
   pub fn push(&self, epoch: Epoch) -> bool {
     let mut entries = self.entries.borrow_mut();
-    if entries.is_empty() || entries.last().unwrap().epoch != epoch {
+    if entries.is_empty() || entries.last().unwrap().epoch < epoch {
       entries.push(NodeStackEntry{
         epoch:          epoch,
         push_degree:    1,
         pop_degree:     0,
       });
       true
-    } else {
+    } else if entries.last().unwrap().epoch > epoch {
+      panic!();
+    } else if entries.last().unwrap().epoch == epoch {
       entries.last_mut().unwrap().push_degree += 1;
       false
+    } else {
+      unreachable!();
     }
-  }
-
-  pub fn outdegree(&self) -> usize {
-    let entries = self.entries.borrow();
-    assert!(!entries.is_empty());
-    entries.last().unwrap().push_degree
   }
 
   pub fn pop(&self, epoch: Epoch) -> bool {
@@ -158,6 +156,13 @@ impl NodeStack {
     } else {
       false
     }
+  }
+
+  pub fn outdegree(&self, depth: usize) -> usize {
+    let entries = self.entries.borrow();
+    let num_entries = entries.len();
+    assert!(num_entries >= depth);
+    entries[num_entries - depth].push_degree
   }
 }
 
@@ -192,14 +197,14 @@ pub trait ANode {
   }*/
 }
 
-pub fn swap_val<V, Op>(this: &mut Rc<Op>, new_val: V) where V: AVal, Op: AOp<V=V> {
+/*pub fn swap_val<V, Op>(this: &mut Rc<Op>, new_val: V) where V: AVal, Op: AOp<V=V> {
   match Rc::get_mut(this) {
     None => panic!(),
     Some(this) => {
       this._swap(new_val);
     }
   }
-}
+}*/
 
 pub trait AOp: ANode {
   type V;
@@ -212,8 +217,8 @@ pub trait AOp: ANode {
   fn value(&self) -> RWVal<Self::V>;
   fn _make_tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) { unimplemented!(); }
   fn tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>);
-  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut AdjointSink) { unimplemented!(); }
-  fn adjoint(&self, sink: &mut AdjointSink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>);
+  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) { unimplemented!(); }
+  fn adjoint(&self, sink: &mut Sink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>);
 }
 
 pub trait IOVal {
@@ -223,7 +228,7 @@ pub trait IOVal {
   fn _serialize(&self, txn: Txn, reader: &mut FnMut(&Any));
 }
 
-pub trait AVal: IOVal + Clone {
+/*pub trait AVal: IOVal + Clone {
   type T;
 
   fn duplicate(&self) -> Self where Self: Sized;
@@ -236,19 +241,35 @@ pub trait AVal: IOVal + Clone {
   fn reset(&self);
   fn release(&self);
   fn persist(&self, txn: Txn);
-}
+}*/
 
-pub struct AdjointSink {
+pub struct Sink {
   frozen:   HashSet<RootVar>,
   adj_map:  HashMap<RootVar, Vec<(Rc<ANode>, Rc<Any>)>>,
   join_map: HashMap<RootVar, (Rc<ANode>, Rc<Any>)>,
   adj_seq:  Vec<Rc<ANode>>,
 }
 
-impl AdjointSink {
+impl Sink {
+  pub fn from<V>(sink_op: Rc<AOp<V=V>>) -> Self where V: 'static {
+    let mut sink = Sink{
+      frozen:   HashSet::new(),
+      adj_map:  HashMap::new(),
+      join_map: HashMap::new(),
+      adj_seq:  Vec::new(),
+    };
+    // Add a "ones" adjoint op corresponding to `sink_op`.
+    let sink_adj_op = match <OnesSrcOp as OnesSrcOpMaybeExt<V>>::maybe_build() {
+      None => unimplemented!(),
+      Some(op) => op,
+    };
+    sink.put_adj::<V, _>(sink_op.var(), sink_adj_op);
+    sink
+  }
+
   //pub fn get_adj<V>(&mut self, var: RootVar) -> Option<(Rc<ANode>, Rc<AOp<V=V>>)> where V: RWVal + 'static, SumJoinOp: SumJoinOpExt<V::T, V> {
   //pub fn get_adj<V>(&mut self, var: RootVar) -> Option<(Rc<ANode>, Rc<AOp<V=V>>)> where V: AVal + 'static, SumJoinOp: SumJoinOpExt<V::T, V> {
-  pub fn get_adj<V>(&mut self, var: RootVar) -> Option<(Rc<ANode>, Rc<AOp<V=V>>)> where V: AVal + 'static {
+  pub fn get_adj<V>(&mut self, var: RootVar) -> Option<(Rc<ANode>, Rc<AOp<V=V>>)> where V: 'static {
     self.frozen.insert(var);
     if self.adj_map.contains_key(&var) {
       let adjs = self.adj_map.get(&var).unwrap();
@@ -276,7 +297,7 @@ impl AdjointSink {
             }).collect();
             //let join = SumJoinOp::build(adj_ops);
             //let join = SumJoinOp::maybe_build::<V>(adj_ops).unwrap();
-            let join = <SumJoinOp as SumJoinOpMaybeExt<V::T, V>>::maybe_build(adj_ops).unwrap();
+            let join = <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build(adj_ops).unwrap();
             let join_node: Rc<ANode> = join.clone();
             let join_op: Rc<AOp<V=V>> = join;
             self.join_map.insert(var, (join_node.clone(), Rc::new(join_op.clone())));
@@ -288,7 +309,7 @@ impl AdjointSink {
     None
   }
 
-  pub fn put_adj<V, Op>(&mut self, var: RootVar, mut adj_op: Rc<Op>) where V: AVal + 'static, Op: AOp<V=V> + 'static {
+  pub fn put_adj<V, Op>(&mut self, var: RootVar, mut adj_op: Rc<Op>) where V: 'static, Op: AOp<V=V> + 'static {
     assert!(!self.frozen.contains(&var));
     if self.adj_map.contains_key(&var) {
       let mut adjs = self.adj_map.get_mut(&var).unwrap();
@@ -314,13 +335,16 @@ impl AdjointSink {
   }
 }
 
-pub struct OpBase<V> where V: AVal {
+pub struct ClobberTransform {
+}
+
+pub struct OpBase<V> {
   ref_:     NodeRef,
   stack:    NodeStack,
   tng_op:   RefCell<Option<(Rc<ANode>, Rc<AOp<V=V>>)>>,
 }
 
-impl<V> Default for OpBase<V> where V: AVal {
+impl<V> Default for OpBase<V> {
   fn default() -> Self {
     OpBase{
       ref_:     NodeRef::default(),
@@ -331,11 +355,17 @@ impl<V> Default for OpBase<V> where V: AVal {
 }
 
 #[derive(Default)]
-pub struct NodeCollection {
+pub struct NodeVector {
   nodes:    Vec<Rc<ANode>>,
 }
 
-impl ANode for NodeCollection {
+impl NodeVector {
+  pub fn from(nodes: Vec<Rc<ANode>>) -> Self {
+    NodeVector{nodes: nodes}
+  }
+}
+
+/*impl ANode for NodeVector {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     // FIXME: priority.
     for node in self.nodes.iter() {
@@ -357,7 +387,7 @@ impl ANode for NodeCollection {
   fn _eval(&self, _txn: Txn) {
     // TODO
   }
-}
+}*/
 
 #[derive(Default)]
 pub struct VarCollection {
@@ -373,7 +403,7 @@ pub struct NodeRefMap<T> {
 pub enum WriteMode {
   Exclusive,
   Accumulate,
-  Clobber,
+  //Clobber,
 }
 
 #[derive(Clone, Copy)]
@@ -471,16 +501,6 @@ impl<T> Clone for RWVal<T> {
 }
 
 impl<T> IOVal for RWVal<T> where T: 'static {
-  /*fn _load(&self, txn: Txn, writer: &mut Any) {
-    // TODO
-    unimplemented!();
-  }
-
-  fn _store(&self, txn: Txn, reader: &mut Any) {
-    // TODO
-    unimplemented!();
-  }*/
-
   fn _deserialize(&self, txn: Txn, write: &mut FnMut(WriteMode, &mut Any)) {
     if let Some((mode, token)) = self.write(txn) {
       let mut buf = self.get_mut(txn, token);
@@ -494,10 +514,11 @@ impl<T> IOVal for RWVal<T> where T: 'static {
   }
 }
 
-impl<T> AVal for RWVal<T> where T: 'static {
-  type T = T;
+//impl<T> AVal for RWVal<T> where T: 'static {
+impl<T> RWVal<T> where T: 'static {
+  //type T = T;
 
-  fn duplicate(&self) -> Self {
+  pub fn duplicate(&self) -> Self {
     RWVal{
       ref_:     self.ref_,
       alloc:    self.alloc.clone(),
@@ -508,20 +529,20 @@ impl<T> AVal for RWVal<T> where T: 'static {
     }
   }
 
-  fn root_var(&self) -> RootVar {
+  pub fn root_var(&self) -> RootVar {
     self.root
   }
 
-  fn tmp_var(&self) -> TmpVar {
+  pub fn tmp_var(&self) -> TmpVar {
     self.var
   }
 
-  fn txn(&self) -> Option<Txn> {
+  pub fn txn(&self) -> Option<Txn> {
     let buf = self.buf.borrow();
     buf.curr_txn
   }
 
-  fn reset(&self) {
+  pub fn reset(&self) {
     let mut buf = self.buf.borrow_mut();
     buf.curr_txn = None;
     buf.l_consumers.clear();
@@ -530,13 +551,13 @@ impl<T> AVal for RWVal<T> where T: 'static {
     buf.d_producers.clear();
   }
 
-  fn release(&self) {
+  pub fn release(&self) {
     self.reset();
     let mut buf = self.buf.borrow_mut();
     buf.data = None;
   }
 
-  fn persist(&self, txn: Txn) {
+  pub fn persist(&self, txn: Txn) {
     let new_txn = {
       let buf = self.buf.borrow();
       buf.curr_txn.is_none() || buf.curr_txn.unwrap() != txn
@@ -561,9 +582,9 @@ impl<T> AVal for RWVal<T> where T: 'static {
         "`persist` should be called before reads");
     buf.l_producers.insert(self.var);
   }
-}
+//}
 
-impl<T> RWVal<T> where T: 'static {
+//impl<T> RWVal<T> where T: 'static {
   pub fn from(alloc: Rc<Fn(Txn) -> T>) -> Self {
     let var = TmpVar::default();
     RWVal{
@@ -636,7 +657,7 @@ impl<T> RWVal<T> where T: 'static {
         assert!(buf.l_consumers.is_empty(),
             "attempting write to `Exclusive` val after read");
       }
-      WriteMode::Clobber => {
+      /*WriteMode::Clobber => {
         match (buf.l_producers.len(), buf.d_producers.len()) {
           (0, 0) => {}
           (1, _) => {
@@ -654,7 +675,7 @@ impl<T> RWVal<T> where T: 'static {
             ..} = &mut *buf;
         d_consumers.extend(l_consumers.drain());
         d_producers.extend(l_producers.drain());
-      }
+      }*/
     }
 
     let first = buf.l_producers.is_empty();
@@ -974,23 +995,22 @@ impl<'a, T> FnMut<(WriteMode, &'a mut Any)> for FlatWriter<'a, T> where FlatWrit
 }
 
 pub struct OpExt<V> {
-  make:     Rc<Fn() -> V>,
-  func:     Rc<Fn(Txn, V)>,
+  make:     Rc<Fn() -> RWVal<V>>,
+  func:     Rc<Fn(Txn, RWVal<V>)>,
   tangent:  Option<Rc<Fn() -> (Rc<ANode>, Rc<AOp<V=V>>)>>,
-  adjoint:  Option<Rc<Fn(Rc<AOp<V=V>>, &mut AdjointSink)>>,
+  adjoint:  Option<Rc<Fn(Rc<AOp<V=V>>, &mut Sink)>>,
 }
 
-pub struct SrcOp<S, V> {
+pub struct FSrcOp<S, V> {
   base: OpBase<V>,
   ext:  OpExt<V>,
   spec: S,
   val:  RWVal<V>,
 }
 
-impl<S, V> SrcOp<S, V> {
-//where V: AVal {
+impl<S, V> FSrcOp<S, V> {
   pub fn new(spec: S, ext: OpExt<V>, val: RWVal<V>) -> Self {
-    SrcOp{
+    FSrcOp{
       base: OpBase::default(),
       ext:  ext,
       spec: spec,
@@ -999,8 +1019,7 @@ impl<S, V> SrcOp<S, V> {
   }
 }
 
-impl<S, V> ANode for SrcOp<S, V> {
-//where V: AVal {
+impl<S, V> ANode for FSrcOp<S, V> where RWVal<V>: IOVal + 'static {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     // TODO
   }
@@ -1052,8 +1071,7 @@ impl<S, V> ANode for SrcOp<S, V> {
   }
 }
 
-impl<S, V> AOp for SrcOp<S, V> {
-//where V: AVal + 'static {
+impl<S, V> AOp for FSrcOp<S, V> where RWVal<V>: IOVal + 'static {
   type V = V;
 
   fn var(&self) -> RootVar {
@@ -1080,7 +1098,7 @@ impl<S, V> AOp for SrcOp<S, V> {
     unimplemented!();
   }
 
-  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut AdjointSink) {
+  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
     if self.base.stack.pop(epoch) {
       match self.ext.adjoint {
         None => panic!(),
@@ -1089,7 +1107,7 @@ impl<S, V> AOp for SrcOp<S, V> {
     }
   }
 
-  fn adjoint(&self, sink: &mut AdjointSink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
+  fn adjoint(&self, sink: &mut Sink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
     match sink.get_adj(self.var()) {
       None => panic!(),
       Some(adj) => adj,
@@ -1123,7 +1141,6 @@ pub struct F1Op<S, V1, W> {
 }
 
 impl<S, V1, W> F1Op<S, V1, W> {
-//where V1: AVal, W: AVal {
   pub fn new(spec: S, ext: OpExt<W>, x_: Rc<AOp<V=V1>>, y: RWVal<W>) -> Self {
     F1Op{
       base: OpBase::default(),
@@ -1135,8 +1152,7 @@ impl<S, V1, W> F1Op<S, V1, W> {
   }
 }
 
-impl<S, V1, W> ANode for F1Op<S, V1, W> {
-//where V1: AVal, W: AVal {
+impl<S, V1, W> ANode for F1Op<S, V1, W> where RWVal<W>: IOVal + 'static {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
       // TODO: apply priority.
@@ -1171,14 +1187,13 @@ impl<S, V1, W> ANode for F1Op<S, V1, W> {
 
   fn eval(&self, txn: Txn) {
     if self._txn() != Some(txn) {
-      self.x1_.eval(txn);
+      self.x_.eval(txn);
       self._eval(txn);
     }
   }
 }
 
-impl<S, V1, W> AOp for F1Op<S, V1, W> {
-//where V1: AVal, W: AVal + 'static {
+impl<S, V1, W> AOp for F1Op<S, V1, W> where RWVal<W>: IOVal + 'static {
   type V = W;
 
   fn var(&self) -> RootVar {
@@ -1208,7 +1223,7 @@ impl<S, V1, W> AOp for F1Op<S, V1, W> {
     tng_op.as_ref().unwrap().clone()
   }
 
-  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut AdjointSink) {
+  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
     if self.base.stack.pop(epoch) {
       // TODO: priority.
       match self.ext.adjoint {
@@ -1219,11 +1234,72 @@ impl<S, V1, W> AOp for F1Op<S, V1, W> {
     }
   }
 
-  fn adjoint(&self, sink: &mut AdjointSink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
+  fn adjoint(&self, sink: &mut Sink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
     match sink.get_adj(self.var()) {
       None => panic!(),
       Some(adj) => adj,
     }
+  }
+}
+
+pub struct F1ClobberOp<S, V1, W> {
+  base: OpBase<W>,
+  ext:  OpExt<W>,
+  spec: S,
+  x_:   Rc<AOp<V=V1>>,
+  y:    RWVal<W>,
+}
+
+impl<S, V1, W> ANode for F1ClobberOp<S, V1, W> where RWVal<W>: IOVal + 'static {
+  fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
+    if self.base.stack.push(epoch) {
+      // TODO: apply priority.
+      self.x_._push(epoch, filter, apply);
+      apply(self);
+    }
+  }
+
+  fn _pop(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
+    if self.base.stack.pop(epoch) {
+      // TODO: apply priority.
+      apply(self);
+      self.x_._pop(epoch, filter, apply);
+    }
+  }
+
+  fn _io(&self) -> &IOVal {
+    &self.y
+  }
+
+  fn _txn(&self) -> Option<Txn> {
+    self.y.txn()
+  }
+
+  fn _persist(&self, txn: Txn) {
+    self.y.persist(txn);
+  }
+
+  fn _eval(&self, txn: Txn) {
+    (self.ext.func)(txn, self.y.duplicate());
+  }
+
+  fn eval(&self, txn: Txn) {
+    /*if self._txn() != Some(txn) {
+      self.x_.eval(txn);
+      self._eval(txn);
+    }*/
+    let e = epoch();
+    self._push(e, &|_| true, &mut |node| {});
+    let e2 = epoch();
+    self._push(e2, &|_| true, &mut |node| {
+      // TODO: We want a variant of `apply` that runs on _every_ `_push`.
+      // When the push count is equal to the previously calculated outdegree,
+      // we are ready to clobber the value.
+      //let deg = node._stack().outdegree(2);
+      unimplemented!();
+    });
+    self._pop(e2, &|_| true, &mut |node| {});
+    self._pop(e, &|_| true, &mut |node| {});
   }
 }
 
@@ -1237,7 +1313,6 @@ pub struct F2Op<S, V1, V2, W> {
 }
 
 impl<S, V1, V2, W> F2Op<S, V1, V2, W> {
-//where V1: AVal, V2: AVal, W: AVal {
   pub fn new(spec: S, ext: OpExt<W>, x1_: Rc<AOp<V=V1>>, x2_: Rc<AOp<V=V2>>, y: RWVal<W>) -> Self {
     F2Op{
       base: OpBase::default(),
@@ -1250,8 +1325,7 @@ impl<S, V1, V2, W> F2Op<S, V1, V2, W> {
   }
 }
 
-impl<S, V1, V2, W> ANode for F2Op<S, V1, V2, W> {
-//where V1: AVal, V2: AVal, W: AVal {
+impl<S, V1, V2, W> ANode for F2Op<S, V1, V2, W> where RWVal<W>: IOVal + 'static {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
       // TODO: apply priority.
@@ -1295,8 +1369,7 @@ impl<S, V1, V2, W> ANode for F2Op<S, V1, V2, W> {
   }
 }
 
-impl<S, V1, V2, W> AOp for F2Op<S, V1, V2, W> {
-//where V1: AVal, V2: AVal, W: AVal + 'static {
+impl<S, V1, V2, W> AOp for F2Op<S, V1, V2, W> where RWVal<W>: IOVal + 'static {
   type V = W;
 
   fn var(&self) -> RootVar {
@@ -1326,7 +1399,7 @@ impl<S, V1, V2, W> AOp for F2Op<S, V1, V2, W> {
     tng_op.as_ref().unwrap().clone()
   }
 
-  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut AdjointSink) {
+  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
     if self.base.stack.pop(epoch) {
       // TODO: priority.
       match self.ext.adjoint {
@@ -1338,7 +1411,7 @@ impl<S, V1, V2, W> AOp for F2Op<S, V1, V2, W> {
     }
   }
 
-  fn adjoint(&self, sink: &mut AdjointSink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
+  fn adjoint(&self, sink: &mut Sink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
     match sink.get_adj(self.var()) {
       None => panic!(),
       Some(adj) => adj,
@@ -1356,8 +1429,7 @@ pub struct F3Op<S, V1, V2, V3, W> {
   y:    RWVal<W>,
 }
 
-impl<S, V1, V2, V3, W> ANode for F3Op<S, V1, V2, V3, W> {
-//where V1: AVal, V2: AVal, V3: AVal, W: AVal {
+impl<S, V1, V2, V3, W> ANode for F3Op<S, V1, V2, V3, W> where RWVal<W>: IOVal + 'static {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
       // TODO: apply priority.
@@ -1404,8 +1476,7 @@ impl<S, V1, V2, V3, W> ANode for F3Op<S, V1, V2, V3, W> {
   }
 }
 
-impl<S, V1, V2, V3, W> AOp for F3Op<S, V1, V2, V3, W> {
-//where V1: AVal, V2: AVal, V3: AVal, W: AVal + 'static {
+impl<S, V1, V2, V3, W> AOp for F3Op<S, V1, V2, V3, W> where RWVal<W>: IOVal + 'static {
   type V = W;
 
   fn var(&self) -> RootVar {
@@ -1435,7 +1506,7 @@ impl<S, V1, V2, V3, W> AOp for F3Op<S, V1, V2, V3, W> {
     tng_op.as_ref().unwrap().clone()
   }
 
-  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut AdjointSink) {
+  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
     if self.base.stack.pop(epoch) {
       // TODO: priority.
       match self.ext.adjoint {
@@ -1448,7 +1519,7 @@ impl<S, V1, V2, V3, W> AOp for F3Op<S, V1, V2, V3, W> {
     }
   }
 
-  fn adjoint(&self, sink: &mut AdjointSink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
+  fn adjoint(&self, sink: &mut Sink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
     match sink.get_adj(self.var()) {
       None => panic!(),
       Some(adj) => adj,
@@ -1465,7 +1536,6 @@ pub struct FJoinOp<S, V, W> {
 }
 
 impl<S, V, W> FJoinOp<S, V, W> {
-//where V: AVal, W: AVal {
   pub fn new(spec: S, ext: OpExt<W>, xs_: Vec<Rc<AOp<V=V>>>, y: RWVal<W>) -> Self {
     FJoinOp{
       base: OpBase::default(),
@@ -1477,8 +1547,7 @@ impl<S, V, W> FJoinOp<S, V, W> {
   }
 }
 
-impl<S, V, W> ANode for FJoinOp<S, V, W> {
-//where V: AVal, W: AVal {
+impl<S, V, W> ANode for FJoinOp<S, V, W> where RWVal<W>: IOVal + 'static {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
       // TODO: apply priority.
@@ -1525,8 +1594,7 @@ impl<S, V, W> ANode for FJoinOp<S, V, W> {
   }
 }
 
-impl<S, V, W> AOp for FJoinOp<S, V, W> {
-//where V: AVal, W: AVal + 'static {
+impl<S, V, W> AOp for FJoinOp<S, V, W> where RWVal<W>: IOVal + 'static {
   type V = W;
 
   fn var(&self) -> RootVar {
@@ -1556,7 +1624,7 @@ impl<S, V, W> AOp for FJoinOp<S, V, W> {
     tng_op.as_ref().unwrap().clone()
   }
 
-  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut AdjointSink) {
+  fn _pop_adjoint(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, this: Rc<AOp<V=Self::V>>, sink: &mut Sink) {
     if self.base.stack.pop(epoch) {
       match self.ext.adjoint {
         None => panic!(),
@@ -1568,7 +1636,7 @@ impl<S, V, W> AOp for FJoinOp<S, V, W> {
     }
   }
 
-  fn adjoint(&self, sink: &mut AdjointSink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
+  fn adjoint(&self, sink: &mut Sink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
     match sink.get_adj(self.var()) {
       None => panic!(),
       Some(adj) => adj,

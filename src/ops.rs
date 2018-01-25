@@ -122,19 +122,29 @@ pub struct Pool2dShape {
 }
 
 pub trait SrcOpExt<V, Init> {
-  fn build(init: Init) -> Rc<SrcOp<(), V>>;
+  fn build(init: Init) -> Rc<FSrcOp<(), V>>;
 }
 
-pub fn src<V, Init>(init: Init) -> Rc<SrcOp<(), V>> where (): SrcOpExt<V, Init> {
+pub fn src<V, Init>(init: Init) -> Rc<FSrcOp<(), V>> where (): SrcOpExt<V, Init> {
   <() as SrcOpExt<V, Init>>::build(init)
 }
 
 pub trait ZerosSrcOpExt<V, Init> {
-  fn build(init: Init) -> Rc<SrcOp<ZerosSrcOp, V>>;
+  fn build(init: Init) -> Rc<FSrcOp<ZerosSrcOp, V>>;
 }
 
-pub fn zeros<V, Init>(init: Init) -> Rc<SrcOp<ZerosSrcOp, V>> where ZerosSrcOp: ZerosSrcOpExt<V, Init> {
+pub fn zeros<V, Init>(init: Init) -> Rc<FSrcOp<ZerosSrcOp, V>> where ZerosSrcOp: ZerosSrcOpExt<V, Init> {
   <ZerosSrcOp as ZerosSrcOpExt<V, Init>>::build(init)
+}
+
+pub trait OnesSrcOpMaybeExt<V> {
+  fn maybe_build() -> Option<Rc<FSrcOp<OnesSrcOp, V>>>;
+}
+
+impl<V> OnesSrcOpMaybeExt<V> for OnesSrcOp {
+  default fn maybe_build() -> Option<Rc<FSrcOp<OnesSrcOp, V>>> {
+    None
+  }
 }
 
 pub trait SumJoinOpMaybeExt<V> {
@@ -157,32 +167,22 @@ pub trait SumJoinOpExt<V> {
   fn build(xs_: Vec<Rc<AOp<V=V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>>;
 }
 
-pub trait SumExt<X, V> where V: AVal {
+pub trait SumExt<X, V> {
   fn sum(xs_: Vec<Rc<AOp<V=V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>>;
   fn add(self, x_: Rc<AOp<V=V>>) -> Rc<FJoinOp<SumJoinOp, V, V>>;
 }
 
 pub trait FlatMultOpExt<X, V1, A, V2, Y, W>
-where V1: AVal,
-      V2: AVal,
-      W:  AVal,
 {
   fn flat_mult(self, x: Rc<AOp<V=V1>>) -> Rc<F2Op<FlatLinearMapOp, V1, V2, W>>;
 }
 
 pub trait MultOpExt<X, V1, A, V2, Y, W>
-where V1: AVal,
-      V2: AVal,
-      W:  AVal,
 {
   fn mult(self, x: Rc<AOp<V=V1>>) -> Rc<F2Op<LinearMapOp, V1, V2, W>>;
 }
 
 pub trait MultAddOpExt<X, V1, A, V2, B, V3, Y, W>
-where V1: AVal,
-      V2: AVal,
-      V3: AVal,
-      W:  AVal,
 {
   fn mult_add(self, x: Rc<AOp<V=V1>>, shift: Rc<AOp<V=V3>>) -> Rc<F3Op<LinearMapOp, V1, V2, V3, W>>;
 }
