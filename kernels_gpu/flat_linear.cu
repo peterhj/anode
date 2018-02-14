@@ -37,10 +37,10 @@ extern "C" void anode_gpu_flat_mult_f32(
     const float *lx,
     const float *rx,
     float *y,
-    KernelConfig cfg,
+    const KernelConfig *cfg,
     cudaStream_t stream)
 {
-  anode_gpu_flat_mult_kernel<float><<<cfg.flat_grid_dim(len), cfg.flat_block_dim(), 0, stream>>>(
+  anode_gpu_flat_mult_kernel<float><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
       len, lx, rx, y);
 }
 
@@ -66,9 +66,9 @@ extern "C" void anode_gpu_flat_mult_add_f32(
     const float *rx,
     const float *shift,
     float *y,
-    KernelConfig cfg,
+    const KernelConfig *cfg,
     cudaStream_t stream)
 {
-  anode_gpu_flat_mult_add_kernel<float><<<cfg.flat_grid_dim(len), cfg.flat_block_dim(), 0, stream>>>(
+  anode_gpu_flat_mult_add_kernel<float><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
       len, lx, rx, shift, y);
 }

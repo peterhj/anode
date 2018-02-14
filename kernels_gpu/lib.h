@@ -27,13 +27,52 @@ extern "C" {
 struct KernelConfig;
 struct CUstream_st;
 
+// "bcast_flat_linear.cu"
+
+void anode_gpu_bcast_flat_mult_I1b_I2ab_Oab_packed_f32(
+    uint32_t inner_dim,
+    uint32_t bcast_dim,
+    const float *lx,
+    const float *rx,
+    float *y,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+void anode_gpu_bcast_flat_mult_add_I1b_I2ab_Oab_packed_f32(
+    uint32_t inner_dim,
+    uint32_t bcast_dim,
+    const float *lx,
+    const float *rx,
+    const float *shift,
+    float *y,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+void anode_gpu_bcast_flat_mult_I1b_I2abc_Oabc_packed_f32(
+    uint32_t inner_dim,
+    uint32_t bcast_dim,
+    uint32_t outer_dim,
+    const float *lx,
+    const float *rx,
+    float *y,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+void anode_gpu_bcast_flat_mult_add_I1b_I2abc_Oabc_packed_f32(
+    uint32_t inner_dim,
+    uint32_t bcast_dim,
+    uint32_t outer_dim,
+    const float *lx,
+    const float *rx,
+    const float *shift,
+    float *y,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+
 // "flat_linear.cu"
 void anode_gpu_flat_mult_f32(
     uint32_t len,
     const float *lx,
     const float *rx,
     float *y,
-    struct KernelConfig cfg,
+    const struct KernelConfig *cfg,
     struct CUstream_st *stream);
 void anode_gpu_flat_mult_add_f32(
     uint32_t len,
@@ -41,7 +80,7 @@ void anode_gpu_flat_mult_add_f32(
     const float *rx,
     const float *shift,
     float *y,
-    struct KernelConfig cfg,
+    const struct KernelConfig *cfg,
     struct CUstream_st *stream);
 
 // "flat_map.cu"
@@ -49,49 +88,59 @@ void anode_gpu_copy_flat_map_f32(
     uint32_t len,
     const float *x,
     float *y,
-    struct KernelConfig cfg,
+    const struct KernelConfig *cfg,
     struct CUstream_st *stream);
 void anode_gpu_modulus_flat_map_f32(
     uint32_t len,
     const float *x,
     float *y,
-    struct KernelConfig cfg,
+    const struct KernelConfig *cfg,
     struct CUstream_st *stream);
 void anode_gpu_square_flat_map_f32(
     uint32_t len,
     const float *x,
     float *y,
-    struct KernelConfig cfg,
+    const struct KernelConfig *cfg,
     struct CUstream_st *stream);
 void anode_gpu_positive_clip_flat_map_f32(
     uint32_t len,
     const float *x,
     float *y,
-    struct KernelConfig cfg,
+    const struct KernelConfig *cfg,
     struct CUstream_st *stream);
 void anode_gpu_unit_step_flat_map_f32(
     uint32_t len,
     const float *x,
     float *y,
-    struct KernelConfig cfg,
+    const struct KernelConfig *cfg,
     struct CUstream_st *stream);
 void anode_gpu_normal_cdf_flat_map_f32(
     uint32_t len,
     const float *x,
     float *y,
-    struct KernelConfig cfg,
+    const struct KernelConfig *cfg,
     struct CUstream_st *stream);
 void anode_gpu_tanh_flat_map_f32(
     uint32_t len,
     const float *x,
     float *y,
-    struct KernelConfig cfg,
+    const struct KernelConfig *cfg,
     struct CUstream_st *stream);
 void anode_gpu_rcosh2_flat_map_f32(
     uint32_t len,
     const float *x,
     float *y,
-    struct KernelConfig cfg,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+
+// "reduce.cu"
+
+void anode_gpu_sum_reduce_Iab_Ob_packed_deterministic_f32(
+    uint32_t reduce_dim,
+    uint32_t outer_dim,
+    const float *x,
+    float *y,
+    const struct KernelConfig *cfg,
     struct CUstream_st *stream);
 
 #ifdef __cplusplus

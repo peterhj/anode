@@ -21,7 +21,7 @@ limitations under the License.
 #![feature(specialization)]
 #![feature(unboxed_closures)]
 
-extern crate arithmetic;
+//extern crate arithmetic;
 //extern crate async_execution;
 #[cfg(feature = "gpu")] extern crate cuda;
 #[cfg(feature = "gpu")] extern crate cuda_blas;
@@ -174,27 +174,14 @@ pub trait ANode {
 
   fn _txn(&self) -> Option<Txn>;
   fn _persist(&self, txn: Txn);
-  fn _eval(&self, txn: Txn);
+  fn _apply(&self, txn: Txn);
 
   /*fn deserialize_forward(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any));
   fn deserialize_reverse(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any));
   fn serialize_forward(&self, txn: Txn, reader: &mut FnMut(&mut Any));
   fn serialize_reverse(&self, txn: Txn, reader: &mut FnMut(&mut Any));*/
   fn eval(&self, txn: Txn);
-
-  /*fn eval(&self, txn: Txn) {
-    let epoch = Epoch::default();
-    // TODO
-    self._push(epoch, &|_| true, &mut |node| node._eval(txn));
-    self._pop(epoch, &|_| true, &mut |_node| {});
-  }*/
-
-  /*fn eval_prioritized(&self, txn: Txn, priority: &NodeRefMap<isize>) {
-    let epoch = Epoch::default();
-    // TODO
-    self._push(epoch, priority, &|_| true, &mut |node| node._eval(txn));
-    self._pop(epoch, priority, &|_| true, &mut |_node| {});
-  }*/
+  fn cleanup(&self, txn: Txn);
 }
 
 /*pub fn swap_val<V, Op>(this: &mut Rc<Op>, new_val: V) where V: AVal, Op: AOp<V=V> {
@@ -384,7 +371,7 @@ impl NodeVector {
     unimplemented!();
   }
 
-  fn _eval(&self, _txn: Txn) {
+  fn _apply(&self, _txn: Txn) {
     // TODO
   }
 }*/
@@ -1001,25 +988,25 @@ pub struct OpExt<V> {
   adjoint:  Option<Rc<Fn(Rc<AOp<V=V>>, &mut Sink)>>,
 }
 
-pub struct FSrcOp<S, V> {
+pub struct FSrcOp<F, V> {
   base: OpBase<V>,
   ext:  OpExt<V>,
-  spec: S,
+  fun:  F,
   val:  RWVal<V>,
 }
 
-impl<S, V> FSrcOp<S, V> {
-  pub fn new(spec: S, ext: OpExt<V>, val: RWVal<V>) -> Self {
+impl<F, V> FSrcOp<F, V> {
+  pub fn new(fun: F, ext: OpExt<V>, val: RWVal<V>) -> Self {
     FSrcOp{
       base: OpBase::default(),
       ext:  ext,
-      spec: spec,
+      fun:  fun,
       val:  val,
     }
   }
 }
 
-impl<S, V> ANode for FSrcOp<S, V> where RWVal<V>: IOVal + 'static {
+impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     // TODO
   }
@@ -1040,7 +1027,7 @@ impl<S, V> ANode for FSrcOp<S, V> where RWVal<V>: IOVal + 'static {
     self.val.persist(txn);
   }
 
-  fn _eval(&self, txn: Txn) {
+  fn _apply(&self, txn: Txn) {
     (self.ext.func)(txn, self.val.duplicate());
   }
 
@@ -1064,14 +1051,17 @@ impl<S, V> ANode for FSrcOp<S, V> where RWVal<V>: IOVal + 'static {
     unimplemented!();
   }*/
 
+  fn cleanup(&self, txn: Txn) {
+  }
+
   fn eval(&self, txn: Txn) {
     if self._txn() != Some(txn) {
-      self._eval(txn);
+      self._apply(txn);
     }
   }
 }
 
-impl<S, V> AOp for FSrcOp<S, V> where RWVal<V>: IOVal + 'static {
+impl<F, V> AOp for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
   type V = V;
 
   fn var(&self) -> RootVar {
@@ -1115,44 +1105,49 @@ impl<S, V> AOp for FSrcOp<S, V> where RWVal<V>: IOVal + 'static {
   }
 }
 
-/*pub struct Pipe1Op<S, V, W> where W: AVal {
+/*pub struct Pipe1Op<F, V, W> where W: AVal {
   base: OpBase<W>,
   ext:  OpExt<W>,
-  spec: S,
+  fun:  F,
   // TODO: should not contain an input `x` but instead a "slot" in which to
   // pipe an input of the same type.
   x_:   Rc<AOp<V=V>>,
   y:    W,
 }
 
-impl<S, V, W> Pipe1Op<S, V, W>
+impl<F, V, W> Pipe1Op<F, V, W>
 where V: AVal, W: AVal {
   pub fn attach(&self, txn: Txn, input: Rc<AOp<V=V>>) {
     // TODO: figure out `attach` semantics.
   }
 }*/
 
-pub struct F1Op<S, V1, W> {
+pub struct F1Op<F, V1, W> {
   base: OpBase<W>,
   ext:  OpExt<W>,
-  spec: S,
+  fun:  F,
   x_:   Rc<AOp<V=V1>>,
   y:    RWVal<W>,
 }
 
-impl<S, V1, W> F1Op<S, V1, W> {
-  pub fn new(spec: S, ext: OpExt<W>, x_: Rc<AOp<V=V1>>, y: RWVal<W>) -> Self {
+impl<F, V1, W> F1Op<F, V1, W> {
+  pub fn new(fun: F, ext: OpExt<W>, x_: Rc<AOp<V=V1>>, y: RWVal<W>) -> Self {
     F1Op{
       base: OpBase::default(),
       ext:  ext,
-      spec: spec,
+      fun:  fun,
       x_:   x_,
       y:    y,
     }
   }
+
+  pub fn greedy_clobber(&self) -> Rc<F1GreedyClobberOp<F, V1, W>> {
+    // TODO
+    unimplemented!();
+  }
 }
 
-impl<S, V1, W> ANode for F1Op<S, V1, W> where RWVal<W>: IOVal + 'static {
+impl<F, V1, W> ANode for F1Op<F, V1, W> where RWVal<W>: IOVal + 'static {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
       // TODO: apply priority.
@@ -1181,19 +1176,23 @@ impl<S, V1, W> ANode for F1Op<S, V1, W> where RWVal<W>: IOVal + 'static {
     self.y.persist(txn);
   }
 
-  fn _eval(&self, txn: Txn) {
+  fn _apply(&self, txn: Txn) {
     (self.ext.func)(txn, self.y.duplicate());
+  }
+
+  fn cleanup(&self, txn: Txn) {
   }
 
   fn eval(&self, txn: Txn) {
     if self._txn() != Some(txn) {
       self.x_.eval(txn);
-      self._eval(txn);
+      self._apply(txn);
+      self.x_.cleanup(txn);
     }
   }
 }
 
-impl<S, V1, W> AOp for F1Op<S, V1, W> where RWVal<W>: IOVal + 'static {
+impl<F, V1, W> AOp for F1Op<F, V1, W> where RWVal<W>: IOVal + 'static {
   type V = W;
 
   fn var(&self) -> RootVar {
@@ -1242,15 +1241,23 @@ impl<S, V1, W> AOp for F1Op<S, V1, W> where RWVal<W>: IOVal + 'static {
   }
 }
 
-pub struct F1ClobberOp<S, V1, W> {
+pub struct F1GreedyClobberOp<F, V1, W> {
   base: OpBase<W>,
   ext:  OpExt<W>,
-  spec: S,
+  fun:  F,
   x_:   Rc<AOp<V=V1>>,
   y:    RWVal<W>,
 }
 
-impl<S, V1, W> ANode for F1ClobberOp<S, V1, W> where RWVal<W>: IOVal + 'static {
+pub struct F1ClobberOp<F, V1, W> {
+  base: OpBase<W>,
+  ext:  OpExt<W>,
+  fun:  F,
+  x_:   Rc<AOp<V=V1>>,
+  y:    RWVal<W>,
+}
+
+impl<F, V1, W> ANode for F1ClobberOp<F, V1, W> where RWVal<W>: IOVal + 'static {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
       // TODO: apply priority.
@@ -1279,14 +1286,18 @@ impl<S, V1, W> ANode for F1ClobberOp<S, V1, W> where RWVal<W>: IOVal + 'static {
     self.y.persist(txn);
   }
 
-  fn _eval(&self, txn: Txn) {
+  fn _apply(&self, txn: Txn) {
     (self.ext.func)(txn, self.y.duplicate());
+  }
+
+  fn cleanup(&self, txn: Txn) {
+    // TODO
   }
 
   fn eval(&self, txn: Txn) {
     /*if self._txn() != Some(txn) {
       self.x_.eval(txn);
-      self._eval(txn);
+      self._apply(txn);
     }*/
     let e = epoch();
     self._push(e, &|_| true, &mut |node| {});
@@ -1303,21 +1314,21 @@ impl<S, V1, W> ANode for F1ClobberOp<S, V1, W> where RWVal<W>: IOVal + 'static {
   }
 }
 
-pub struct F2Op<S, V1, V2, W> {
+pub struct F2Op<F, V1, V2, W> {
   base: OpBase<W>,
   ext:  OpExt<W>,
-  spec: S,
+  fun:  F,
   x1_:  Rc<AOp<V=V1>>,
   x2_:  Rc<AOp<V=V2>>,
   y:    RWVal<W>,
 }
 
-impl<S, V1, V2, W> F2Op<S, V1, V2, W> {
-  pub fn new(spec: S, ext: OpExt<W>, x1_: Rc<AOp<V=V1>>, x2_: Rc<AOp<V=V2>>, y: RWVal<W>) -> Self {
+impl<F, V1, V2, W> F2Op<F, V1, V2, W> {
+  pub fn new(fun: F, ext: OpExt<W>, x1_: Rc<AOp<V=V1>>, x2_: Rc<AOp<V=V2>>, y: RWVal<W>) -> Self {
     F2Op{
       base: OpBase::default(),
       ext:  ext,
-      spec: spec,
+      fun:  fun,
       x1_:  x1_,
       x2_:  x2_,
       y:    y,
@@ -1325,7 +1336,7 @@ impl<S, V1, V2, W> F2Op<S, V1, V2, W> {
   }
 }
 
-impl<S, V1, V2, W> ANode for F2Op<S, V1, V2, W> where RWVal<W>: IOVal + 'static {
+impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where RWVal<W>: IOVal + 'static {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
       // TODO: apply priority.
@@ -1356,20 +1367,25 @@ impl<S, V1, V2, W> ANode for F2Op<S, V1, V2, W> where RWVal<W>: IOVal + 'static 
     self.y.persist(txn);
   }
 
-  fn _eval(&self, txn: Txn) {
+  fn _apply(&self, txn: Txn) {
     (self.ext.func)(txn, self.y.duplicate());
+  }
+
+  fn cleanup(&self, txn: Txn) {
   }
 
   fn eval(&self, txn: Txn) {
     if self._txn() != Some(txn) {
       self.x1_.eval(txn);
       self.x2_.eval(txn);
-      self._eval(txn);
+      self._apply(txn);
+      self.x1_.cleanup(txn);
+      self.x2_.cleanup(txn);
     }
   }
 }
 
-impl<S, V1, V2, W> AOp for F2Op<S, V1, V2, W> where RWVal<W>: IOVal + 'static {
+impl<F, V1, V2, W> AOp for F2Op<F, V1, V2, W> where RWVal<W>: IOVal + 'static {
   type V = W;
 
   fn var(&self) -> RootVar {
@@ -1419,17 +1435,17 @@ impl<S, V1, V2, W> AOp for F2Op<S, V1, V2, W> where RWVal<W>: IOVal + 'static {
   }
 }
 
-pub struct F3Op<S, V1, V2, V3, W> {
+pub struct F3Op<F, V1, V2, V3, W> {
   base: OpBase<W>,
   ext:  OpExt<W>,
-  spec: S,
+  fun:  F,
   x1_:  Rc<AOp<V=V1>>,
   x2_:  Rc<AOp<V=V2>>,
   x3_:  Rc<AOp<V=V3>>,
   y:    RWVal<W>,
 }
 
-impl<S, V1, V2, V3, W> ANode for F3Op<S, V1, V2, V3, W> where RWVal<W>: IOVal + 'static {
+impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where RWVal<W>: IOVal + 'static {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
       // TODO: apply priority.
@@ -1462,8 +1478,11 @@ impl<S, V1, V2, V3, W> ANode for F3Op<S, V1, V2, V3, W> where RWVal<W>: IOVal + 
     self.y.persist(txn);
   }
 
-  fn _eval(&self, txn: Txn) {
+  fn _apply(&self, txn: Txn) {
     (self.ext.func)(txn, self.y.duplicate());
+  }
+
+  fn cleanup(&self, txn: Txn) {
   }
 
   fn eval(&self, txn: Txn) {
@@ -1471,12 +1490,15 @@ impl<S, V1, V2, V3, W> ANode for F3Op<S, V1, V2, V3, W> where RWVal<W>: IOVal + 
       self.x1_.eval(txn);
       self.x2_.eval(txn);
       self.x3_.eval(txn);
-      self._eval(txn);
+      self._apply(txn);
+      self.x1_.cleanup(txn);
+      self.x2_.cleanup(txn);
+      self.x3_.cleanup(txn);
     }
   }
 }
 
-impl<S, V1, V2, V3, W> AOp for F3Op<S, V1, V2, V3, W> where RWVal<W>: IOVal + 'static {
+impl<F, V1, V2, V3, W> AOp for F3Op<F, V1, V2, V3, W> where RWVal<W>: IOVal + 'static {
   type V = W;
 
   fn var(&self) -> RootVar {
@@ -1527,27 +1549,27 @@ impl<S, V1, V2, V3, W> AOp for F3Op<S, V1, V2, V3, W> where RWVal<W>: IOVal + 's
   }
 }
 
-pub struct FJoinOp<S, V, W> {
+pub struct FJoinOp<F, V, W> {
   base: OpBase<W>,
   ext:  OpExt<W>,
-  spec: S,
+  fun:  F,
   xs_:  Vec<Rc<AOp<V=V>>>,
   y:    RWVal<W>,
 }
 
-impl<S, V, W> FJoinOp<S, V, W> {
-  pub fn new(spec: S, ext: OpExt<W>, xs_: Vec<Rc<AOp<V=V>>>, y: RWVal<W>) -> Self {
+impl<F, V, W> FJoinOp<F, V, W> {
+  pub fn new(fun: F, ext: OpExt<W>, xs_: Vec<Rc<AOp<V=V>>>, y: RWVal<W>) -> Self {
     FJoinOp{
       base: OpBase::default(),
       ext:  ext,
-      spec: spec,
+      fun:  fun,
       xs_:  xs_,
       y:    y,
     }
   }
 }
 
-impl<S, V, W> ANode for FJoinOp<S, V, W> where RWVal<W>: IOVal + 'static {
+impl<F, V, W> ANode for FJoinOp<F, V, W> where RWVal<W>: IOVal + 'static {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(epoch) {
       // TODO: apply priority.
@@ -1580,8 +1602,11 @@ impl<S, V, W> ANode for FJoinOp<S, V, W> where RWVal<W>: IOVal + 'static {
     self.y.persist(txn);
   }
 
-  fn _eval(&self, txn: Txn) {
+  fn _apply(&self, txn: Txn) {
     (self.ext.func)(txn, self.y.duplicate());
+  }
+
+  fn cleanup(&self, txn: Txn) {
   }
 
   fn eval(&self, txn: Txn) {
@@ -1589,12 +1614,15 @@ impl<S, V, W> ANode for FJoinOp<S, V, W> where RWVal<W>: IOVal + 'static {
       for x in self.xs_.iter() {
         x.eval(txn);
       }
-      self._eval(txn);
+      self._apply(txn);
+      for x in self.xs_.iter() {
+        x.cleanup(txn);
+      }
     }
   }
 }
 
-impl<S, V, W> AOp for FJoinOp<S, V, W> where RWVal<W>: IOVal + 'static {
+impl<F, V, W> AOp for FJoinOp<F, V, W> where RWVal<W>: IOVal + 'static {
   type V = W;
 
   fn var(&self) -> RootVar {

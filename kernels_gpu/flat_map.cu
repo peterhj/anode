@@ -194,10 +194,10 @@ extern "C" void anode_gpu_copy_flat_map_f32(
     uint32_t len,
     const float *x,
     float *y,
-    KernelConfig cfg,
+    const KernelConfig *cfg,
     cudaStream_t stream)
 {
-  anode_gpu_generic_flat_map_kernel<float, CopyFlatMap<float>><<<cfg.flat_grid_dim(len), cfg.flat_block_dim(), 0, stream>>>(
+  anode_gpu_generic_flat_map_kernel<float, CopyFlatMap<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
       len, x, y);
 }
 
@@ -205,10 +205,10 @@ extern "C" void anode_gpu_modulus_flat_map_f32(
     uint32_t len,
     const float *x,
     float *y,
-    KernelConfig cfg,
+    const KernelConfig *cfg,
     cudaStream_t stream)
 {
-  anode_gpu_generic_flat_map_kernel<float, ModulusFlatMap<float>><<<cfg.flat_grid_dim(len), cfg.flat_block_dim(), 0, stream>>>(
+  anode_gpu_generic_flat_map_kernel<float, ModulusFlatMap<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
       len, x, y);
 }
 
@@ -216,10 +216,10 @@ extern "C" void anode_gpu_square_flat_map_f32(
     uint32_t len,
     const float *x,
     float *y,
-    KernelConfig cfg,
+    const KernelConfig *cfg,
     cudaStream_t stream)
 {
-  anode_gpu_generic_flat_map_kernel<float, SquareFlatMap<float>><<<cfg.flat_grid_dim(len), cfg.flat_block_dim(), 0, stream>>>(
+  anode_gpu_generic_flat_map_kernel<float, SquareFlatMap<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
       len, x, y);
 }
 
@@ -227,10 +227,10 @@ extern "C" void anode_gpu_positive_clip_flat_map_f32(
     uint32_t len,
     const float *x,
     float *y,
-    KernelConfig cfg,
+    const KernelConfig *cfg,
     cudaStream_t stream)
 {
-  anode_gpu_generic_flat_map_kernel<float, PositiveClipFlatMap<float>><<<cfg.flat_grid_dim(len), cfg.flat_block_dim(), 0, stream>>>(
+  anode_gpu_generic_flat_map_kernel<float, PositiveClipFlatMap<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
       len, x, y);
 }
 
@@ -238,10 +238,10 @@ extern "C" void anode_gpu_unit_step_flat_map_f32(
     uint32_t len,
     const float *x,
     float *y,
-    KernelConfig cfg,
+    const KernelConfig *cfg,
     cudaStream_t stream)
 {
-  anode_gpu_generic_flat_map_kernel<float, UnitStepFlatMap<float>><<<cfg.flat_grid_dim(len), cfg.flat_block_dim(), 0, stream>>>(
+  anode_gpu_generic_flat_map_kernel<float, UnitStepFlatMap<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
       len, x, y);
 }
 
@@ -249,10 +249,10 @@ extern "C" void anode_gpu_normal_cdf_flat_map_f32(
     uint32_t len,
     const float *x,
     float *y,
-    KernelConfig cfg,
+    const KernelConfig *cfg,
     cudaStream_t stream)
 {
-  anode_gpu_generic_flat_map_kernel<float, NormalCDFFlatMap<float>><<<cfg.flat_grid_dim(len), cfg.flat_block_dim(), 0, stream>>>(
+  anode_gpu_generic_flat_map_kernel<float, NormalCDFFlatMap<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
       len, x, y);
 }
 
@@ -260,10 +260,10 @@ extern "C" void anode_gpu_tanh_flat_map_f32(
     uint32_t len,
     const float *x,
     float *y,
-    KernelConfig cfg,
+    const KernelConfig *cfg,
     cudaStream_t stream)
 {
-  anode_gpu_generic_flat_map_kernel<float, TanhFlatMap<float>><<<cfg.flat_grid_dim(len), cfg.flat_block_dim(), 0, stream>>>(
+  anode_gpu_generic_flat_map_kernel<float, TanhFlatMap<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
       len, x, y);
 }
 
@@ -271,9 +271,9 @@ extern "C" void anode_gpu_rcosh2_flat_map_f32(
     uint32_t len,
     const float *x,
     float *y,
-    KernelConfig cfg,
+    const KernelConfig *cfg,
     cudaStream_t stream)
 {
-  anode_gpu_generic_flat_map_kernel<float, Rcosh2FlatMap<float>><<<cfg.flat_grid_dim(len), cfg.flat_block_dim(), 0, stream>>>(
+  anode_gpu_generic_flat_map_kernel<float, Rcosh2FlatMap<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
       len, x, y);
 }

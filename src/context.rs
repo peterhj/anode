@@ -30,7 +30,7 @@ pub fn implicit_ctx() -> Rc<ExecutionCtx + 'static> {
     let mut stack = stack.borrow_mut();
     if stack.is_empty() {
       // TODO: if there is no context, create a `DefaultCtx`.
-      stack.push(Rc::new(DefaultCtx::new()));
+      stack.push(Rc::new(DefaultCtx::default()));
     }
     let ctx = stack.last().unwrap().clone();
     /*STREAM.with(|stream| {
@@ -71,6 +71,7 @@ impl Drop for CtxGuard {
 
 #[cfg(not(feature = "gpu"))]
 pub type DefaultCtx = NullCtx;
+
 //#[cfg(feature = "gpu")]
 //pub type DefaultCtx = GPUDeviceCtx;
 #[cfg(feature = "gpu")]
@@ -78,6 +79,15 @@ pub type DefaultCtx = MultiGPUDeviceCtx;
 
 //#[derive(Clone)]
 pub struct NullCtx;
+
+impl Default for NullCtx {
+  fn default() -> Self {
+    NullCtx
+  }
+}
+
+impl ExecutionCtx for NullCtx {
+}
 
 //#[derive(Clone)]
 pub struct ThreadPoolCtx {
@@ -111,13 +121,16 @@ impl ExecutionCtx for GPUDeviceCtx {
 }
 
 #[cfg(feature = "gpu")]
-impl GPUDeviceCtx {
-  fn new() -> Self {
+impl Default for GPUDeviceCtx {
+  fn default() -> Self {
     GPUDeviceCtx{
       pool: GPUDeviceStreamPool::new(GPUDeviceId(0)),
     }
   }
+}
 
+#[cfg(feature = "gpu")]
+impl GPUDeviceCtx {
   pub fn pool(&self) -> GPUDeviceStreamPool {
     self.pool.clone()
   }
@@ -128,7 +141,6 @@ impl GPUDeviceCtx {
 }
 
 #[cfg(feature = "gpu")]
-//#[derive(Clone)]
 pub struct MultiGPUDeviceCtx {
   md_pools: Vec<GPUDeviceStreamPool>,
 }
@@ -145,14 +157,17 @@ impl ExecutionCtx for MultiGPUDeviceCtx {
 }
 
 #[cfg(feature = "gpu")]
-impl MultiGPUDeviceCtx {
-  fn new() -> Self {
+impl Default for MultiGPUDeviceCtx {
+  fn default() -> Self {
     // TODO: use all devices.
     MultiGPUDeviceCtx{
       md_pools: vec![GPUDeviceStreamPool::new(GPUDeviceId(0))],
     }
   }
+}
 
+#[cfg(feature = "gpu")]
+impl MultiGPUDeviceCtx {
   pub fn num_gpu_devices(&self) -> usize {
     self.md_pools.len()
   }

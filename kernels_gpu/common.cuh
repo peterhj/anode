@@ -17,15 +17,12 @@ limitations under the License.
 #ifndef __ANODE_KERNELS_GPU_COMMON_CUH__
 #define __ANODE_KERNELS_GPU_COMMON_CUH__
 
-//#include "lib.h"
 #include <math_constants.h>
 
 #include <cstddef>
 #include <cstdint>
 
 //#define FLAT_FORALL(idx, len) for (idx = threadIdx.x + blockDim.x * blockIdx.x; idx < len; idx += blockDim.x * gridDim.x)
-
-//#define CONST_RSQRT_2_F 0.7071067811865475f
 
 __device__ __forceinline__ float const_rsqrt_2_f() {
   return 0.7071067811865475f;
@@ -49,59 +46,62 @@ __device__ __forceinline__ uint32_t gblockcount() {
 
 struct KernelConfig {
   dim3 flat_grid_dim(uint32_t len) const {
-    return (len + block_sz - 1) / block_sz;
+    return min(max_block_ct, (len + block_sz - 1) / block_sz);
+  }
+  dim3 flat_block_count(uint32_t block_ct) const {
+    return min(max_block_ct, block_ct);
   }
   dim3 flat_block_dim() const {
     return block_sz;
   }
 
   uint32_t block_sz;
-  uint32_t max_blocks;
+  uint32_t max_block_ct;
 };
 
 struct Index2 {
   __forceinline__ __device__ static uint32_t Pack(
       uint32_t idx0, uint32_t dim0,
-      uint32_t idx1, uint32_t dim1)
+      uint32_t idx1)
   {
     return idx0 + dim0 * idx1;
   }
 
   __forceinline__ __device__ static void Unpack(
       uint32_t index,
-      uint32_t& idx0, uint32_t dim0,
-      uint32_t& idx1, uint32_t dim1)
+      uint32_t *idx0, uint32_t dim0,
+      uint32_t *idx1)
   {
-    idx0 = index % dim0;
-    idx1 = index / dim0;
+    *idx0 = index % dim0;
+    *idx1 = index / dim0;
   }
 };
 
 struct Index3 {
   __forceinline__ __device__ static void Unpack(
       uint32_t index,
-      uint32_t& idx0, uint32_t dim0,
-      uint32_t& idx1, uint32_t dim1,
-      uint32_t& idx2, uint32_t dim2)
+      uint32_t *idx0, uint32_t dim0,
+      uint32_t *idx1, uint32_t dim1,
+      uint32_t *idx2)
   {
-    idx0 = index % dim0;
-    idx1 = (index / dim0) % dim1;
-    idx2 = index / (dim0 * dim1);
+    *idx0 = index % dim0;
+    *idx1 = (index / dim0) % dim1;
+    *idx2 = index / (dim0 * dim1);
   }
 };
 
 struct Index4 {
   __forceinline__ __device__ static void Unpack(
       uint32_t index,
-      uint32_t& idx0, uint32_t dim0,
-      uint32_t& idx1, uint32_t dim1,
-      uint32_t& idx2, uint32_t dim2,
-      uint32_t& idx3, uint32_t dim3_)
+      uint32_t *idx0, uint32_t dim0,
+      uint32_t *idx1, uint32_t dim1,
+      uint32_t *idx2, uint32_t dim2,
+      uint32_t *idx3)
   {
-    idx0 = index % dim0;
-    idx1 = (index / dim0) % dim1;
-    idx2 = (index / (dim0 * dim1)) % dim2;
-    idx3 = index / (dim0 * dim1 * dim2);
+    *idx0 = index % dim0;
+    *idx1 = (index / dim0) % dim1;
+    *idx2 = (index / (dim0 * dim1)) % dim2;
+    *idx3 = index / (dim0 * dim1 * dim2);
   }
 };
 
@@ -109,6 +109,7 @@ template <typename T>
 struct AddReduce {
   __forceinline__ __device__ static T InitVal();
   __forceinline__ __device__ static void Reduce(T *dst, T val);
+  __forceinline__ __device__ static void AtomicReduce(T *dst, T val);
 };
 
 template <>
@@ -119,19 +120,6 @@ struct AddReduce<float> {
 
   __forceinline__ __device__ static void Reduce(float *dst, float val) {
     *dst += val;
-  }
-};
-
-template <typename T>
-struct AddAtomicReduce {
-  __forceinline__ __device__ static T InitVal();
-  __forceinline__ __device__ static void AtomicReduce(T *dst, T val);
-};
-
-template <>
-struct AddAtomicReduce<float> {
-  __forceinline__ __device__ static float InitVal() {
-    return 0.0f;
   }
 
   __forceinline__ __device__ static void AtomicReduce(float *dst, float val) {

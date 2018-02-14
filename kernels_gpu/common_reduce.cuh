@@ -20,7 +20,18 @@ limitations under the License.
 #include "common.cuh"
 
 template <typename T, typename Reduce>
-__forceinline__ __device__ void threadblock_reduce1024(T *cache)
+__forceinline__ __device__ void threadblock_reduce_sync(T *cache)
+{
+  for (uint32_t s = (blockDim.x >> 1); s > 0; s >>= 1) {
+    if (s > threadIdx.x && s + threadIdx.x < blockDim.x) {
+      Reduce::Reduce(&cache[threadIdx.x], cache[s + threadIdx.x]);
+    }
+    __syncthreads();
+  }
+}
+
+template <typename T, typename Reduce>
+__forceinline__ __device__ void threadblock_reduce1024_sync(T *cache)
 {
   for (uint32_t s = 512; s > 0; s >>= 1) {
     if (s > threadIdx.x && s + threadIdx.x < blockDim.x) {

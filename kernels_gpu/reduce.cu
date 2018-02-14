@@ -20,27 +20,27 @@ limitations under the License.
 #include <cuda_runtime.h>
 
 template <typename T, typename Reduce>
-__global__ void anode_gpu_reduce_I1ab_Ob_packed_deterministic_kernel(
-    uint32_t inner_dim,
-    uint32_t keep_dim,
+__global__ void anode_gpu_reduce_Iab_Ob_packed_deterministic_kernel(
+    uint32_t reduce_dim,
+    uint32_t outer_dim,
     const T *x,
     T *y)
 {
-  __shared__ T cache[512];
-  for (uint32_t blk = gblock(); blk < keep_dim; blk += gblockcount()) {
+  __shared__ T cache[blockDim.x];
+  for (uint32_t blk = gblock(); blk < outer_dim; blk += gblockcount()) {
     T accumulator = Reduce::InitVal();
-    uint32_t rdup_inner_dim = (inner_dim + blockDim.x - 1) / blockDim.x * blockDim.x;
+    uint32_t rdup_reduce_dim = (reduce_dim + blockDim.x - 1) / blockDim.x * blockDim.x;
     uint32_t tid = threadIdx.x;
     uint32_t base_tid = 0;
-    for ( ; tid < rdup_inner_dim; tid += blockDim.x, base_tid += blockDim.x) {
+    for ( ; tid < rdup_reduce_dim; tid += blockDim.x, base_tid += blockDim.x) {
       uint32_t i = tid - base_tid;
-      if (tid < inner_dim) {
-        cache[i] = x[Index2::Pack(tid, inner_dim, blk, keep_dim)];
+      if (tid < reduce_dim) {
+        cache[i] = x[Index2::Pack(tid, reduce_dim, blk)];
       } else {
         cache[i] = Reduce::InitVal();
       }
       __syncthreads();
-      threadblock_reduce1024<T, Reduce>(cache);
+      threadblock_reduce_sync<T, Reduce>(cache);
       if (0 == i) {
         Reduce::Reduce(&accumulator, cache[0]);
       }
@@ -50,46 +50,61 @@ __global__ void anode_gpu_reduce_I1ab_Ob_packed_deterministic_kernel(
   }
 }
 
-extern "C" void anode_gpu_sum_reduce_I1ab_Ob_packed_deterministic_f32(
-    uint32_t inner_dim,
-    uint32_t keep_dim,
+extern "C" void anode_gpu_sum_reduce_Iab_Ob_packed_deterministic_f32(
+    uint32_t reduce_dim,
+    uint32_t outer_dim,
     const float *x,
     float *y,
-    KernelConfig cfg,
+    const KernelConfig *cfg,
     cudaStream_t stream)
 {
-  (void)cfg;
-  anode_gpu_reduce_I1ab_Ob_packed_deterministic_kernel<float, AddReduce<float>><<<keep_dim, 512, 0, stream>>>(
-      inner_dim, keep_dim, x, y);
+  // TODO: check that the block size is a power of 2.
+  anode_gpu_reduce_Iab_Ob_packed_deterministic_kernel<float, AddReduce<float>><<<cfg->flat_block_count(outer_dim), cfg->flat_block_dim(), 0, stream>>>(
+      reduce_dim, outer_dim, x, y);
 }
 
-template <typename T, typename AtomicReduce>
-__global__ void anode_gpu_reduce_I1ab_Ob_packed_atomic_accumulate_kernel(
-    uint32_t inner_dim,
+template <typename T, typename Reduce>
+__global__ void anode_gpu_reduce_Iab_Ob_packed_atomic_accumulate_kernel(
+    uint32_t reduce_dim,
     uint32_t keep_dim,
     const T *x,
     T *y)
 {
-  __shared__ T cache[512];
+  __shared__ T cache[blockDim.x];
   for (uint32_t blk = gblock(); blk < keep_dim; blk += gblockcount()) {
-    T accumulator = AtomicReduce::InitVal();
-    uint32_t rdup_inner_dim = (inner_dim + blockDim.x - 1) / blockDim.x * blockDim.x;
+    T accumulator = Reduce::InitVal();
+    uint32_t rdup_reduce_dim = (reduce_dim + blockDim.x - 1) / blockDim.x * blockDim.x;
     uint32_t tid = threadIdx.x;
     uint32_t base_tid = 0;
-    for ( ; tid < rdup_inner_dim; tid += blockDim.x, base_tid += blockDim.x) {
+    for ( ; tid < rdup_reduce_dim; tid += blockDim.x, base_tid += blockDim.x) {
       uint32_t i = tid - base_tid;
-      if (tid < inner_dim) {
-        cache[i] = x[Index2::Pack(tid, inner_dim, blk, keep_dim)];
+      if (tid < reduce_dim) {
+        cache[i] = x[Index2::Pack(tid, reduce_dim, blk)];
       } else {
-        cache[i] = AtomicReduce::InitVal();
+        cache[i] = Reduce::InitVal();
       }
       __syncthreads();
-      threadblock_reduce1024<T, AtomicReduce>(cache);
+      threadblock_reduce_sync<T, Reduce>(cache);
       if (0 == i) {
-        AtomicReduce::AtomicReduce(&accumulator, cache[0]);
+        Reduce::Reduce(&accumulator, cache[0]);
       }
       __syncthreads();
     }
-    AtomicReduce::AtomicReduce(&y[blk], accumulator);
+    Reduce::AtomicReduce(&y[blk], accumulator);
   }
+}
+
+extern "C" void anode_gpu_sum_reduce_Iab_Ob_packed_atomic_f32(
+    uint32_t reduce_dim,
+    uint32_t outer_dim,
+    const float *x,
+    float *y,
+    const KernelConfig *cfg,
+    cudaStream_t stream)
+{
+  // TODO: first, have to zero the output buffer.
+  // TODO: check that the block size is a power of 2.
+  // TODO: grid size.
+  anode_gpu_reduce_Iab_Ob_packed_atomic_accumulate_kernel<float, AddReduce<float>><<<cfg->flat_block_count(outer_dim), cfg->flat_block_dim(), 0, stream>>>(
+      reduce_dim, outer_dim, x, y);
 }
