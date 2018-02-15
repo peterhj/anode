@@ -58,6 +58,7 @@ impl<'a, Mem, T> MemIoWriter<'a> for FlatWriter<'a, Mem> where Mem: DerefMut<Tar
   }
 }
 
+pub struct SrcOp;
 pub struct PassOp;
 pub struct FreezeOp;
 pub struct CopyOp;
@@ -122,11 +123,11 @@ pub struct Pool2dShape {
 }
 
 pub trait SrcOpExt<V, Init> {
-  fn build(init: Init) -> Rc<FSrcOp<(), V>>;
+  fn build(init: Init) -> Rc<FSrcOp<SrcOp, V>>;
 }
 
-pub fn src<V, Init>(init: Init) -> Rc<FSrcOp<(), V>> where (): SrcOpExt<V, Init> {
-  <() as SrcOpExt<V, Init>>::build(init)
+pub fn src<V, Init>(init: Init) -> Rc<FSrcOp<SrcOp, V>> where SrcOp: SrcOpExt<V, Init> {
+  <SrcOp as SrcOpExt<V, Init>>::build(init)
 }
 
 pub trait ZerosSrcOpExt<V, Init> {

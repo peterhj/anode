@@ -21,13 +21,14 @@ limitations under the License.
 #![feature(specialization)]
 #![feature(unboxed_closures)]
 
-//extern crate arithmetic;
+extern crate arithmetic;
 //extern crate async_execution;
 #[cfg(feature = "gpu")] extern crate cuda;
 #[cfg(feature = "gpu")] extern crate cuda_blas;
 #[cfg(feature = "gpu")] extern crate cuda_dnn;
 #[cfg(feature = "gpu")] extern crate devicemem_gpu;
 //extern crate fnv;
+extern crate memarray;
 extern crate rng;
 
 //#[macro_use] extern crate lazy_static;
@@ -42,7 +43,9 @@ use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::{Entry};
 use std::rc::{Rc};
 
+pub mod config;
 pub mod context;
+pub mod ffi;
 pub mod ops;
 #[cfg(feature = "gpu")] pub mod ops_gpu;
 
@@ -166,6 +169,13 @@ impl NodeStack {
   }
 }
 
+pub trait IOVal {
+  //fn _load(&self, txn: Txn, writer: &mut Any);
+  //fn _store(&self, txn: Txn, reader: &mut Any);
+  fn _deserialize(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any));
+  fn _serialize(&self, txn: Txn, reader: &mut FnMut(&Any));
+}
+
 pub trait ANode {
   fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode));
   fn _pop(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode));
@@ -208,13 +218,6 @@ pub trait AOp: ANode {
   fn adjoint(&self, sink: &mut Sink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>);
 }
 
-pub trait IOVal {
-  //fn _load(&self, txn: Txn, writer: &mut Any);
-  //fn _store(&self, txn: Txn, reader: &mut Any);
-  fn _deserialize(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any));
-  fn _serialize(&self, txn: Txn, reader: &mut FnMut(&Any));
-}
-
 /*pub trait AVal: IOVal + Clone {
   type T;
 
@@ -229,6 +232,21 @@ pub trait IOVal {
   fn release(&self);
   fn persist(&self, txn: Txn);
 }*/
+
+pub struct Node {
+  node: Rc<ANode>,
+}
+
+pub struct Op<V> {
+  node: Rc<ANode>,
+  op:   Rc<AOp<V=V>>,
+}
+
+impl<V> Op<V> {
+  pub fn to_node(&self) -> Node {
+    Node{node: self.node.clone()}
+  }
+}
 
 pub struct Sink {
   frozen:   HashSet<RootVar>,
@@ -719,6 +737,19 @@ impl<T> RWVal<T> where T: 'static {
       }
     }
     RefMut::map(buf, |buf| buf.data.as_mut().unwrap())
+  }
+
+  pub fn set<F>(&self, txn: Txn, f: F) where F: FnOnce(RefMut<T>) {
+    if let Some((mode, token)) = self.write(txn) {
+      let overwrite = match (mode, token.first_write()) {
+        (WriteMode::Accumulate, false) => false,
+        (_, true) => true,
+        _ => unreachable!(),
+      };
+      if overwrite {
+        f(self.get_mut(txn, token));
+      }
+    }
   }
 }
 

@@ -135,9 +135,25 @@ void anode_gpu_rcosh2_flat_map_f32(
 
 // "reduce.cu"
 
-void anode_gpu_sum_reduce_Iab_Ob_packed_deterministic_f32(
+void anode_gpu_sum_Iab_Ob_packed_deterministic_f32(
     uint32_t reduce_dim,
     uint32_t outer_dim,
+    const float *x,
+    float *y,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+void anode_gpu_sum_Iabc_Ob_packed_deterministic_f32(
+    uint32_t reduce_inner_dim,
+    uint32_t mid_dim,
+    uint32_t reduce_outer_dim,
+    const float *x,
+    float *y,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+void anode_gpu_square_sum_Iabc_Ob_packed_deterministic_f32(
+    uint32_t reduce_inner_dim,
+    uint32_t mid_dim,
+    uint32_t reduce_outer_dim,
     const float *x,
     float *y,
     const struct KernelConfig *cfg,

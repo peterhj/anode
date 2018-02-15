@@ -12,13 +12,19 @@ fn main() {
   let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
   println!("cargo:rustc-link-search=native={}", out_dir.display());
-  println!("cargo:rerun-if-changed=build.rs");
+
+  {
+    // TODO
+    //println!("cargo:rustc-link-lib=static=anode_routines_omp");
+  }
 
   #[cfg(feature = "gpu")]
   {
-    let mut kernels_gpu_src_dir = PathBuf::from(manifest_dir.clone());
-    kernels_gpu_src_dir.push("kernels_gpu");
-    for entry in WalkDir::new(kernels_gpu_src_dir.to_str().unwrap()) {
+    println!("cargo:rustc-link-lib=static=anode_routines_gpu");
+
+    let mut routines_gpu_src_dir = PathBuf::from(manifest_dir.clone());
+    routines_gpu_src_dir.push("routines_gpu");
+    for entry in WalkDir::new(routines_gpu_src_dir.to_str().unwrap()) {
       let entry = entry.unwrap();
       println!("cargo:rerun-if-changed={}", entry.path().display());
     }
@@ -38,39 +44,25 @@ fn main() {
       .flag("-std=c++11")
       .flag("-Xcompiler").flag("-fno-strict-aliasing")
       .flag("-Xcompiler").flag("-Werror")
-      .include("kernels_gpu")
+      .include("routines_gpu")
       .include("/usr/local/cuda/include")
-      .file("kernels_gpu/bcast_flat_linear.cu")
-      .file("kernels_gpu/flat_linear.cu")
-      .file("kernels_gpu/flat_map.cu")
-      .file("kernels_gpu/reduce.cu")
-      .compile("libanode_kernels_gpu.a");
+      .file("routines_gpu/flat_map.cu")
+      .compile("libanode_routines_gpu.a");
 
     bindgen::Builder::default()
-      .header("kernels_gpu/lib.h")
-      .link("anode_kernels_gpu")
+      .header("routines_gpu/lib.h")
       .whitelist_recursively(false)
-      // "bcast_flat_linear.cu"
-      .whitelisted_function("anode_gpu_bcast_flat_mult_I1b_I2ab_Oab_packed_f32")
-      .whitelisted_function("anode_gpu_bcast_flat_mult_I1b_I2ab_I3b_Oab_packed_f32")
-      .whitelisted_function("anode_gpu_bcast_flat_mult_I1b_I2abc_Oabc_packed_f32")
-      .whitelisted_function("anode_gpu_bcast_flat_mult_I1b_I2abc_I3b_Oabc_packed_f32")
-      // "flat_linear.cu"
-      .whitelisted_function("anode_gpu_flat_mult_f32")
-      .whitelisted_function("anode_gpu_flat_mult_add_f32")
       // "flat_map.cu"
-      .whitelisted_function("anode_gpu_copy_flat_map_f32")
-      .whitelisted_function("anode_gpu_modulus_flat_map_f32")
-      .whitelisted_function("anode_gpu_square_flat_map_f32")
-      .whitelisted_function("anode_gpu_positive_clip_flat_map_f32")
-      .whitelisted_function("anode_gpu_unit_step_flat_map_f32")
-      .whitelisted_function("anode_gpu_log_positive_clip_flat_map_f32")
-      .whitelisted_function("anode_gpu_positive_reciprocal_flat_map_f32")
-      // "reduce.cu"
-      .whitelisted_function("anode_gpu_sum_reduce_I1ab_Ob_packed_deterministic_f32")
+      .whitelist_function("anode_gpu_copy_flat_map_f32")
+      .whitelist_function("anode_gpu_modulus_flat_map_f32")
+      .whitelist_function("anode_gpu_square_flat_map_f32")
+      .whitelist_function("anode_gpu_positive_clip_flat_map_f32")
+      .whitelist_function("anode_gpu_unit_step_flat_map_f32")
+      .whitelist_function("anode_gpu_log_positive_clip_flat_map_f32")
+      .whitelist_function("anode_gpu_positive_reciprocal_flat_map_f32")
       .generate()
       .expect("bindgen failed to generate cuda kernel bindings")
-      .write_to_file(out_dir.join("kernels_gpu_bind.rs"))
+      .write_to_file(out_dir.join("routines_gpu_bind.rs"))
       .expect("bindgen failed to write cuda kernel bindings");
   }
 }

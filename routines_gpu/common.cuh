@@ -44,6 +44,10 @@ __device__ __forceinline__ uint32_t gblockcount() {
   return gridDim.x;
 }
 
+static bool check_power_of_2(uint32_t x) {
+  return x && !(x & (x - 1));
+}
+
 struct KernelConfig {
   dim3 flat_grid_dim(uint32_t len) const {
     return min(max_block_ct, (len + block_sz - 1) / block_sz);
@@ -54,6 +58,9 @@ struct KernelConfig {
   dim3 flat_block_dim() const {
     return block_sz;
   }
+  size_t flat_block_len() const {
+    return block_sz;
+  }
 
   uint32_t block_sz;
   uint32_t max_block_ct;
@@ -61,47 +68,64 @@ struct KernelConfig {
 
 struct Index2 {
   __forceinline__ __device__ static uint32_t Pack(
-      uint32_t idx0, uint32_t dim0,
+      uint32_t idx0, uint32_t size0,
       uint32_t idx1)
   {
-    return idx0 + dim0 * idx1;
+    return idx0 + size0 * idx1;
   }
 
   __forceinline__ __device__ static void Unpack(
       uint32_t index,
-      uint32_t *idx0, uint32_t dim0,
+      uint32_t *idx0, uint32_t size0,
       uint32_t *idx1)
   {
-    *idx0 = index % dim0;
-    *idx1 = index / dim0;
+    *idx0 = index % size0;
+    *idx1 = index / size0;
   }
 };
 
 struct Index3 {
+  __forceinline__ __device__ static uint32_t Pack(
+      uint32_t idx0, uint32_t size0,
+      uint32_t idx1, uint32_t size1,
+      uint32_t idx2)
+  {
+    return idx0 + size0 * (idx1 + size1 * idx2);
+  }
+
   __forceinline__ __device__ static void Unpack(
       uint32_t index,
-      uint32_t *idx0, uint32_t dim0,
-      uint32_t *idx1, uint32_t dim1,
+      uint32_t *idx0, uint32_t size0,
+      uint32_t *idx1, uint32_t size1,
       uint32_t *idx2)
   {
-    *idx0 = index % dim0;
-    *idx1 = (index / dim0) % dim1;
-    *idx2 = index / (dim0 * dim1);
+    *idx0 = index % size0;
+    *idx1 = (index / size0) % size1;
+    *idx2 = index / (size0 * size1);
   }
 };
 
 struct Index4 {
+  __forceinline__ __device__ static uint32_t Pack(
+      uint32_t idx0, uint32_t size0,
+      uint32_t idx1, uint32_t size1,
+      uint32_t idx2, uint32_t size2,
+      uint32_t idx3)
+  {
+    return idx0 + size0 * (idx1 + size1 * (idx2 + size2 * idx3));
+  }
+
   __forceinline__ __device__ static void Unpack(
       uint32_t index,
-      uint32_t *idx0, uint32_t dim0,
-      uint32_t *idx1, uint32_t dim1,
-      uint32_t *idx2, uint32_t dim2,
+      uint32_t *idx0, uint32_t size0,
+      uint32_t *idx1, uint32_t size1,
+      uint32_t *idx2, uint32_t size2,
       uint32_t *idx3)
   {
-    *idx0 = index % dim0;
-    *idx1 = (index / dim0) % dim1;
-    *idx2 = (index / (dim0 * dim1)) % dim2;
-    *idx3 = index / (dim0 * dim1 * dim2);
+    *idx0 = index % size0;
+    *idx1 = (index / size0) % size1;
+    *idx2 = (index / (size0 * size1)) % size2;
+    *idx3 = index / (size0 * size1 * size2);
   }
 };
 

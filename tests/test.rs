@@ -23,8 +23,9 @@ fn test_gpu_src_eval() {
   //let ctx = implicit_ctx().gpu_device().unwrap();
   //let conn = ctx.conn();
   //let x: Rc<AOp<V=Val<_>>> = src(GPUDeviceArray1d::<f32>::zeros(1024, conn));
-  let x: Rc<AOp<V=Val<_>>> = src(Rc::new(|pool: GPUDeviceStreamPool| GPUDeviceArray1d::<f32>::zeros(1024, pool.conn())));
-  x._eval(txn());
+  //let x: Rc<AOp<V=Val<_>>> = src(Rc::new(|pool: GPUDeviceStreamPool| GPUDeviceArray1d::<f32>::zeros(1024, pool.conn())));
+  let x: Rc<AOp<V=_>> = src(Rc::new(|pool: GPUDeviceStreamPool| GPUDeviceArray1d::<f32>::zeros(1024, pool.conn())));
+  x._apply(txn());
 }
 
 #[test]
@@ -33,8 +34,9 @@ fn test_gpu_zeros_eval() {
   //let conn = ctx.conn();
   //let x: Rc<AOp<V=Val<GPUDeviceArray1d<f32>>>> = zeros(GPUDeviceArray1d::<f32>::zeros(1024, conn));
   //let x: Rc<AOp<V=Val<_>>> = zeros(GPUDeviceArray1d::<f32>::zeros(1024, conn));
-  let x: Rc<AOp<V=Val<_>>> = zeros(Rc::new(|pool: GPUDeviceStreamPool| GPUDeviceArray1d::<f32>::zeros(1024, pool.conn())));
-  x._eval(txn());
+  //let x: Rc<AOp<V=Val<_>>> = zeros(Rc::new(|pool: GPUDeviceStreamPool| GPUDeviceArray1d::<f32>::zeros(1024, pool.conn())));
+  let x: Rc<AOp<V=_>> = zeros(Rc::new(|pool: GPUDeviceStreamPool| GPUDeviceArray1d::<f32>::zeros(1024, pool.conn())));
+  x.eval(txn());
   println!("DEBUG: sleeping...");
   sleep(Duration::from_secs(10));
   println!("DEBUG: done sleeping");

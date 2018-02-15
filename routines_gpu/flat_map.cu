@@ -179,14 +179,14 @@ public:
   }
 };
 
-template <typename T, typename Map>
+template <typename T, typename FlatMap>
 __global__ void anode_gpu_generic_flat_map_kernel(
     uint32_t len,
     const T *x,
     T *y)
 {
   for (uint32_t idx = gtindex(); idx < len; idx += gtcount()) {
-    Map::FlatMapIndex(idx, x, y);
+    FlatMap::FlatMapIndex(idx, x, y);
   }
 }
 
