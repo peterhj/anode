@@ -25,7 +25,7 @@ pub trait MemIoReader<'a> {
 }
 
 pub trait MemIoWriter<'a> {
-  fn write_mem(&mut self, mode: WriteMode, dst: &mut &'a mut Any) -> Option<()>;
+  fn write_mem(&mut self, cap: WriteCap, dst: &mut &'a mut Any) -> Option<()>;
 }
 
 impl<'a, Mem, T> MemIoReader<'a> for FlatReader<'a, Mem> where Mem: DerefMut<Target=[T]>, T: Copy + 'static {
@@ -44,7 +44,7 @@ impl<'a, Mem, T> MemIoReader<'a> for FlatReader<'a, Mem> where Mem: DerefMut<Tar
 }
 
 impl<'a, Mem, T> MemIoWriter<'a> for FlatWriter<'a, Mem> where Mem: DerefMut<Target=[T]>, T: Copy + 'static {
-  fn write_mem(&mut self, mode: WriteMode, dst: &mut &'a mut Any) -> Option<()> {
+  fn write_mem(&mut self, cap: WriteCap, dst: &mut &'a mut Any) -> Option<()> {
     if let Some(_) = dst.downcast_ref::<()>() {
       Some(())
     } else if let Some(ref mut dst) = (*dst).downcast_mut::<Vec<T>>() {

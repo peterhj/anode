@@ -26,7 +26,7 @@ use devicemem_gpu::*;
 use devicemem_gpu::array::*;
 use memarray::*;
 
-use std::cell::{RefCell};
+use std::cell::{RefMut};
 use std::marker::{PhantomData};
 use std::ops::{Range, RangeFrom, RangeTo, RangeFull};
 use std::sync::{Arc};
@@ -42,7 +42,7 @@ pub trait GPUDeviceMemIoReader<'a> {
 }
 
 pub trait GPUDeviceMemIoWriter<'a> {
-  fn write_dev_mem(&mut self, mode: WriteMode, dst: &'a mut Any) -> Option<()>;
+  fn write_dev_mem(&mut self, cap: WriteCap, dst: &'a mut Any) -> Option<()>;
 }
 
 pub struct GPUDeviceCtxPushOp;
@@ -68,7 +68,7 @@ where T: Copy + 'static,
       },
       func: {
         Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray1d<T>>| {
-          if let Some((_mode, _token)) = output.write(txn) {
+          if let Some(_) = output.write(txn) {
             panic!("WARNING: SrcOpExt: should never write");
           }
         })
@@ -151,7 +151,7 @@ where T: Copy + 'static,
       },
       func: {
         Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray2d<T>>| {
-          if let Some((_mode, _token)) = output.write(txn) {
+          if let Some(_) = output.write(txn) {
             panic!("WARNING: SrcOpExt: should never write");
           }
         })
@@ -191,7 +191,7 @@ where T: Copy + 'static,
       },
       func: {
         Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray4d<T>>| {
-          if let Some((_mode, _token)) = output.write(txn) {
+          if let Some(_) = output.write(txn) {
             panic!("WARNING: SrcOpExt: should never write");
           }
         })
@@ -234,20 +234,18 @@ where T: ZeroBits + Copy + 'static,
       },
       func: {
         Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray1d<T>>| {
-          if let Some((mode, token)) = output.write(txn) {
+          if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu_device().unwrap();
             let pool = ctx.pool();
             let conn = pool.conn();
-            let overwrite = match (mode, token.first_write()) {
-              (WriteMode::Accumulate, false) => false,
-              (_, true) => true,
-              _ => unreachable!(),
-            };
-            if overwrite {
-              // TODO: zero out the whole thing.
-              println!("DEBUG: ZeroSrcOp: zeroing...");
-              let mut y = output.get_mut(txn, token);
-              y.as_view().set_zeros(&conn);
+            match cap {
+              WriteCap::Overwrite => {
+                // TODO: zero out the whole thing.
+                println!("DEBUG: ZeroSrcOp: zeroing...");
+                let mut y = output.get_mut(txn, token);
+                y.as_view().set_zeros(&conn);
+              }
+              _ => unimplemented!(),
             }
           }
         })
@@ -287,20 +285,18 @@ where T: ZeroBits + Copy + 'static,
       },
       func: {
         Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray2d<T>>| {
-          if let Some((mode, token)) = output.write(txn) {
+          if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu_device().unwrap();
             let pool = ctx.pool();
             let conn = pool.conn();
-            let overwrite = match (mode, token.first_write()) {
-              (WriteMode::Accumulate, false) => false,
-              (_, true) => true,
+            match cap {
+              WriteCap::Overwrite => {
+                // TODO: zero out the whole thing.
+                println!("DEBUG: ZeroSrcOp: zeroing...");
+                let mut y = output.get_mut(txn, token);
+                y.as_view().set_zeros(&conn);
+              }
               _ => unreachable!(),
-            };
-            if overwrite {
-              // TODO: zero out the whole thing.
-              println!("DEBUG: ZeroSrcOp: zeroing...");
-              let mut y = output.get_mut(txn, token);
-              y.as_view().set_zeros(&conn);
             }
           }
         })
@@ -340,20 +336,18 @@ where T: ZeroBits + Copy + 'static,
       },
       func: {
         Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray4d<T>>| {
-          if let Some((mode, token)) = output.write(txn) {
+          if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu_device().unwrap();
             let pool = ctx.pool();
             let conn = pool.conn();
-            let overwrite = match (mode, token.first_write()) {
-              (WriteMode::Accumulate, false) => false,
-              (_, true) => true,
-              _ => unreachable!(),
-            };
-            if overwrite {
-              // TODO: zero out the whole thing.
-              println!("DEBUG: ZeroSrcOp: zeroing...");
-              let mut y = output.get_mut(txn, token);
-              y.as_view().set_zeros(&conn);
+            match cap {
+              WriteCap::Overwrite => {
+                // TODO: zero out the whole thing.
+                println!("DEBUG: ZeroSrcOp: zeroing...");
+                let mut y = output.get_mut(txn, token);
+                y.as_view().set_zeros(&conn);
+              }
+              WriteCap::Accumulate => {}
             }
           }
         })
@@ -398,15 +392,10 @@ impl SumJoinOp {
       func: {
         let inputs: Vec<_> = inputs_.iter().map(|x_| x_.value()).collect();
         Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<A>| {
-          if let Some((mode, token)) = output.write(txn) {
+          if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu_device().unwrap();
             let pool = ctx.pool();
             let conn = pool.conn();
-            let overwrite = match (mode, token.first_write()) {
-              (WriteMode::Accumulate, false) => false,
-              (_, true) => true,
-              _ => unreachable!(),
-            };
             let mut y = match output.get_mut(txn, token).flat_view() {
               None => panic!(),
               Some(y) => y,
@@ -415,10 +404,13 @@ impl SumJoinOp {
               None => panic!(),
               Some(x) => x,
             };
-            if overwrite {
-              y.copy(&x0, &conn);
-            } else {
-              y.add(&x0, &conn);
+            match cap {
+              WriteCap::Overwrite => {
+                y.copy(&x0, &conn);
+              }
+              WriteCap::Accumulate => {
+                y.add(&x0, &conn);
+              }
             }
             for i in 1 .. inputs.len() {
               let x = match inputs[i].get(txn).flat_view() {
@@ -462,15 +454,10 @@ impl SumJoinOp {
       func: {
         let inputs: Vec<_> = inputs_.iter().map(|x_| x_.value()).collect();
         Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<A>| {
-          if let Some((mode, token)) = output.write(txn) {
+          if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu_device().unwrap();
             let pool = ctx.pool();
             let conn = pool.conn();
-            let overwrite = match (mode, token.first_write()) {
-              (WriteMode::Accumulate, false) => false,
-              (_, true) => true,
-              _ => unreachable!(),
-            };
             let mut y = match output.get_mut(txn, token).flat_view() {
               None => panic!(),
               Some(y) => y,
@@ -481,10 +468,13 @@ impl SumJoinOp {
               Some(x) => x,
             };
             output.get_mut(txn, token).set_batch_size(batch_sz0);
-            if overwrite {
-              y.copy(&x0, &conn);
-            } else {
-              y.add(&x0, &conn);
+            match cap {
+              WriteCap::Overwrite => {
+                y.copy(&x0, &conn);
+              }
+              WriteCap::Accumulate => {
+                y.add(&x0, &conn);
+              }
             }
             for i in 1 .. inputs.len() {
               let batch_sz = inputs[i].get(txn).batch_size();
@@ -583,15 +573,14 @@ impl LinearMapOp {
         let input = input_.value();
         let map = map_.value();
         Rc::new(move |txn, state: RefMut<_>, output: RWVal<GPUDeviceArray1d<T>>| {
-          if let Some((mode, token)) = output.write(txn) {
+          if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu_device().unwrap();
             let pool = ctx.pool();
             let conn = pool.conn();
             let alpha = T::one();
-            let beta = match (mode, token.first_write()) {
-              (WriteMode::Accumulate, false) => T::one(),
-              (_, true) => T::zero(),
-              _ => unreachable!(),
+            let beta = match cap {
+              WriteCap::Overwrite => T::zero(),
+              WriteCap::Accumulate => T::one(),
             };
             assert_eq!(input.get(txn).size(), map.get(txn).size()[1]);
             assert_eq!(output.get_mut(txn, token).size(), map.get(txn).size()[0]);

@@ -172,7 +172,7 @@ impl NodeStack {
 pub trait IOVal {
   //fn _load(&self, txn: Txn, writer: &mut Any);
   //fn _store(&self, txn: Txn, reader: &mut Any);
-  fn _deserialize(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any));
+  fn _deserialize(&self, txn: Txn, writer: &mut FnMut(WriteCap, &mut Any));
   fn _serialize(&self, txn: Txn, reader: &mut FnMut(&Any));
 }
 
@@ -407,6 +407,12 @@ pub struct NodeRefMap<T> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WriteCap {
+  Overwrite,
+  Accumulate,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WriteMode {
   Exclusive,
   Accumulate,
@@ -424,12 +430,6 @@ impl<'a> WriteToken<'a> {
   pub fn first_write(&self) -> bool {
     self.first
   }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum WriteFlag {
-  Overwrite,
-  Accumulate,
 }
 
 /*pub trait RWVal: AVal {
@@ -514,10 +514,10 @@ impl<T> Clone for RWVal<T> {
 }
 
 impl<T> IOVal for RWVal<T> where T: 'static {
-  fn _deserialize(&self, txn: Txn, write: &mut FnMut(WriteMode, &mut Any)) {
-    if let Some((mode, token)) = self.write(txn) {
+  fn _deserialize(&self, txn: Txn, write: &mut FnMut(WriteCap, &mut Any)) {
+    if let Some((cap, token)) = self.write(txn) {
       let mut buf = self.get_mut(txn, token);
-      write(mode, &mut *buf);
+      write(cap, &mut *buf);
     }
   }
 
@@ -629,7 +629,7 @@ impl<T> RWVal<T> where T: 'static {
     buf.mode = WriteMode::Clobber;
   }*/
 
-  pub fn write(&self, txn: Txn) -> Option<(WriteMode, WriteToken)> {
+  pub fn write(&self, txn: Txn) -> Option<(WriteCap, WriteToken)> {
     let new_txn = {
       let buf = self.buf.borrow();
       buf.curr_txn.is_none() || buf.curr_txn.unwrap() != txn
@@ -692,8 +692,13 @@ impl<T> RWVal<T> where T: 'static {
     }
 
     let first = buf.l_producers.is_empty();
+    let cap = match (buf.mode, first) {
+      (WriteMode::Accumulate, false) => WriteCap::Accumulate,
+      (_, true) => WriteCap::Overwrite,
+      _ => unreachable!(),
+    };
     buf.l_producers.insert(self.var);
-    Some((buf.mode, WriteToken{var: self.var, first: first, borrow: &self.borrow}))
+    Some((cap, WriteToken{var: self.var, first: first, borrow: &self.borrow}))
   }
 
   pub fn get(&self, txn: Txn) -> Ref<T> {
@@ -748,14 +753,12 @@ impl<T> RWVal<T> where T: 'static {
   }
 
   pub fn set<F>(&self, txn: Txn, f: F) where F: FnOnce(RefMut<T>) {
-    if let Some((mode, token)) = self.write(txn) {
-      let overwrite = match (mode, token.first_write()) {
-        (WriteMode::Accumulate, false) => false,
-        (_, true) => true,
-        _ => unreachable!(),
-      };
-      if overwrite {
-        f(self.get_mut(txn, token));
+    if let Some((cap, token)) = self.write(txn) {
+      match cap {
+        WriteCap::Overwrite => {
+          f(self.get_mut(txn, token));
+        }
+        _ => unimplemented!(),
       }
     }
   }
@@ -948,13 +951,13 @@ impl<'a, R> IoReader<'a> for R where R: MemIoReader<'a> {
 }
 
 pub trait IoWriter<'a> {
-  fn write(&mut self, mode: WriteMode, dst: &'a mut Any);
+  fn write(&mut self, cap: WriteCap, dst: &'a mut Any);
 }
 
 impl<'a, W> IoWriter<'a> for W where W: MemIoWriter<'a> {
-  fn write(&mut self, mode: WriteMode, mut dst: &'a mut Any) {
+  fn write(&mut self, cap: WriteCap, mut dst: &'a mut Any) {
     let ty_id = (*dst).get_type_id();
-    if self.write_mem(mode, &mut dst).is_some() {
+    if self.write_mem(cap, &mut dst).is_some() {
       return;
     }
     /*if self.write_mem(mode, &mut dst).is_some() {
@@ -1006,16 +1009,16 @@ impl<'a, T> FlatWriter<'a, T> {
   }
 }
 
-impl<'a, T> FnOnce<(WriteMode, &'a mut Any)> for FlatWriter<'a, T> where FlatWriter<'a, T>: IoWriter<'a> {
+impl<'a, T> FnOnce<(WriteCap, &'a mut Any)> for FlatWriter<'a, T> where FlatWriter<'a, T>: IoWriter<'a> {
   type Output = ();
 
-  extern "rust-call" fn call_once(mut self, args: (WriteMode, &'a mut Any)) -> () {
+  extern "rust-call" fn call_once(mut self, args: (WriteCap, &'a mut Any)) -> () {
     self.call_mut(args)
   }
 }
 
-impl<'a, T> FnMut<(WriteMode, &'a mut Any)> for FlatWriter<'a, T> where FlatWriter<'a, T>: IoWriter<'a> {
-  extern "rust-call" fn call_mut(&mut self, args: (WriteMode, &'a mut Any)) -> () {
+impl<'a, T> FnMut<(WriteCap, &'a mut Any)> for FlatWriter<'a, T> where FlatWriter<'a, T>: IoWriter<'a> {
+  extern "rust-call" fn call_mut(&mut self, args: (WriteCap, &'a mut Any)) -> () {
     self.write(args.0, args.1);
   }
 }
