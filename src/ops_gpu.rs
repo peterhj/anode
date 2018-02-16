@@ -26,6 +26,7 @@ use devicemem_gpu::*;
 use devicemem_gpu::array::*;
 use memarray::*;
 
+use std::cell::{RefCell};
 use std::marker::{PhantomData};
 use std::ops::{Range, RangeFrom, RangeTo, RangeFull};
 use std::sync::{Arc};
@@ -66,7 +67,7 @@ where T: Copy + 'static,
         })
       },
       func: {
-        Rc::new(move |txn: Txn, output: RWVal<GPUDeviceArray1d<T>>| {
+        Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray1d<T>>| {
           if let Some((_mode, _token)) = output.write(txn) {
             panic!("WARNING: SrcOpExt: should never write");
           }
@@ -109,7 +110,7 @@ where T: Copy + 'static,
         })
       },
       func: {
-        Rc::new(move |txn: Txn, output: RWVal<GPUDeviceArray1d<T>>| {
+        Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray1d<T>>| {
           if let Some((mode, token)) = output.write(txn) {
             unreachable!("should never evaluate a pure source");
           }
@@ -149,7 +150,7 @@ where T: Copy + 'static,
         })
       },
       func: {
-        Rc::new(move |txn: Txn, output: RWVal<GPUDeviceArray2d<T>>| {
+        Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray2d<T>>| {
           if let Some((_mode, _token)) = output.write(txn) {
             panic!("WARNING: SrcOpExt: should never write");
           }
@@ -189,7 +190,7 @@ where T: Copy + 'static,
         })
       },
       func: {
-        Rc::new(move |txn: Txn, output: RWVal<GPUDeviceArray4d<T>>| {
+        Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray4d<T>>| {
           if let Some((_mode, _token)) = output.write(txn) {
             panic!("WARNING: SrcOpExt: should never write");
           }
@@ -232,7 +233,7 @@ where T: ZeroBits + Copy + 'static,
         })
       },
       func: {
-        Rc::new(move |txn: Txn, output: RWVal<GPUDeviceArray1d<T>>| {
+        Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray1d<T>>| {
           if let Some((mode, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu_device().unwrap();
             let pool = ctx.pool();
@@ -285,7 +286,7 @@ where T: ZeroBits + Copy + 'static,
         })
       },
       func: {
-        Rc::new(move |txn: Txn, output: RWVal<GPUDeviceArray2d<T>>| {
+        Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray2d<T>>| {
           if let Some((mode, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu_device().unwrap();
             let pool = ctx.pool();
@@ -338,7 +339,7 @@ where T: ZeroBits + Copy + 'static,
         })
       },
       func: {
-        Rc::new(move |txn: Txn, output: RWVal<GPUDeviceArray4d<T>>| {
+        Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray4d<T>>| {
           if let Some((mode, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu_device().unwrap();
             let pool = ctx.pool();
@@ -396,7 +397,7 @@ impl SumJoinOp {
       },
       func: {
         let inputs: Vec<_> = inputs_.iter().map(|x_| x_.value()).collect();
-        Rc::new(move |txn: Txn, output: RWVal<A>| {
+        Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<A>| {
           if let Some((mode, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu_device().unwrap();
             let pool = ctx.pool();
@@ -460,7 +461,7 @@ impl SumJoinOp {
       },
       func: {
         let inputs: Vec<_> = inputs_.iter().map(|x_| x_.value()).collect();
-        Rc::new(move |txn: Txn, output: RWVal<A>| {
+        Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<A>| {
           if let Some((mode, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu_device().unwrap();
             let pool = ctx.pool();
@@ -581,7 +582,7 @@ impl LinearMapOp {
       func: {
         let input = input_.value();
         let map = map_.value();
-        Rc::new(move |txn, output: RWVal<GPUDeviceArray1d<T>>| {
+        Rc::new(move |txn, state: RefMut<_>, output: RWVal<GPUDeviceArray1d<T>>| {
           if let Some((mode, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu_device().unwrap();
             let pool = ctx.pool();
