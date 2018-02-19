@@ -53,19 +53,29 @@ pub fn implicit_ctx() -> Rc<ExecutionCtx + 'static> {
 }
 
 pub trait ExecutionCtx {
-  //fn push(&self) -> CtxGuard { unimplemented!(); }
   fn synchronize(&self) { unimplemented!(); }
-  fn thread_pool(&self) -> Option<ThreadPoolCtx> { None }
-  #[cfg(feature = "gpu")] fn gpu_device(&self) -> Option<GPUDeviceCtx> { None }
-  #[cfg(feature = "gpu")] fn multi_gpu_device(&self) -> Option<MultiGPUDeviceCtx> { None }
+  fn thread_pool(&self) -> Option<Rc<ThreadPoolCtx>> { None }
+  #[cfg(feature = "gpu")] fn gpu(&self) -> Option<Rc<GPUDeviceCtx>> { None }
+  #[cfg(feature = "gpu")] fn multi_gpu(&self) -> Option<Rc<MultiGPUDeviceCtx>> { None }
 }
 
-pub struct CtxGuard {
+pub fn push_ctx(ctx: Rc<ExecutionCtx + 'static>) -> CtxGuard {
+  IMPLICIT.with(|stack| {
+    let mut stack = stack.borrow_mut();
+    stack.push(ctx);
+  });
+  CtxGuard
 }
+
+pub struct CtxGuard;
 
 impl Drop for CtxGuard {
   fn drop(&mut self) {
-    // TODO
+    IMPLICIT.with(|stack| {
+      let mut stack = stack.borrow_mut();
+      let maybe_ctx = stack.pop();
+      assert!(maybe_ctx.is_some());
+    });
   }
 }
 
@@ -109,14 +119,14 @@ pub struct GPUDeviceCtx {
 
 #[cfg(feature = "gpu")]
 impl ExecutionCtx for GPUDeviceCtx {
-  fn gpu_device(&self) -> Option<GPUDeviceCtx> {
-    Some(GPUDeviceCtx{pool: self.pool.clone()})
+  fn gpu(&self) -> Option<Rc<GPUDeviceCtx>> {
+    Some(Rc::new(GPUDeviceCtx{pool: self.pool.clone()}))
   }
 
-  fn multi_gpu_device(&self) -> Option<MultiGPUDeviceCtx> {
-    Some(MultiGPUDeviceCtx{
+  fn multi_gpu(&self) -> Option<Rc<MultiGPUDeviceCtx>> {
+    Some(Rc::new(MultiGPUDeviceCtx{
       md_pools: vec![self.pool.clone()],
-    })
+    }))
   }
 }
 
@@ -147,12 +157,12 @@ pub struct MultiGPUDeviceCtx {
 
 #[cfg(feature = "gpu")]
 impl ExecutionCtx for MultiGPUDeviceCtx {
-  fn gpu_device(&self) -> Option<GPUDeviceCtx> {
-    Some(self.gpu_device(0))
+  fn gpu(&self) -> Option<Rc<GPUDeviceCtx>> {
+    Some(self.gpu(0))
   }
 
-  fn multi_gpu_device(&self) -> Option<MultiGPUDeviceCtx> {
-    Some(MultiGPUDeviceCtx{md_pools: self.md_pools.clone()})
+  fn multi_gpu(&self) -> Option<Rc<MultiGPUDeviceCtx>> {
+    Some(Rc::new(MultiGPUDeviceCtx{md_pools: self.md_pools.clone()}))
   }
 }
 
@@ -168,12 +178,12 @@ impl Default for MultiGPUDeviceCtx {
 
 #[cfg(feature = "gpu")]
 impl MultiGPUDeviceCtx {
-  pub fn num_gpu_devices(&self) -> usize {
+  pub fn num_gpus(&self) -> usize {
     self.md_pools.len()
   }
 
-  pub fn gpu_device(&self, device_index: usize) -> GPUDeviceCtx {
-    GPUDeviceCtx{pool: self.md_pools[device_index].clone()}
+  pub fn gpu(&self, device_index: usize) -> Rc<GPUDeviceCtx> {
+    Rc::new(GPUDeviceCtx{pool: self.md_pools[device_index].clone()})
   }
 }
 

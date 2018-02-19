@@ -41,3 +41,18 @@ fn test_gpu_zeros_eval() {
   sleep(Duration::from_secs(10));
   println!("DEBUG: done sleeping");
 }
+
+#[test]
+fn test_gpu_mux() {
+  let x = zeros(Rc::new(|stream: GPUDeviceStreamPool| {
+    println!("DEBUG: test: allocating...");
+    GPUDeviceArray1d::<f32>::zeros(1024, stream.conn())
+  }));
+  /*let y = x.gpu_mux(GPUDeviceId(0));
+  let y_node: Rc<ANode> = y.clone();
+  let y_op: Rc<AOp<V=_>> = y.clone();*/
+  //let (y_node, y_op) = x.gpu_mux(GPUDeviceId(0));
+  let y_op: Rc<AOp<V=_>> = x.gpu_mux(GPUDeviceId(0));
+  println!("DEBUG: test: eval...");
+  y_op.eval(txn());
+}

@@ -27,6 +27,7 @@ extern crate arithmetic;
 #[cfg(feature = "gpu")] extern crate cuda_blas;
 #[cfg(feature = "gpu")] extern crate cuda_dnn;
 #[cfg(feature = "gpu")] extern crate devicemem_gpu;
+//extern crate float;
 //extern crate fnv;
 extern crate memarray;
 extern crate rng;
@@ -36,6 +37,9 @@ extern crate rng;
 extern crate rand;
 
 use ops::{MemIoReader, MemIoWriter, OnesSrcOp, OnesSrcOpMaybeExt, SumJoinOp, SumJoinOpMaybeExt, SumJoinOpExt};
+#[cfg(feature = "gpu")] use ops_gpu::{GPUMuxFun};
+
+#[cfg(feature = "gpu")] use devicemem_gpu::{GPUDeviceId};
 
 use std::any::{Any};
 use std::cell::{Cell, RefCell, Ref, RefMut};
@@ -68,10 +72,10 @@ pub struct Txn(u64);
 pub struct Epoch(u64);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct TmpVar(u64);
+pub struct RVar(u64);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
-pub struct RootVar(TmpVar);
+pub struct RWVar(RVar);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeRef(u64);
@@ -99,9 +103,9 @@ impl Default for Epoch {
   }
 }
 
-impl Default for TmpVar {
+impl Default for RVar {
   fn default() -> Self {
-    TmpVar(gen_thread_local_uid())
+    RVar(gen_thread_local_uid())
   }
 }
 
@@ -209,7 +213,7 @@ pub trait AOp: ANode {
   // TODO: deprecated.
   //fn _swap(&mut self, new_val: Self::V) { unimplemented!(); }
 
-  fn var(&self) -> RootVar { unimplemented!(); }
+  fn var(&self) -> RWVar { unimplemented!(); }
   fn _make_value(&self) -> RWVal<Self::V>;
   fn value(&self) -> RWVal<Self::V>;
   fn _make_tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) { unimplemented!(); }
@@ -217,15 +221,17 @@ pub trait AOp: ANode {
   fn _pop_adjoint(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ this: Rc<AOp<V=Self::V>>, sink: &mut Sink) { unimplemented!(); }
   fn adjoint(&self, sink: &mut Sink) -> (Rc<ANode>, Rc<AOp<V=Self::V>>);
 
-  fn _clobber(&self) -> Rc<AOp<V=Self::V>> { unimplemented!(); }
+  //#[cfg(feature = "gpu")] fn gpu_mux(&self, dev: GPUDeviceId) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) { unimplemented!(); }
+  //#[cfg(feature = "gpu")] fn gpu_mux(&self, dev: GPUDeviceId) -> Rc<AOp<V=Self::V>> { unimplemented!(); }
+  fn clobber(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) { unimplemented!(); }
 }
 
 /*pub trait AVal: IOVal + Clone {
   type T;
 
-  fn duplicate(&self) -> Self where Self: Sized;
-  fn root_var(&self) -> RootVar;
-  fn tmp_var(&self) -> TmpVar;
+  fn exact_duplicate(&self) -> Self where Self: Sized;
+  fn root_var(&self) -> RWVar;
+  fn tmp_var(&self) -> RVar;
 
   fn txn(&self) -> Option<Txn>;
   //fn load(&self, txn: Txn, writer: &mut Any);
@@ -251,9 +257,9 @@ impl<V> Op<V> {
 }
 
 pub struct Sink {
-  frozen:   HashSet<RootVar>,
-  adj_map:  HashMap<RootVar, Vec<(Rc<ANode>, Rc<Any>)>>,
-  join_map: HashMap<RootVar, (Rc<ANode>, Rc<Any>)>,
+  frozen:   HashSet<RWVar>,
+  adj_map:  HashMap<RWVar, Vec<(Rc<ANode>, Rc<Any>)>>,
+  join_map: HashMap<RWVar, (Rc<ANode>, Rc<Any>)>,
   adj_seq:  Vec<Rc<ANode>>,
 }
 
@@ -274,9 +280,9 @@ impl Sink {
     sink
   }
 
-  //pub fn get_adj<V>(&mut self, var: RootVar) -> Option<(Rc<ANode>, Rc<AOp<V=V>>)> where V: RWVal + 'static, SumJoinOp: SumJoinOpExt<V::T, V> {
-  //pub fn get_adj<V>(&mut self, var: RootVar) -> Option<(Rc<ANode>, Rc<AOp<V=V>>)> where V: AVal + 'static, SumJoinOp: SumJoinOpExt<V::T, V> {
-  pub fn get_adj<V>(&mut self, var: RootVar) -> Option<(Rc<ANode>, Rc<AOp<V=V>>)> where V: 'static {
+  //pub fn get_adj<V>(&mut self, var: RWVar) -> Option<(Rc<ANode>, Rc<AOp<V=V>>)> where V: RWVal + 'static, SumJoinOp: SumJoinOpExt<V::T, V> {
+  //pub fn get_adj<V>(&mut self, var: RWVar) -> Option<(Rc<ANode>, Rc<AOp<V=V>>)> where V: AVal + 'static, SumJoinOp: SumJoinOpExt<V::T, V> {
+  pub fn get_adj<V>(&mut self, var: RWVar) -> Option<(Rc<ANode>, Rc<AOp<V=V>>)> where V: 'static {
     self.frozen.insert(var);
     if self.adj_map.contains_key(&var) {
       let adjs = self.adj_map.get(&var).unwrap();
@@ -316,8 +322,10 @@ impl Sink {
     None
   }
 
-  pub fn put_adj<V, Op>(&mut self, var: RootVar, mut adj_op: Rc<Op>) where V: 'static, Op: AOp<V=V> + 'static {
+  pub fn put_adj<V, Op>(&mut self, var: RWVar, mut adj_op: Rc<Op>) where V: 'static, Op: AOp<V=V> + 'static {
     assert!(!self.frozen.contains(&var));
+    let adj_node: Rc<ANode> = adj_op.clone();
+    let adj_any_op: Rc<AOp<V=V>> = adj_op;
     if self.adj_map.contains_key(&var) {
       let mut adjs = self.adj_map.get_mut(&var).unwrap();
       // NOTE: Not using accumulate-mode join, so do not explicitly swap values.
@@ -329,13 +337,21 @@ impl Sink {
           }
         }
       }*/
-      let adj_node: Rc<ANode> = adj_op.clone();
-      let adj_any_op: Rc<AOp<V=V>> = adj_op;
       adjs.push((adj_node.clone(), Rc::new(adj_any_op)));
       self.adj_seq.push(adj_node);
     } else {
-      let adj_node: Rc<ANode> = adj_op.clone();
-      let adj_any_op: Rc<AOp<V=V>> = adj_op;
+      self.adj_map.insert(var, vec![(adj_node.clone(), Rc::new(adj_any_op))]);
+      self.adj_seq.push(adj_node);
+    }
+  }
+
+  pub fn put_adj_<V>(&mut self, var: RWVar, adj_node: Rc<ANode>, adj_any_op: Rc<AOp<V=V>>) where V: 'static {
+    assert!(!self.frozen.contains(&var));
+    if self.adj_map.contains_key(&var) {
+      let mut adjs = self.adj_map.get_mut(&var).unwrap();
+      adjs.push((adj_node.clone(), Rc::new(adj_any_op)));
+      self.adj_seq.push(adj_node);
+    } else {
       self.adj_map.insert(var, vec![(adj_node.clone(), Rc::new(adj_any_op))]);
       self.adj_seq.push(adj_node);
     }
@@ -398,7 +414,7 @@ impl NodeVector {
 
 #[derive(Default)]
 pub struct VarCollection {
-  vars:     Vec<TmpVar>,
+  vars:     Vec<RVar>,
 }
 
 #[derive(Default)]
@@ -416,12 +432,12 @@ pub enum WriteCap {
 pub enum WriteMode {
   Exclusive,
   Accumulate,
-  //Clobber,
+  Clobber,
 }
 
 #[derive(Clone, Copy)]
 pub struct WriteToken<'a> {
-  var:      TmpVar,
+  var:      RVar,
   first:    bool,
   borrow:   &'a (),
 }
@@ -449,10 +465,10 @@ pub struct RWValBuf<T> {
   mode:         WriteMode,
   curr_txn:     Option<Txn>,
   dirty:        bool,
-  l_consumers:  HashSet<TmpVar>,
-  d_consumers:  HashSet<TmpVar>,
-  l_producers:  HashSet<TmpVar>,
-  d_producers:  HashSet<TmpVar>,
+  l_consumers:  HashSet<RVar>,
+  d_consumers:  HashSet<RVar>,
+  l_producers:  HashSet<RWVar>,
+  d_producers:  HashSet<RWVar>,
   data:         Option<T>,
 }
 
@@ -474,8 +490,8 @@ impl<T> Default for RWValBuf<T> {
 pub struct RWVal<T> {
   ref_:     ValRef,
   alloc:    Rc<Fn(Txn) -> T>,
-  root:     RootVar,
-  var:      TmpVar,
+  root:     RWVar,
+  var:      RVar,
   buf:      Rc<RefCell<RWValBuf<T>>>,
   borrow:   (),
 }
@@ -483,11 +499,11 @@ pub struct RWVal<T> {
 impl<T> RWVal<T> {
   pub fn new(alloc: Rc<Fn(Txn) -> T>) -> Self {
     let ref_ = ValRef::default();
-    let var = TmpVar::default();
+    let var = RVar::default();
     RWVal{
       ref_:     ref_,
       alloc:    alloc,
-      root:     RootVar(var),
+      root:     RWVar(var),
       var:      var,
       buf:      Rc::new(RefCell::new(RWValBuf::default())),
       borrow:   (),
@@ -500,18 +516,18 @@ impl<T> RWVal<T> {
   }*/
 }
 
-impl<T> Clone for RWVal<T> {
+/*impl<T> Clone for RWVal<T> {
   fn clone(&self) -> Self {
     RWVal{
       ref_:     self.ref_,
       alloc:    self.alloc.clone(),
       root:     self.root,
-      var:      TmpVar::default(),
+      var:      RVar::default(),
       buf:      self.buf.clone(),
       borrow:   (),
     }
   }
-}
+}*/
 
 impl<T> IOVal for RWVal<T> where T: 'static {
   fn _deserialize(&self, txn: Txn, write: &mut FnMut(WriteCap, &mut Any)) {
@@ -527,11 +543,21 @@ impl<T> IOVal for RWVal<T> where T: 'static {
   }
 }
 
-//impl<T> AVal for RWVal<T> where T: 'static {
 impl<T> RWVal<T> where T: 'static {
-  //type T = T;
+  pub fn from(alloc: Rc<Fn(Txn) -> T>) -> Self {
+    let var = RVar::default();
+    RWVal{
+      ref_:     ValRef::default(),
+      //mode:     mode,
+      alloc:    alloc,
+      root:     RWVar(var),
+      var:      var,
+      buf:      Rc::new(RefCell::new(RWValBuf::default())),
+      borrow:   (),
+    }
+  }
 
-  pub fn duplicate(&self) -> Self {
+  pub fn exact_duplicate(&self) -> Self {
     RWVal{
       ref_:     self.ref_,
       alloc:    self.alloc.clone(),
@@ -542,11 +568,51 @@ impl<T> RWVal<T> where T: 'static {
     }
   }
 
-  pub fn root_var(&self) -> RootVar {
+  pub fn clone_read(&self) -> Self {
+    RWVal{
+      ref_:     self.ref_,
+      alloc:    self.alloc.clone(),
+      root:     self.root,
+      var:      RVar::default(),
+      buf:      self.buf.clone(),
+      borrow:   (),
+    }
+  }
+
+  pub fn clone_read_write(&self) -> Self {
+    let var = RVar::default();
+    RWVal{
+      ref_:     self.ref_,
+      alloc:    self.alloc.clone(),
+      root:     RWVar(var),
+      var:      var,
+      buf:      self.buf.clone(),
+      borrow:   (),
+    }
+  }
+
+  pub fn clobber(&self) -> Self {
+    {
+      let mut buf = self.buf.borrow_mut();
+      assert_eq!(buf.mode, WriteMode::Exclusive);
+      buf.mode = WriteMode::Clobber;
+    }
+    let var = RVar::default();
+    RWVal{
+      ref_:     self.ref_,
+      alloc:    self.alloc.clone(),
+      root:     RWVar(var),
+      var:      var,
+      buf:      self.buf.clone(),
+      borrow:   (),
+    }
+  }
+
+  pub fn root_var(&self) -> RWVar {
     self.root
   }
 
-  pub fn tmp_var(&self) -> TmpVar {
+  pub fn tmp_var(&self) -> RVar {
     self.var
   }
 
@@ -580,54 +646,23 @@ impl<T> RWVal<T> where T: 'static {
       let mut buf = self.buf.borrow_mut();
       buf.curr_txn = Some(txn);
     }
+
     let mut buf = self.buf.borrow_mut();
-    assert!(!buf.d_producers.contains(&self.var),
+    assert!(!buf.d_producers.contains(&self.root),
         "`persist` should be called before all other writes");
     match buf.l_producers.len() {
       0 => {}
       1 => {
-        assert!(buf.l_producers.contains(&self.var),
+        assert!(buf.l_producers.contains(&self.root),
             "`persist` should be called before all other writes");
+        return;
       }
       _ => panic!("`persist` should be called before all other writes"),
     }
     assert!(buf.l_consumers.is_empty(),
         "`persist` should be called before reads");
-    buf.l_producers.insert(self.var);
+    buf.l_producers.insert(self.root);
   }
-//}
-
-//impl<T> RWVal<T> where T: 'static {
-  pub fn from(alloc: Rc<Fn(Txn) -> T>) -> Self {
-    let var = TmpVar::default();
-    RWVal{
-      ref_:     ValRef::default(),
-      //mode:     mode,
-      alloc:    alloc,
-      root:     RootVar(var),
-      var:      var,
-      buf:      Rc::new(RefCell::new(RWValBuf::default())),
-      borrow:   (),
-    }
-  }
-
-  /*fn set_exclusive(&self) {
-    let mut buf = self.buf.borrow_mut();
-    assert!(!buf.dirty);
-    buf.mode = WriteMode::Exclusive;
-  }
-
-  fn set_accumulate(&self) {
-    let mut buf = self.buf.borrow_mut();
-    assert!(!buf.dirty);
-    buf.mode = WriteMode::Accumulate;
-  }
-
-  fn set_clobber(&self) {
-    let mut buf = self.buf.borrow_mut();
-    assert!(!buf.dirty);
-    buf.mode = WriteMode::Clobber;
-  }*/
 
   pub fn write(&self, txn: Txn) -> Option<(WriteCap, WriteToken)> {
     let new_txn = {
@@ -646,7 +681,7 @@ impl<T> RWVal<T> where T: 'static {
         match (buf.l_producers.len(), buf.d_producers.len()) {
           (0, 0) => {}
           (1, 0) => {
-            if buf.l_producers.contains(&self.var) {
+            if buf.l_producers.contains(&self.root) {
               return None;
             }
             panic!("attempting second write to `Exclusive` val");
@@ -661,20 +696,20 @@ impl<T> RWVal<T> where T: 'static {
         match (buf.l_producers.len(), buf.d_producers.len()) {
           (0, 0) => {}
           (_, 0) => {
-            if buf.l_producers.contains(&self.var) {
+            if buf.l_producers.contains(&self.root) {
               return None;
             }
           }
           (_, _) => panic!("all writes to `Accumulate` val must be live"),
         }
         assert!(buf.l_consumers.is_empty(),
-            "attempting write to `Exclusive` val after read");
+            "attempting write to `Accumulate` val after read");
       }
-      /*WriteMode::Clobber => {
+      WriteMode::Clobber => {
         match (buf.l_producers.len(), buf.d_producers.len()) {
           (0, 0) => {}
           (1, _) => {
-            if buf.l_producers.contains(&self.var) {
+            if buf.l_producers.contains(&self.root) {
               return None;
             }
           }
@@ -688,7 +723,7 @@ impl<T> RWVal<T> where T: 'static {
             ..} = &mut *buf;
         d_consumers.extend(l_consumers.drain());
         d_producers.extend(l_producers.drain());
-      }*/
+      }
     }
 
     let first = buf.l_producers.is_empty();
@@ -697,7 +732,7 @@ impl<T> RWVal<T> where T: 'static {
       (_, true) => WriteCap::Overwrite,
       _ => unreachable!(),
     };
-    buf.l_producers.insert(self.var);
+    buf.l_producers.insert(self.root);
     Some((cap, WriteToken{var: self.var, first: first, borrow: &self.borrow}))
   }
 
@@ -715,7 +750,11 @@ impl<T> RWVal<T> where T: 'static {
           "attempting a read with an invalid txn (did you forget to `persist` or `write`?)");
 
       assert!(!buf.d_consumers.contains(&self.var),
+          "attempting a stale read (the value has been clobbered)");
+      assert!(!buf.d_producers.contains(&self.root),
           "attempting an invalid read (the value has been clobbered)");
+      assert!(buf.l_producers.contains(&self.root),
+          "attempting an invalid read (the value was never written)");
       buf.l_consumers.insert(self.var);
 
       assert!(buf.data.is_some(),
@@ -740,10 +779,10 @@ impl<T> RWVal<T> where T: 'static {
 
       assert!(buf.l_consumers.is_empty(),
           "attempting a write-after-read (check your `get` and `get_mut` order)");
-      assert!(!buf.d_producers.contains(&self.var),
+      assert!(!buf.d_producers.contains(&self.root),
           "attempting an invalid write (the value has been clobbered)");
-      assert!(buf.l_producers.contains(&self.var),
-          "attempting an unpermitted write (did you use the wrong `WriteToken`?)");
+      assert!(buf.l_producers.contains(&self.root),
+          "attempting an invalid write (did you forget to `write`?)");
 
       if buf.data.is_none() {
         buf.data = Some((self.alloc)(txn));
@@ -768,7 +807,7 @@ impl<T> RWVal<T> where T: 'static {
   val:      ValRef,
   clock:    Rc<Cell<usize>>,
   alloc:    Rc<Fn(Txn) -> T>,
-  clk_vars: Vec<TmpVar>,
+  clk_vars: Vec<RVar>,
   clk_bufs: Rc<RefCell<Vec<RWValBuf<T>>>>,
   borrow:   (),
 }
@@ -777,7 +816,7 @@ impl<T> Clone for ClkVal<T> {
   fn clone(&self) -> Self {
     let mut new_clk_vars = Vec::with_capacity(self.clk_vars.len());
     for _ in 0 .. self.clk_vars.len() {
-      new_clk_vars.push(TmpVar::default());
+      new_clk_vars.push(RVar::default());
     }
     ClkVal{
       val:      self.val,
@@ -811,7 +850,7 @@ impl<T> IOVal for ClkVal<T> where T: 'static {
 impl<T> AVal for ClkVal<T> where T: 'static {
   type T = T;
 
-  fn duplicate(&self) -> Self {
+  fn exact_duplicate(&self) -> Self {
     ClkVal{
       val:      self.val,
       clock:    self.clock.clone(),
@@ -822,12 +861,12 @@ impl<T> AVal for ClkVal<T> where T: 'static {
     }
   }
 
-  fn root_var(&self) -> RootVar {
+  fn root_var(&self) -> RWVar {
     // TODO
     unimplemented!();
   }
 
-  fn tmp_var(&self) -> TmpVar {
+  fn tmp_var(&self) -> RVar {
     let clk = self.clock.get();
     self.clk_vars[clk]
   }
@@ -1030,6 +1069,17 @@ pub struct OpExt<F, V> {
   adjoint:  Option<Rc<Fn(Rc<AOp<V=V>>, &mut Sink)>>,
 }
 
+impl<F, V> Clone for OpExt<F, V> {
+  fn clone(&self) -> Self {
+    OpExt{
+      make:     self.make.clone(),
+      func:     self.func.clone(),
+      tangent:  self.tangent.clone(),
+      adjoint:  self.adjoint.clone(),
+    }
+  }
+}
+
 pub struct FSrcOp<F, V> {
   base: OpBase<V>,
   ext:  OpExt<F, V>,
@@ -1048,7 +1098,7 @@ impl<F, V> FSrcOp<F, V> {
   }
 }
 
-impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
+impl<F, V> ANode for FSrcOp<F, V> where F: Clone + 'static, RWVal<V>: IOVal + 'static {
   fn _push(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
     // TODO
   }
@@ -1070,7 +1120,7 @@ impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
   }
 
   fn _apply(&self, txn: Txn) {
-    (self.ext.func)(txn, self.fun.borrow_mut(), self.val.duplicate());
+    (self.ext.func)(txn, self.fun.borrow_mut(), self.val.exact_duplicate());
   }
 
   /*fn deserialize_forward(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any)) {
@@ -1103,10 +1153,10 @@ impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
   }
 }
 
-impl<F, V> AOp for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
+impl<F, V> AOp for FSrcOp<F, V> where F: Clone + 'static, RWVal<V>: IOVal + 'static {
   type V = V;
 
-  fn var(&self) -> RootVar {
+  fn var(&self) -> RWVar {
     self.val.root_var()
   }
 
@@ -1115,7 +1165,7 @@ impl<F, V> AOp for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
   }
 
   fn value(&self) -> RWVal<Self::V> {
-    self.val.clone()
+    self.val.clone_read()
   }
 
   fn _make_tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
@@ -1144,6 +1194,37 @@ impl<F, V> AOp for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
       None => panic!(),
       Some(adj) => adj,
     }
+  }
+
+  /*#[cfg(feature = "gpu")]
+  fn gpu_mux(&self, dev: GPUDeviceId) -> Rc<AOp<V=Self::V>> {
+    let op = self._gpu_mux(dev);
+    op
+  }*/
+}
+
+impl<F, V> FSrcOp<F, V> where F: Clone + 'static, RWVal<V>: IOVal + 'static {
+  #[cfg(feature = "gpu")]
+  pub fn gpu_mux(&self, dev: GPUDeviceId) -> Rc<FSrcOp<GPUMuxFun<F, V>, V>> {
+    let wrap_ext: OpExt<GPUMuxFun<F, V>, V> = GPUMuxFun::<F, V>::build_ext();
+    let wrap_fun: GPUMuxFun<F, V> = GPUMuxFun{
+      dev:  dev,
+      ext:  self.ext.clone(),
+      fun:  RefCell::new(self.fun.borrow().clone()),
+    };
+    let op: Rc<FSrcOp<GPUMuxFun<F, V>, V>> = Rc::new(FSrcOp{
+      base: OpBase::default(),
+      ext:  wrap_ext,
+      fun:  RefCell::new(wrap_fun),
+      val:  self.val.clone_read_write(),
+    });
+    op
+    //let node: Rc<ANode> = (op as Rc<FSrcOp<GPUMuxFun<F, Self::V>, Self::V>>).clone();
+    //let node = op.clone();
+    //(node, op)
+    // TODO
+    //unimplemented!();
+    //(op.clone(), op)
   }
 }
 
@@ -1217,7 +1298,7 @@ impl<F, V1, W> ANode for F1Op<F, V1, W> where RWVal<W>: IOVal + 'static {
   }
 
   fn _apply(&self, txn: Txn) {
-    (self.ext.func)(txn, self.fun.borrow_mut(), self.y.duplicate());
+    (self.ext.func)(txn, self.fun.borrow_mut(), self.y.exact_duplicate());
   }
 
   fn cleanup(&self, txn: Txn) {
@@ -1235,7 +1316,7 @@ impl<F, V1, W> ANode for F1Op<F, V1, W> where RWVal<W>: IOVal + 'static {
 impl<F, V1, W> AOp for F1Op<F, V1, W> where RWVal<W>: IOVal + 'static {
   type V = W;
 
-  fn var(&self) -> RootVar {
+  fn var(&self) -> RWVar {
     self.y.root_var()
   }
 
@@ -1244,7 +1325,7 @@ impl<F, V1, W> AOp for F1Op<F, V1, W> where RWVal<W>: IOVal + 'static {
   }
 
   fn value(&self) -> RWVal<Self::V> {
-    self.y.clone()
+    self.y.clone_read()
   }
 
   fn _make_tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
@@ -1324,7 +1405,7 @@ impl<F, V1, W> ANode for F1ClobberOp<F, V1, W> where RWVal<W>: IOVal + 'static {
   }
 
   fn _apply(&self, txn: Txn) {
-    (self.ext.func)(txn, self.fun.borrow_mut(), self.y.duplicate());
+    (self.ext.func)(txn, self.fun.borrow_mut(), self.y.exact_duplicate());
   }
 
   fn cleanup(&self, txn: Txn) {
@@ -1403,7 +1484,7 @@ impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where RWVal<W>: IOVal + 'static 
   }
 
   fn _apply(&self, txn: Txn) {
-    (self.ext.func)(txn, self.fun.borrow_mut(), self.y.duplicate());
+    (self.ext.func)(txn, self.fun.borrow_mut(), self.y.exact_duplicate());
   }
 
   fn cleanup(&self, txn: Txn) {
@@ -1423,7 +1504,7 @@ impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where RWVal<W>: IOVal + 'static 
 impl<F, V1, V2, W> AOp for F2Op<F, V1, V2, W> where RWVal<W>: IOVal + 'static {
   type V = W;
 
-  fn var(&self) -> RootVar {
+  fn var(&self) -> RWVar {
     self.y.root_var()
   }
 
@@ -1432,7 +1513,7 @@ impl<F, V1, V2, W> AOp for F2Op<F, V1, V2, W> where RWVal<W>: IOVal + 'static {
   }
 
   fn value(&self) -> RWVal<Self::V> {
-    self.y.clone()
+    self.y.clone_read()
   }
 
   fn _make_tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
@@ -1513,7 +1594,7 @@ impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where RWVal<W>: IOVal + 
   }
 
   fn _apply(&self, txn: Txn) {
-    (self.ext.func)(txn, self.fun.borrow_mut(), self.y.duplicate());
+    (self.ext.func)(txn, self.fun.borrow_mut(), self.y.exact_duplicate());
   }
 
   fn cleanup(&self, txn: Txn) {
@@ -1535,7 +1616,7 @@ impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where RWVal<W>: IOVal + 
 impl<F, V1, V2, V3, W> AOp for F3Op<F, V1, V2, V3, W> where RWVal<W>: IOVal + 'static {
   type V = W;
 
-  fn var(&self) -> RootVar {
+  fn var(&self) -> RWVar {
     self.y.root_var()
   }
 
@@ -1544,7 +1625,7 @@ impl<F, V1, V2, V3, W> AOp for F3Op<F, V1, V2, V3, W> where RWVal<W>: IOVal + 's
   }
 
   fn value(&self) -> RWVal<Self::V> {
-    self.y.clone()
+    self.y.clone_read()
   }
 
   fn _make_tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {
@@ -1634,7 +1715,7 @@ impl<F, V, W> ANode for FJoinOp<F, V, W> where RWVal<W>: IOVal + 'static {
   }
 
   fn _apply(&self, txn: Txn) {
-    (self.ext.func)(txn, self.fun.borrow_mut(), self.y.duplicate());
+    (self.ext.func)(txn, self.fun.borrow_mut(), self.y.exact_duplicate());
   }
 
   fn cleanup(&self, txn: Txn) {
@@ -1656,7 +1737,7 @@ impl<F, V, W> ANode for FJoinOp<F, V, W> where RWVal<W>: IOVal + 'static {
 impl<F, V, W> AOp for FJoinOp<F, V, W> where RWVal<W>: IOVal + 'static {
   type V = W;
 
-  fn var(&self) -> RootVar {
+  fn var(&self) -> RWVar {
     self.y.root_var()
   }
 
@@ -1665,7 +1746,7 @@ impl<F, V, W> AOp for FJoinOp<F, V, W> where RWVal<W>: IOVal + 'static {
   }
 
   fn value(&self) -> RWVal<Self::V> {
-    self.y.clone()
+    self.y.clone_read()
   }
 
   fn _make_tangent(&self) -> (Rc<ANode>, Rc<AOp<V=Self::V>>) {

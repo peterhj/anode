@@ -14,8 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#ifndef __ANODE_KERNELS_GPU_LIB_H__
-#define __ANODE_KERNELS_GPU_LIB_H__
+#ifndef __ANODE_ROUTINES_GPU_LIB_H__
+#define __ANODE_ROUTINES_GPU_LIB_H__
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,7 +29,7 @@ struct CUstream_st;
 
 // "bcast_flat_linear.cu"
 
-void anode_gpu_bcast_flat_mult_I1b_I2ab_Oab_packed_f32(
+/*void anode_gpu_bcast_flat_mult_I1b_I2ab_Oab_packed_f32(
     uint32_t inner_dim,
     uint32_t bcast_dim,
     const float *lx,
@@ -64,10 +64,10 @@ void anode_gpu_bcast_flat_mult_add_I1b_I2abc_Oabc_packed_f32(
     const float *shift,
     float *y,
     const struct KernelConfig *cfg,
-    struct CUstream_st *stream);
+    struct CUstream_st *stream);*/
 
 // "flat_linear.cu"
-void anode_gpu_flat_mult_f32(
+/*void anode_gpu_flat_mult_f32(
     uint32_t len,
     const float *lx,
     const float *rx,
@@ -81,7 +81,7 @@ void anode_gpu_flat_mult_add_f32(
     const float *shift,
     float *y,
     const struct KernelConfig *cfg,
-    struct CUstream_st *stream);
+    struct CUstream_st *stream);*/
 
 // "flat_map.cu"
 void anode_gpu_copy_flat_map_f32(
@@ -135,7 +135,7 @@ void anode_gpu_rcosh2_flat_map_f32(
 
 // "reduce.cu"
 
-void anode_gpu_sum_Iab_Ob_packed_deterministic_f32(
+/*void anode_gpu_sum_Iab_Ob_packed_deterministic_f32(
     uint32_t reduce_dim,
     uint32_t outer_dim,
     const float *x,
@@ -157,7 +157,7 @@ void anode_gpu_square_sum_Iabc_Ob_packed_deterministic_f32(
     const float *x,
     float *y,
     const struct KernelConfig *cfg,
-    struct CUstream_st *stream);
+    struct CUstream_st *stream);*/
 
 #ifdef __cplusplus
 } // extern "C"
