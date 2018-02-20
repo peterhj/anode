@@ -48,7 +48,7 @@ pub trait GPUDeviceMemIoWriter<'a> {
 //pub struct GPUDeviceCtxPushOp;
 //pub struct GPUDeviceCtxPopOp;
 
-pub struct GPUMuxFun<F, A> {
+/*pub struct GPUMuxFun<F, A> {
   pub dev:  GPUDeviceId,
   pub ext:  OpExt<F, A>,
   pub fun:  RefCell<F>,
@@ -56,185 +56,131 @@ pub struct GPUMuxFun<F, A> {
 
 impl<F, A> Clone for GPUMuxFun<F, A> where F: Clone {
   fn clone(&self) -> Self {
-    /*GPUMuxFun{
+    GPUMuxFun{
       dev:  self.dev,
       ext:  self.ext.clone(),
       fun:  RefCell::new(self.fun.borrow().clone()),
-    }*/
-    unimplemented!();
+    }
   }
 }
 
 impl<F, A> GPUMuxFun<F, A> {
   pub fn build_ext() -> OpExt<GPUMuxFun<F, A>, A> {
     let ext = OpExt{
-      make: {
+      init: {
         Rc::new(move || {
+        //Rc::new(move |state: RefMut<GPUMuxFun<F, A>>| {
           unimplemented!();
         })
       },
-      func: {
+      prepare: None,
+      cleanup: None,
+      apply: {
         Rc::new(move |txn: Txn, state: RefMut<GPUMuxFun<F, A>>, output: RWVal<A>| {
-          let ctx = implicit_ctx().multi_gpu().unwrap().gpu(state.dev.0 as _);
+          let ctx = implicit_ctx().multi_gpu().unwrap().gpu(state.dev);
           let guard = push_ctx(ctx);
-          (state.ext.func)(txn, state.fun.borrow_mut(), output);
+          (state.ext.apply)(txn, state.fun.borrow_mut(), output);
         })
       },
       tangent: None,
       //adjoint: None,
       adjoint: Some({
-        Rc::new(move |x_: Rc<AOp<V=A>>, sink: &mut Sink| {
+        Rc::new(move |x_: Rc<AOp<A>>, sink: &mut Sink| {
           // TODO
         })
       }),
     };
     ext
   }
+}*/
+
+pub struct GPUMuxFun<A> {
+  pub dev:  GPUDeviceId,
+  pub op:   Rc<AOp<A>>,
 }
 
-impl<T, F> SrcOpExt<GPUDeviceArray1d<T>, Rc<F>> for SrcOp
-where T: Copy + 'static,
-      F: (Fn(GPUDeviceStreamPool) -> GPUDeviceArray1d<T>) + 'static,
-{
-  fn build(init_val: Rc<F>) -> Rc<FSrcOp<SrcOp, GPUDeviceArray1d<T>>> {
-    let ext = OpExt{
-      make: {
-        Rc::new(move || {
-          println!("DEBUG: SrcOpExt<|| GPUDeviceArray1d>: make...");
-          let init_val = init_val.clone();
-          RWVal::from(Rc::new(move |txn: Txn| {
-            println!("DEBUG: SrcOpExt<|| GPUDeviceArray1d>: make: allocating...");
-            let ctx = implicit_ctx().gpu().unwrap();
-            let pool = ctx.pool();
-            init_val(pool)
-          }))
-        })
-      },
-      func: {
-        Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray1d<T>>| {
-          if let Some(_) = output.write(txn) {
-            panic!("WARNING: SrcOpExt: should never write");
-          }
-        })
-      },
-      tangent: Some({
-        Rc::new(move || {
-          // TODO
-          unimplemented!();
-        })
-      }),
-      adjoint: Some({
-        Rc::new(move |x_: Rc<AOp<V=GPUDeviceArray1d<T>>>, sink: &mut Sink| {
-          // Do nothing.
-        })
-      }),
-    };
-    let value = (ext.make)();
-    Rc::new(FSrcOp::new(SrcOp, ext, value))
-  }
-}
-
-/*impl<T> SrcOpExt<GPUDeviceArray1d<T>, GPUDeviceArray1d<T>> for SrcOp
-where T: Copy + 'static,
-{
-  fn build(init_val: GPUDeviceArray1d<T>) -> Rc<FSrcOp<SrcOp, GPUDeviceArray1d<T>>> {
-    let ext = OpExt{
-      make: {
-        Rc::new(move || {
-          println!("DEBUG: SrcOpExt<GPUDeviceArray1d>: make...");
-          let init_val = init_val.clone();
-          RWVal::from(Rc::new(move |txn: Txn| {
-            println!("DEBUG: SrcOpExt<GPUDeviceArray1d>: make: allocating...");
-            let ctx = implicit_ctx().gpu().unwrap();
-            let pool = ctx.pool();
-            let conn = pool.conn();
-            // TODO: actually, duplicate the data.
-            GPUDeviceArray1d::<T>::zeros(init_val.size(), conn)
-          }))
-        })
-      },
-      func: {
-        Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray1d<T>>| {
-          if let Some((mode, token)) = output.write(txn) {
-            unreachable!("should never evaluate a pure source");
-          }
-        })
-      },
-      tangent: Some({
-        Rc::new(move || {
-          // TODO
-          unimplemented!();
-        })
-      }),
-      adjoint: Some({
-        Rc::new(move |x_: Rc<AOp<V=GPUDeviceArray1d<T>>>, sink: &mut Sink| {
-          // Do nothing.
-        })
-      }),
-    };
-    let value = (ext.make)();
-    Rc::new(FSrcOp::new(SrcOp, ext, value))
+/*impl<A> Clone for GPUMuxFun<A> {
+  fn clone(&self) -> Self {
+    GPUMuxFun{
+      dev:  self.dev,
+      op:   self.op.clone(),
+    }
   }
 }*/
 
-impl<T, F> SrcOpExt<GPUDeviceArray2d<T>, Rc<F>> for SrcOp
-where T: Copy + 'static,
-      F: (Fn(GPUDeviceStreamPool) -> GPUDeviceArray2d<T>) + 'static,
-{
-  fn build(init_val: Rc<F>) -> Rc<FSrcOp<SrcOp, GPUDeviceArray2d<T>>> {
+impl<A> GPUMuxFun<A> {
+  pub fn build_ext() -> OpExt<GPUMuxFun<A>, A> {
     let ext = OpExt{
-      make: {
-        Rc::new(move || {
-          let init_val = init_val.clone();
-          RWVal::from(Rc::new(move |txn: Txn| {
-            let ctx = implicit_ctx().gpu().unwrap();
-            let pool = ctx.pool();
-            init_val(pool)
-          }))
+      build: {
+        Rc::new(move |args| {
+          // TODO
+          unimplemented!();
         })
       },
-      func: {
-        Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray2d<T>>| {
-          if let Some(_) = output.write(txn) {
-            panic!("WARNING: SrcOpExt: should never write");
-          }
+      init: {
+        Rc::new(move |/*state: RefMut<GPUMuxFun<A>>*/| {
+          unimplemented!();
         })
       },
-      tangent: Some({
-        Rc::new(move || {
+      prepare: {
+        Some(Rc::new(move |txn: Txn, state: RefMut<GPUMuxFun<A>>| {
+          state.op._prepare(txn);
+        }))
+      },
+      cleanup: {
+        Some(Rc::new(move |txn: Txn, state: RefMut<GPUMuxFun<A>>| {
+          state.op._cleanup(txn);
+        }))
+      },
+      apply: {
+        Rc::new(move |txn: Txn, state: RefMut<GPUMuxFun<A>>, _output: RWVal<A>| {
+          let ctx = implicit_ctx().multi_gpu().unwrap().gpu(state.dev);
+          let guard = push_ctx(ctx);
+          state.op._apply(txn);
+        })
+      },
+      tangent: None,
+      //adjoint: None,
+      adjoint: Some({
+        Rc::new(move |x_: Rc<AOp<A>>, sink: &mut Sink| {
           // TODO
           unimplemented!();
         })
       }),
-      adjoint: Some({
-        Rc::new(move |x_: Rc<AOp<V=GPUDeviceArray2d<T>>>, sink: &mut Sink| {
-          // Do nothing.
-        })
-      }),
+      inplace: None,
     };
-    let value = (ext.make)();
-    Rc::new(FSrcOp::new(SrcOp, ext, value))
+    ext
   }
 }
 
-impl<T, F> SrcOpExt<GPUDeviceArray4d<T>, Rc<F>> for SrcOp
-where T: Copy + 'static,
-      F: (Fn(GPUDeviceStreamPool) -> GPUDeviceArray4d<T>) + 'static,
+impl<A, F> SrcOpExt<A, Rc<F>> for SrcOp
+where A: 'static, F: (Fn(GPUDeviceStreamPool) -> A) + 'static,
 {
-  fn build(init_val: Rc<F>) -> Rc<FSrcOp<SrcOp, GPUDeviceArray4d<T>>> {
+  fn build(init_gpu_val: Rc<F>) -> Rc<FSrcOp<SrcOp, A>> {
     let ext = OpExt{
-      make: {
+      build: {
+        Rc::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      },
+      init: {
         Rc::new(move || {
-          let init_val = init_val.clone();
+        //Rc::new(move |state: RefMut<SrcOp>| {
+          println!("DEBUG: SrcOpExt: init gpu...");
+          let init_gpu_val = init_gpu_val.clone();
           RWVal::from(Rc::new(move |txn: Txn| {
+            println!("DEBUG: SrcOpExt: init gpu: allocating...");
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
-            init_val(pool)
+            init_gpu_val(pool)
           }))
         })
       },
-      func: {
-        Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray4d<T>>| {
+      prepare: None,
+      cleanup: None,
+      apply: {
+        Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<A>| {
           if let Some(_) = output.write(txn) {
             panic!("WARNING: SrcOpExt: should never write");
           }
@@ -247,12 +193,13 @@ where T: Copy + 'static,
         })
       }),
       adjoint: Some({
-        Rc::new(move |x_: Rc<AOp<V=GPUDeviceArray4d<T>>>, sink: &mut Sink| {
+        Rc::new(move |x_: Rc<AOp<A>>, sink: &mut Sink| {
           // Do nothing.
         })
       }),
+      inplace: None,
     };
-    let value = (ext.make)();
+    let value = (ext.init)();
     Rc::new(FSrcOp::new(SrcOp, ext, value))
   }
 }
@@ -263,12 +210,19 @@ where T: ZeroBits + Copy + 'static,
 {
   fn build(init_val: Rc<F>) -> Rc<FSrcOp<ZerosSrcOp, GPUDeviceArray1d<T>>> {
     let ext = OpExt{
-      make: {
+      build: {
+        Rc::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      },
+      init: {
         Rc::new(move || {
-          println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: make...");
+        //Rc::new(move |state: RefMut<ZerosSrcOp>| {
+          println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: init...");
           let init_val = init_val.clone();
           RWVal::from(Rc::new(move |txn: Txn| {
-            println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: make: allocating...");
+            println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: init: allocating...");
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
             // TODO: actually, duplicate the closure.
@@ -276,7 +230,9 @@ where T: ZeroBits + Copy + 'static,
           }))
         })
       },
-      func: {
+      prepare: None,
+      cleanup: None,
+      apply: {
         Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray1d<T>>| {
           if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu().unwrap();
@@ -301,12 +257,13 @@ where T: ZeroBits + Copy + 'static,
         })
       }),
       adjoint: Some({
-        Rc::new(move |x_: Rc<AOp<V=GPUDeviceArray1d<T>>>, sink: &mut Sink| {
+        Rc::new(move |x_: Rc<AOp<GPUDeviceArray1d<T>>>, sink: &mut Sink| {
           // Do nothing.
         })
       }),
+      inplace: None,
     };
-    let value = (ext.make)();
+    let value = (ext.init)();
     Rc::new(FSrcOp::new(ZerosSrcOp, ext, value))
   }
 }
@@ -317,8 +274,15 @@ where T: ZeroBits + Copy + 'static,
 {
   fn build(init_val: Rc<F>) -> Rc<FSrcOp<ZerosSrcOp, GPUDeviceArray2d<T>>> {
     let ext = OpExt{
-      make: {
+      build: {
+        Rc::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      },
+      init: {
         Rc::new(move || {
+        //Rc::new(move |state: RefMut<ZerosSrcOp>| {
           let init_val = init_val.clone();
           RWVal::from(Rc::new(move |txn: Txn| {
             let ctx = implicit_ctx().gpu().unwrap();
@@ -327,7 +291,9 @@ where T: ZeroBits + Copy + 'static,
           }))
         })
       },
-      func: {
+      prepare: None,
+      cleanup: None,
+      apply: {
         Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray2d<T>>| {
           if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu().unwrap();
@@ -352,12 +318,13 @@ where T: ZeroBits + Copy + 'static,
         })
       }),
       adjoint: Some({
-        Rc::new(move |x_: Rc<AOp<V=GPUDeviceArray2d<T>>>, sink: &mut Sink| {
+        Rc::new(move |x_: Rc<AOp<GPUDeviceArray2d<T>>>, sink: &mut Sink| {
           // Do nothing.
         })
       }),
+      inplace: None,
     };
-    let value = (ext.make)();
+    let value = (ext.init)();
     Rc::new(FSrcOp::new(ZerosSrcOp, ext, value))
   }
 }
@@ -368,8 +335,15 @@ where T: ZeroBits + Copy + 'static,
 {
   fn build(init_val: Rc<F>) -> Rc<FSrcOp<ZerosSrcOp, GPUDeviceArray4d<T>>> {
     let ext = OpExt{
-      make: {
+      build: {
+        Rc::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      },
+      init: {
         Rc::new(move || {
+        //Rc::new(move |state: RefMut<ZerosSrcOp>| {
           let init_val = init_val.clone();
           RWVal::from(Rc::new(move |txn: Txn| {
             let ctx = implicit_ctx().gpu().unwrap();
@@ -378,7 +352,9 @@ where T: ZeroBits + Copy + 'static,
           }))
         })
       },
-      func: {
+      prepare: None,
+      cleanup: None,
+      apply: {
         Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<GPUDeviceArray4d<T>>| {
           if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu().unwrap();
@@ -403,26 +379,122 @@ where T: ZeroBits + Copy + 'static,
         })
       }),
       adjoint: Some({
-        Rc::new(move |x_: Rc<AOp<V=GPUDeviceArray4d<T>>>, sink: &mut Sink| {
+        Rc::new(move |x_: Rc<AOp<GPUDeviceArray4d<T>>>, sink: &mut Sink| {
           // Do nothing.
         })
       }),
+      inplace: None,
     };
-    let value = (ext.make)();
+    let value = (ext.init)();
     Rc::new(FSrcOp::new(ZerosSrcOp, ext, value))
   }
 }
 
+impl<F> FlatMapFun<F> where F: Clone + 'static {
+  pub fn build_gpu_op<T, A>(f_state: F, x_: Rc<AOp<A>>)
+      -> Rc<F1Op<Self, A, A>>
+  where T: Copy,
+        A: FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + 'static,
+  {
+    let ext = OpExt{
+      build: {
+        let f_state = f_state.clone();
+        Rc::new(move |args| {
+          let f_state = f_state.clone();
+          let x_ = match args[0].downcast_ref::<Rc<AOp<A>>>() {
+            None => panic!(),
+            Some(x_) => x_.clone(),
+          };
+          let op = FlatMapFun::<F>::build_gpu_op::<T, A>(f_state, x_);
+          (op.clone(), op)
+        })
+      },
+      init: {
+        Rc::new(move || {
+          // TODO
+          unimplemented!();
+        })
+      },
+      prepare: None,
+      cleanup: None,
+      apply: {
+        let x_ = x_.clone();
+        Rc::new(move |txn: Txn, state: RefMut<FlatMapFun<F>>, output: RWVal<A>| {
+          let x_ = x_.clone();
+          if let Some((cap, token)) = output.write(txn) {
+            let ctx = implicit_ctx().gpu().unwrap();
+            let pool = ctx.pool();
+            let conn = pool.conn();
+            match cap {
+              WriteCap::Overwrite => {
+                let x_val = x_.value();
+                let x = x_val.get(txn);
+                let y = output.get_mut(txn, token);
+                // TODO
+                x.flat_view();
+                y.flat_view();
+                //F::apply_flat_map(x_.flat_view(), y_.flat_view());
+                unimplemented!();
+              }
+              _ => unimplemented!(),
+            }
+          }
+        })
+      },
+      tangent: Some({
+        Rc::new(move || {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      adjoint: Some({
+        Rc::new(move |x_: Rc<AOp<A>>, sink: &mut Sink| {
+          // Do nothing.
+        })
+      }),
+      inplace: Some({
+        let f_state = f_state.clone();
+        Rc::new(move |x_: Rc<AOp<A>>| {
+          let op = FlatMapInplaceFun::<F>::build_gpu_op::<T, A>(f_state.clone(), x_);
+          (op.clone(), op)
+        })
+      }),
+    };
+    let value = (ext.init)();
+    Rc::new(F1Op::new(FlatMapFun{f: f_state}, ext, x_, value))
+  }
+}
+
+impl<F> FlatMapInplaceFun<F> {
+  pub fn build_gpu_op<T, A>(f_state: F, x_: Rc<AOp<A>>)
+      -> Rc<F1Op<Self, A, A>>
+  where T: Copy,
+        A: FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + 'static,
+  {
+    // TODO
+    let value = x_.value().clobber();
+    //Rc::new(F1Op::new(FlatMapInplaceFun{f: f_state}, ext, x_, value))
+    unimplemented!();
+  }
+}
+
 impl SumJoinOp {
-  pub fn build_device_op<T, A>(inputs_: Vec<Rc<AOp<V=A>>>)
+  pub fn build_device_op<T, A>(inputs_: Vec<Rc<AOp<A>>>)
       -> Rc<FJoinOp<Self, A, A>>
   where T: Copy /*+ PseudoField*/,
         A: GPUDeviceArrayZeros + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + 'static,
   {
     let ext = OpExt{
-      make: {
+      build: {
+        Rc::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      },
+      init: {
         let inputs_ = inputs_.clone();
         Rc::new(move || {
+        //Rc::new(move |state: RefMut<SumJoinOp>| {
           let x0 = inputs_[0].value();
           RWVal::from(Rc::new(move |txn: Txn| {
             let ctx = implicit_ctx().gpu().unwrap();
@@ -433,7 +505,9 @@ impl SumJoinOp {
           }))
         })
       },
-      func: {
+      prepare: None,
+      cleanup: None,
+      apply: {
         let inputs: Vec<_> = inputs_.iter().map(|x_| x_.value()).collect();
         Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<A>| {
           if let Some((cap, token)) = output.write(txn) {
@@ -470,20 +544,28 @@ impl SumJoinOp {
       tangent:  None,
       // TODO
       adjoint:  None,
+      inplace: None,
     };
-    let output = (ext.make)();
+    let output = (ext.init)();
     Rc::new(FJoinOp::new(SumJoinOp, ext, inputs_, output))
   }
 
-  pub fn build_device_batch_op<T, A>(inputs_: Vec<Rc<AOp<V=A>>>)
+  pub fn build_device_batch_op<T, A>(inputs_: Vec<Rc<AOp<A>>>)
       -> Rc<FJoinOp<Self, A, A>>
   where T: Copy /*+ PseudoField*/,
         A: GPUDeviceBatchArrayZeros + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + 'static,
   {
     let ext = OpExt{
-      make: {
+      build: {
+        Rc::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      },
+      init: {
         let inputs_ = inputs_.clone();
         Rc::new(move || {
+        //Rc::new(move |state: RefMut<SumJoinOp>| {
           let x0 = inputs_[0].value();
           RWVal::from(Rc::new(move |txn: Txn| {
             let ctx = implicit_ctx().gpu().unwrap();
@@ -495,7 +577,9 @@ impl SumJoinOp {
           }))
         })
       },
-      func: {
+      prepare: None,
+      cleanup: None,
+      apply: {
         let inputs: Vec<_> = inputs_.iter().map(|x_| x_.value()).collect();
         Rc::new(move |txn: Txn, state: RefMut<_>, output: RWVal<A>| {
           if let Some((cap, token)) = output.write(txn) {
@@ -536,8 +620,9 @@ impl SumJoinOp {
       tangent:  None,
       // TODO
       adjoint:  None,
+      inplace: None,
     };
-    let output = (ext.make)();
+    let output = (ext.init)();
     Rc::new(FJoinOp::new(SumJoinOp, ext, inputs_, output))
   }
 }
@@ -546,7 +631,7 @@ impl SumJoinOp {
 where T: Copy + PseudoField + 'static,
       V: RWVal<T=GPUDeviceArray1d<T>> + 'static,
 {
-  fn build(xs_: Vec<Rc<AOp<V=V>>>) -> Rc<FJoinOp<Self, V, V>> {
+  fn build(xs_: Vec<Rc<AOp<V>>>) -> Rc<FJoinOp<Self, V, V>> {
     Self::build_device_op::<T, GPUDeviceArray1d<T>, V>(xs_)
   }
 }
@@ -555,20 +640,20 @@ impl<T, V> SumJoinOpExt<GPUDeviceOuterBatchArray1d<T>> for SumJoinOp
 where T: Copy + PseudoField,
       V: RWVal<T=GPUDeviceOuterBatchArray1d<T>> + 'static,
 {
-  fn build(xs_: Vec<Rc<AOp<V=V>>>) -> Rc<FJoinOp<Self, V, V>> {
+  fn build(xs_: Vec<Rc<AOp<V>>>) -> Rc<FJoinOp<Self, V, V>> {
     Self::build_device_batch_op::<T, GPUDeviceOuterBatchArray1d<T>, V>(xs_)
   }
 }
 
-impl<A, V> SumExt<A, V> for Rc<AOp<V=V>>
+impl<A, V> SumExt<A, V> for Rc<AOp<V>>
 where SumJoinOp: SumJoinOpExt<A, V>,
       V: RWVal<T=A> + 'static,
 {
-  fn sum(xs_: Vec<Rc<AOp<V=V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>> {
+  fn sum(xs_: Vec<Rc<AOp<V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>> {
     SumJoinOp::build(xs_)
   }
 
-  fn add(self, x_: Rc<AOp<V=V>>) -> Rc<FJoinOp<SumJoinOp, V, V>> {
+  fn add(self, x_: Rc<AOp<V>>) -> Rc<FJoinOp<SumJoinOp, V, V>> {
     SumJoinOp::build(vec![self, x_])
   }
 }
@@ -576,65 +661,73 @@ where SumJoinOp: SumJoinOpExt<A, V>,
 impl<A, V, This> SumExt<A, V> for Rc<This>
 where SumJoinOp: SumJoinOpExt<A, V>,
       V: RWVal<T=A> + 'static,
-      This: AOp<V=V> + 'static,
+      This: AOp<V> + 'static,
 {
-  fn sum(xs_: Vec<Rc<AOp<V=V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>> {
+  fn sum(xs_: Vec<Rc<AOp<V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>> {
     SumJoinOp::build(xs_)
   }
 
-  fn add(self, x_: Rc<AOp<V=V>>) -> Rc<FJoinOp<SumJoinOp, V, V>> {
+  fn add(self, x_: Rc<AOp<V>>) -> Rc<FJoinOp<SumJoinOp, V, V>> {
     SumJoinOp::build(vec![self, x_])
   }
 }*/
 
-impl<T> LeftTransposeLinearExt<GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>> for Rc<AOp<V=GPUDeviceArray2d<T>>> where T: Copy {
-  fn mult_left_transpose(&self, y: Rc<AOp<V=GPUDeviceArray1d<T>>>) -> Rc<F2Op<LeftTransposeLinearMapOp, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>>> {
+impl<T> LeftTransposeLinearExt<GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>> for Rc<AOp<GPUDeviceArray2d<T>>> where T: Copy {
+  fn mult_left_transpose(&self, y: Rc<AOp<GPUDeviceArray1d<T>>>) -> Rc<F2Op<LeftTransposeLinearMapOp, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>>> {
     unimplemented!();
   }
 }
 
-impl<This, T> LeftTransposeLinearExt<GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>> for Rc<This> where This: AOp<V=GPUDeviceArray2d<T>>, T: Copy {
-  fn mult_left_transpose(&self, y: Rc<AOp<V=GPUDeviceArray1d<T>>>) -> Rc<F2Op<LeftTransposeLinearMapOp, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>>> {
+impl<This, T> LeftTransposeLinearExt<GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>> for Rc<This> where This: AOp<GPUDeviceArray2d<T>>, T: Copy {
+  fn mult_left_transpose(&self, y: Rc<AOp<GPUDeviceArray1d<T>>>) -> Rc<F2Op<LeftTransposeLinearMapOp, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>>> {
     unimplemented!();
   }
 }
 
-impl<T> RightTransposeLinearExt<GPUDeviceArray1d<T>, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>> for Rc<AOp<V=GPUDeviceArray1d<T>>> where T: Copy {
-  fn mult_right_transpose(&self, a: Rc<AOp<V=GPUDeviceArray1d<T>>>) -> Rc<F2Op<RightTransposeLinearMapOp, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>>> {
+impl<T> RightTransposeLinearExt<GPUDeviceArray1d<T>, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>> for Rc<AOp<GPUDeviceArray1d<T>>> where T: Copy {
+  fn mult_right_transpose(&self, a: Rc<AOp<GPUDeviceArray1d<T>>>) -> Rc<F2Op<RightTransposeLinearMapOp, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>>> {
     unimplemented!();
   }
 }
 
-impl<This, T> RightTransposeLinearExt<GPUDeviceArray1d<T>, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>> for Rc<This> where This: AOp<V=GPUDeviceArray1d<T>>, T: Copy {
-  fn mult_right_transpose(&self, a: Rc<AOp<V=GPUDeviceArray1d<T>>>) -> Rc<F2Op<RightTransposeLinearMapOp, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>>> {
+impl<This, T> RightTransposeLinearExt<GPUDeviceArray1d<T>, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>> for Rc<This> where This: AOp<GPUDeviceArray1d<T>>, T: Copy {
+  fn mult_right_transpose(&self, a: Rc<AOp<GPUDeviceArray1d<T>>>) -> Rc<F2Op<RightTransposeLinearMapOp, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>>> {
     unimplemented!();
   }
 }
 
 impl LinearMapOp {
-  /*pub fn build_device_op<T, V1, V2, W>(input_: Rc<AOp<V=V1>>, map_: Rc<AOp<V=V2>>)
+  /*pub fn build_device_op<T, V1, V2, W>(input_: Rc<AOp<V1>>, map_: Rc<AOp<V2>>)
       -> Rc<F2Op<Self, V1, V2, W>>*/
-  pub fn build_device_op<T>(input_: Rc<AOp<V=GPUDeviceArray1d<T>>>, map_: Rc<AOp<V=GPUDeviceArray2d<T>>>)
+  pub fn build_device_op<T>(input_: Rc<AOp<GPUDeviceArray1d<T>>>, map_: Rc<AOp<GPUDeviceArray2d<T>>>)
       -> Rc<F2Op<Self, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>>>
   where T: PseudoField + Copy + 'static,
         CublasHandle: CublasBlasExt<T>,
   {
-    let make = {
-      let map_ = map_.clone();
-      Rc::new(move || {
-        let map = map_.value();
-        RWVal::from(Rc::new(move |txn| {
-          let ctx = implicit_ctx().gpu().unwrap();
-          let pool = ctx.pool();
-          let conn = pool.conn();
-          let a_size = map.get(txn).size();
-          GPUDeviceArray1d::zeros(a_size[0], conn)
-        }))
-      })
-    };
     let ext = OpExt{
-      make,
-      func: {
+      build: {
+        Rc::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      },
+      init: {
+        let map_ = map_.clone();
+        Rc::new(move || {
+        //Rc::new(move |state: RefMut<LinearMapOp>| {
+          let map = map_.value();
+          RWVal::from(Rc::new(move |txn| {
+            let ctx = implicit_ctx().gpu().unwrap();
+            let pool = ctx.pool();
+            let conn = pool.conn();
+            let a_size = map.get(txn).size();
+            GPUDeviceArray1d::zeros(a_size[0], conn)
+          }))
+        })
+      },
+      prepare: None,
+      cleanup: None,
+      apply: {
         let input = input_.value();
         let map = map_.value();
         Rc::new(move |txn, state: RefMut<_>, output: RWVal<GPUDeviceArray1d<T>>| {
@@ -686,7 +779,7 @@ impl LinearMapOp {
       adjoint: Some({
         let input_ = input_.clone();
         let map_ = map_.clone();
-        Rc::new(move |y_: Rc<AOp<V=GPUDeviceArray1d<T>>>, sink: &mut Sink| {
+        Rc::new(move |y_: Rc<AOp<GPUDeviceArray1d<T>>>, sink: &mut Sink| {
           //let make = make.clone();
           let input_ = input_.clone();
           let map_ = map_.clone();
@@ -700,12 +793,13 @@ impl LinearMapOp {
           }
         })
       }),
+      inplace: None,
     };
-    let output = (ext.make)();
+    let output = (ext.init)();
     Rc::new(F2Op::new(LinearMapOp, ext, input_, map_, output))
   }
 
-  /*pub fn build_device_obatch_op<T, V1, V2, W>(input_: Rc<AOp<V=V1>>, map_: Rc<AOp<V=V2>>)
+  /*pub fn build_device_obatch_op<T, V1, V2, W>(input_: Rc<AOp<V1>>, map_: Rc<AOp<V2>>)
       -> Rc<F2Op<Self, V1, V2, W>>
   where T: Copy,
         V1: RWVal<T=GPUDeviceOuterBatchArray1d<T>> + 'static,
@@ -716,7 +810,7 @@ impl LinearMapOp {
     unimplemented!();
   }*/
 
-  /*pub fn build_device_batch_affine_op<T, V1, V2, V3, W>(input_: Rc<AOp<V=V1>>, map_: Rc<AOp<V=V2>>, bias_: Rc<AOp<V=V3>>)
+  /*pub fn build_device_batch_affine_op<T, V1, V2, V3, W>(input_: Rc<AOp<V1>>, map_: Rc<AOp<V2>>, bias_: Rc<AOp<V3>>)
       -> Rc<F3Op<Self, V1, V2, V3, W>>
   where T: Copy,
         V1: RWVal<T=GPUDeviceOuterBatchArray1d<T>> + 'static,
@@ -729,15 +823,15 @@ impl LinearMapOp {
   }*/
 }
 
-/*impl<A, V> SumExt<A, V> for Rc<AOp<V=V>>
+/*impl<A, V> SumExt<A, V> for Rc<AOp<V>>
 where SumJoinOp: SumJoinOpExt<A, V>,
       V: RWVal<T=A> + 'static,
 {
-  fn sum(xs_: Vec<Rc<AOp<V=V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>> {
+  fn sum(xs_: Vec<Rc<AOp<V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>> {
     SumJoinOp::build(xs_)
   }
 
-  fn add(self, x_: Rc<AOp<V=V>>) -> Rc<FJoinOp<SumJoinOp, V, V>> {
+  fn add(self, x_: Rc<AOp<V>>) -> Rc<FJoinOp<SumJoinOp, V, V>> {
     SumJoinOp::build(vec![self, x_])
   }
 }
@@ -745,40 +839,40 @@ where SumJoinOp: SumJoinOpExt<A, V>,
 impl<A, V, This> SumExt<A, V> for Rc<This>
 where SumJoinOp: SumJoinOpExt<A, V>,
       V: RWVal<T=A> + 'static,
-      This: AOp<V=V> + 'static,
+      This: AOp<V> + 'static,
 {*/
 
-/*impl<T> MultOpExt<GPUDeviceArray1d<T>, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>> for Rc<AOp<V=GPUDeviceArray2d<T>>>
+/*impl<T> MultOpExt<GPUDeviceArray1d<T>, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>> for Rc<AOp<GPUDeviceArray2d<T>>>
 where T: Copy + PseudoField + 'static,
       /*V1: RWVal<T=GPUDeviceArray1d<T>> + 'static,
       V2: RWVal<T=GPUDeviceArray2d<T>> + 'static,
       W:  RWVal<T=GPUDeviceArray1d<T>> + 'static,*/
       CublasHandle: CublasBlasExt<T>,
 {
-  fn mult(self, x: Rc<AOp<V=GPUDeviceArray1d<T>>>) -> Rc<F2Op<LinearMapOp, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>>> {
+  fn mult(self, x: Rc<AOp<GPUDeviceArray1d<T>>>) -> Rc<F2Op<LinearMapOp, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>>> {
     LinearMapOp::build_device_op(x, self)
   }
 }
 
-/*impl<T, V1, V2, W> MultOpExt<GPUDeviceOuterBatchArray1d<T>, V1, GPUDeviceOuterBatchArray1d<T>, W> for Rc<AOp<V=V2>>
+/*impl<T, V1, V2, W> MultOpExt<GPUDeviceOuterBatchArray1d<T>, V1, GPUDeviceOuterBatchArray1d<T>, W> for Rc<AOp<V2>>
 where T: Copy,
       V1: RWVal<T=GPUDeviceOuterBatchArray1d<T>> + 'static,
       V2: RWVal<T=GPUDeviceArray2d<T>> + 'static,
       W:  RWVal<T=GPUDeviceOuterBatchArray1d<T>> + 'static,
 {
-  fn mult(self, x: Rc<AOp<V=V1>>) -> Rc<AOp<V=W>> {
+  fn mult(self, x: Rc<AOp<V1>>) -> Rc<AOp<W>> {
     LinearMapOp::build_device_obatch_op(x, self)
   }
 }*/
 
-impl<T> MultAddOpExt<GPUDeviceOuterBatchArray1d<T>, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceOuterBatchArray1d<T>> for Rc<AOp<V=GPUDeviceArray2d<T>>>
+impl<T> MultAddOpExt<GPUDeviceOuterBatchArray1d<T>, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceOuterBatchArray1d<T>> for Rc<AOp<GPUDeviceArray2d<T>>>
 where T: Copy,
       /*V1: RWVal<T=GPUDeviceOuterBatchArray1d<T>> + 'static,
       V2: RWVal<T=GPUDeviceArray2d<T>> + 'static,
       V3: RWVal<T=GPUDeviceArray1d<T>> + 'static,
       W:  RWVal<T=GPUDeviceOuterBatchArray1d<T>> + 'static,*/
 {
-  fn mult_add(self, x: Rc<AOp<V=GPUDeviceOuterBatchArray1d<T>>>, shift: Rc<AOp<V=GPUDeviceArray1d<T>>>) -> Rc<F3Op<LinearMapOp, GPUDeviceOuterBatchArray1d<T>, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceOuterBatchArray1d<T>>> {
+  fn mult_add(self, x: Rc<AOp<GPUDeviceOuterBatchArray1d<T>>>, shift: Rc<AOp<GPUDeviceArray1d<T>>>) -> Rc<F3Op<LinearMapOp, GPUDeviceOuterBatchArray1d<T>, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceOuterBatchArray1d<T>>> {
     LinearMapOp::build_device_batch_affine_op(x, self, shift)
   }
 }*/

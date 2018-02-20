@@ -58,20 +58,13 @@ impl<'a, Mem, T> MemIoWriter<'a> for FlatWriter<'a, Mem> where Mem: DerefMut<Tar
   }
 }
 
-#[derive(Clone)]
 pub struct SrcOp;
-#[derive(Clone)]
 pub struct PassOp;
-#[derive(Clone)]
 pub struct FreezeOp;
-#[derive(Clone)]
 pub struct CopyOp;
-#[derive(Clone)]
 pub struct CastOp;
 
-#[derive(Clone)]
 pub struct ZerosSrcOp;
-#[derive(Clone)]
 pub struct OnesSrcOp;
 // TODO: distribution parameters?
 pub struct UniformSrcOp;
@@ -79,14 +72,14 @@ pub struct NormalSrcOp;
 
 pub struct FlatViewOp;
 pub struct ReshapeViewOp;
-pub struct AutoMap<AutoMapF> { f: AutoMapF, }
+pub struct MapFun<MapF> { pub f: MapF, }
 pub struct TransposeOp;
 pub struct SumJoinOp;
 pub struct SumJoinAccumulateOp;
 pub struct FlatSumJoinOp;
 pub struct BatchSumJoinOp;
-pub struct FlatMapOp<FlatMapF> { f: FlatMapF, }
-pub struct FlatMapMutFun<FlatMapF> { f: FlatMapF, }
+pub struct FlatMapFun<FlatMapF> { pub f: FlatMapF, }
+pub struct FlatMapInplaceFun<FlatMapF> { pub f: FlatMapF, }
 pub struct FlatLinearMapOp;
 pub struct LinearMapOp;
 pub struct LeftTransposeLinearMapOp;
@@ -159,65 +152,65 @@ impl<V> OnesSrcOpMaybeExt<V> for OnesSrcOp {
 }
 
 pub trait SumJoinOpMaybeExt<V> {
-  fn maybe_build(xs_: Vec<Rc<AOp<V=V>>>) -> Option<Rc<FJoinOp<SumJoinOp, V, V>>>;
+  fn maybe_build(xs_: Vec<Rc<AOp<V>>>) -> Option<Rc<FJoinOp<SumJoinOp, V, V>>>;
 }
 
 impl<V> SumJoinOpMaybeExt<V> for SumJoinOp {
-  default fn maybe_build(xs_: Vec<Rc<AOp<V=V>>>) -> Option<Rc<FJoinOp<SumJoinOp, V, V>>> {
+  default fn maybe_build(xs_: Vec<Rc<AOp<V>>>) -> Option<Rc<FJoinOp<SumJoinOp, V, V>>> {
     None
   }
 }
 
 impl<V> SumJoinOpMaybeExt<V> for SumJoinOp where SumJoinOp: SumJoinOpExt<V> {
-  fn maybe_build(xs_: Vec<Rc<AOp<V=V>>>) -> Option<Rc<FJoinOp<SumJoinOp, V, V>>> {
+  fn maybe_build(xs_: Vec<Rc<AOp<V>>>) -> Option<Rc<FJoinOp<SumJoinOp, V, V>>> {
     Some(<SumJoinOp as SumJoinOpExt<V>>::build(xs_))
   }
 }
 
 pub trait SumJoinOpExt<V> {
-  fn build(xs_: Vec<Rc<AOp<V=V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>>;
+  fn build(xs_: Vec<Rc<AOp<V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>>;
 }
 
 pub trait SumExt<X, V> {
-  fn sum(xs_: Vec<Rc<AOp<V=V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>>;
-  fn add(self, x_: Rc<AOp<V=V>>) -> Rc<FJoinOp<SumJoinOp, V, V>>;
+  fn sum(xs_: Vec<Rc<AOp<V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>>;
+  fn add(self, x_: Rc<AOp<V>>) -> Rc<FJoinOp<SumJoinOp, V, V>>;
 }
 
 pub trait FlatMultOpExt<X, V1, A, V2, Y, W>
 {
-  fn flat_mult(self, x: Rc<AOp<V=V1>>) -> Rc<F2Op<FlatLinearMapOp, V1, V2, W>>;
+  fn flat_mult(self, x: Rc<AOp<V1>>) -> Rc<F2Op<FlatLinearMapOp, V1, V2, W>>;
 }
 
 pub trait MultOpExt<X, V1, A, V2, Y, W>
 {
-  fn mult(self, x: Rc<AOp<V=V1>>) -> Rc<F2Op<LinearMapOp, V1, V2, W>>;
+  fn mult(self, x: Rc<AOp<V1>>) -> Rc<F2Op<LinearMapOp, V1, V2, W>>;
 }
 
 pub trait MultAddOpExt<X, V1, A, V2, B, V3, Y, W>
 {
-  fn mult_add(self, x: Rc<AOp<V=V1>>, shift: Rc<AOp<V=V3>>) -> Rc<F3Op<LinearMapOp, V1, V2, V3, W>>;
+  fn mult_add(self, x: Rc<AOp<V1>>, shift: Rc<AOp<V3>>) -> Rc<F3Op<LinearMapOp, V1, V2, V3, W>>;
 }
 
 pub trait LinearExt<A, X, Y> {
-  fn mult(&self, x: Rc<AOp<V=X>>) -> Rc<F2Op<LinearMapOp, A, X, Y>>;
+  fn mult(&self, x: Rc<AOp<X>>) -> Rc<F2Op<LinearMapOp, A, X, Y>>;
 }
 
 pub trait LeftTransposeLinearExt<A, Y, X> {
-  fn mult_left_transpose(&self, y: Rc<AOp<V=Y>>) -> Rc<F2Op<LeftTransposeLinearMapOp, A, Y, X>>;
+  fn mult_left_transpose(&self, y: Rc<AOp<Y>>) -> Rc<F2Op<LeftTransposeLinearMapOp, A, Y, X>>;
 }
 
 pub trait RightTransposeLinearExt<Y, X, A> {
-  fn mult_right_transpose(&self, x: Rc<AOp<V=X>>) -> Rc<F2Op<RightTransposeLinearMapOp, Y, X, A>>;
+  fn mult_right_transpose(&self, x: Rc<AOp<X>>) -> Rc<F2Op<RightTransposeLinearMapOp, Y, X, A>>;
 }
 
 /*pub trait ConvLinearExt<A, X, Y> {
-  fn conv(&self, x: Rc<AOp<V=X>>) -> Rc<F2Op<ConvLinearMapOp, A, X, Y>>;
+  fn conv(&self, x: Rc<AOp<X>>) -> Rc<F2Op<ConvLinearMapOp, A, X, Y>>;
 }
 
 pub trait LeftTransposeConvLinearExt<A, Y, X> {
-  fn conv_left_transpose(&self, y: Rc<AOp<V=Y>>) -> Rc<F2Op<LeftTransposeConvLinearMapOp, A, Y, X>>;
+  fn conv_left_transpose(&self, y: Rc<AOp<Y>>) -> Rc<F2Op<LeftTransposeConvLinearMapOp, A, Y, X>>;
 }
 
 pub trait RightTransposeConvLinearExt<Y, X, A> {
-  fn conv_right_transpose(&self, x: Rc<AOp<V=X>>) -> Rc<F2Op<RightTransposeConvLinearMapOp, Y, X, A>>;
+  fn conv_right_transpose(&self, x: Rc<AOp<X>>) -> Rc<F2Op<RightTransposeConvLinearMapOp, Y, X, A>>;
 }*/

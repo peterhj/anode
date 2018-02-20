@@ -158,7 +158,7 @@ pub struct MultiGPUDeviceCtx {
 #[cfg(feature = "gpu")]
 impl ExecutionCtx for MultiGPUDeviceCtx {
   fn gpu(&self) -> Option<Rc<GPUDeviceCtx>> {
-    Some(self.gpu(0))
+    Some(self.gpu(GPUDeviceId(0)))
   }
 
   fn multi_gpu(&self) -> Option<Rc<MultiGPUDeviceCtx>> {
@@ -169,9 +169,12 @@ impl ExecutionCtx for MultiGPUDeviceCtx {
 #[cfg(feature = "gpu")]
 impl Default for MultiGPUDeviceCtx {
   fn default() -> Self {
-    // TODO: use all devices.
+    let mut md_pools = vec![];
+    for rank in 0 .. GPUDeviceId::count() {
+      md_pools.push(GPUDeviceStreamPool::new(GPUDeviceId(rank as _)));
+    }
     MultiGPUDeviceCtx{
-      md_pools: vec![GPUDeviceStreamPool::new(GPUDeviceId(0))],
+      md_pools: md_pools,
     }
   }
 }
@@ -182,8 +185,10 @@ impl MultiGPUDeviceCtx {
     self.md_pools.len()
   }
 
-  pub fn gpu(&self, device_index: usize) -> Rc<GPUDeviceCtx> {
-    Rc::new(GPUDeviceCtx{pool: self.md_pools[device_index].clone()})
+  pub fn gpu(&self, device: GPUDeviceId) -> Rc<GPUDeviceCtx> {
+    assert!(device.rank() < self.md_pools.len(),
+        "MultiGPUDeviceCtx: trying to activate an invalid device");
+    Rc::new(GPUDeviceCtx{pool: self.md_pools[device.rank()].clone()})
   }
 }
 

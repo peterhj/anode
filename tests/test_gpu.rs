@@ -13,46 +13,53 @@ use std::thread::{sleep};
 use std::time::{Duration};
 
 #[test]
-fn test_pool() {
-  let pool = GPUDeviceStreamPool::new(GPUDeviceId(0));
+fn test_stream() {
+  println!();
+  let stream = GPUDeviceStreamPool::new(GPUDeviceId(0));
 }
 
 #[test]
 #[should_panic]
-fn test_gpu_src_eval() {
-  //let ctx = implicit_ctx().gpu_device().unwrap();
-  //let conn = ctx.conn();
-  //let x: Rc<AOp<V=Val<_>>> = src(GPUDeviceArray1d::<f32>::zeros(1024, conn));
-  //let x: Rc<AOp<V=Val<_>>> = src(Rc::new(|pool: GPUDeviceStreamPool| GPUDeviceArray1d::<f32>::zeros(1024, pool.conn())));
-  let x: Rc<AOp<V=_>> = src(Rc::new(|pool: GPUDeviceStreamPool| GPUDeviceArray1d::<f32>::zeros(1024, pool.conn())));
-  x._apply(txn());
+fn test_gpu_src_eval_fail() {
+  println!();
+  let x: Rc<AOp<_>> = src(Rc::new(|stream: GPUDeviceStreamPool| GPUDeviceArray1d::<f32>::zeros(1024, stream.conn())));
+  x.eval(txn());
 }
 
 #[test]
 fn test_gpu_zeros_eval() {
-  //let ctx = implicit_ctx().multi_gpu_device().unwrap().gpu_device(0);
-  //let conn = ctx.conn();
-  //let x: Rc<AOp<V=Val<GPUDeviceArray1d<f32>>>> = zeros(GPUDeviceArray1d::<f32>::zeros(1024, conn));
-  //let x: Rc<AOp<V=Val<_>>> = zeros(GPUDeviceArray1d::<f32>::zeros(1024, conn));
-  //let x: Rc<AOp<V=Val<_>>> = zeros(Rc::new(|pool: GPUDeviceStreamPool| GPUDeviceArray1d::<f32>::zeros(1024, pool.conn())));
-  let x: Rc<AOp<V=_>> = zeros(Rc::new(|pool: GPUDeviceStreamPool| GPUDeviceArray1d::<f32>::zeros(1024, pool.conn())));
-  x.eval(txn());
+  println!();
+  let x: Rc<AOp<_>> = zeros(Rc::new(|stream: GPUDeviceStreamPool| GPUDeviceArray1d::<f32>::zeros(1024, stream.conn())));
+  let t = txn();
+  x.eval(t);
+  x.eval(t);
+  x.eval(t);
   println!("DEBUG: sleeping...");
-  sleep(Duration::from_secs(10));
+  sleep(Duration::from_secs(5));
   println!("DEBUG: done sleeping");
 }
 
 #[test]
-fn test_gpu_mux() {
+#[should_panic]
+fn test_gpu_mux_fail() {
+  println!();
   let x = zeros(Rc::new(|stream: GPUDeviceStreamPool| {
     println!("DEBUG: test: allocating...");
     GPUDeviceArray1d::<f32>::zeros(1024, stream.conn())
   }));
-  /*let y = x.gpu_mux(GPUDeviceId(0));
-  let y_node: Rc<ANode> = y.clone();
-  let y_op: Rc<AOp<V=_>> = y.clone();*/
-  //let (y_node, y_op) = x.gpu_mux(GPUDeviceId(0));
-  let y_op: Rc<AOp<V=_>> = x.gpu_mux(GPUDeviceId(0));
+  let y: Rc<AOp<_>> = x.gpu_mux(GPUDeviceId(1));
   println!("DEBUG: test: eval...");
-  y_op.eval(txn());
+  y.eval(txn());
+}
+
+#[test]
+fn test_gpu_mux() {
+  println!();
+  let x = zeros(Rc::new(|stream: GPUDeviceStreamPool| {
+    println!("DEBUG: test: allocating...");
+    GPUDeviceArray1d::<f32>::zeros(1024, stream.conn())
+  }));
+  let y: Rc<AOp<_>> = x.gpu_mux(GPUDeviceId(0));
+  println!("DEBUG: test: eval...");
+  y.eval(txn());
 }

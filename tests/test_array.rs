@@ -4,6 +4,7 @@ use memarray::*;
 
 #[test]
 fn test_view() {
+  println!();
   let x = MemArray1d::<f32>::zeros(10);
   let y = MemArray2d::<f32>::zeros([10, 10]);
   let a = x.as_view().view(..);
