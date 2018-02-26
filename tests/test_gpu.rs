@@ -24,7 +24,9 @@ fn test_stream() {
 #[should_panic]
 fn test_gpu_src_eval_fail() {
   println!();
-  let x: Rc<AOp<_>> = src(Rc::new(|stream: GPUDeviceStreamPool| GPUDeviceArray1d::<f32>::zeros(1024, stream.conn())));
+  let x: Val<_> = src(Rc::new(|stream: GPUDeviceStreamPool| {
+    GPUDeviceArray1d::<f32>::zeros(1024, stream.conn())
+  }));
   x.eval(txn());
 }
 
@@ -32,7 +34,7 @@ fn test_gpu_src_eval_fail() {
 fn test_gpu_zeros_eval() {
   println!();
 
-  let x: Rc<AOp<_>> = zeros(Rc::new(|stream: GPUDeviceStreamPool| {
+  let x: Val<_> = zeros(Rc::new(|stream: GPUDeviceStreamPool| {
     let mut h_arr = MemArray1d::<f32>::zeros(1024);
     {
       let mut h_arr = h_arr.as_view_mut();
@@ -65,7 +67,7 @@ fn test_gpu_zeros_eval() {
   {
     let ctx = implicit_ctx().gpu().unwrap();
     let stream = ctx.pool();
-    let x = x.value();
+    //let x = x.value();
     let v = x.get(t);
     let mut h_arr = MemArray1d::<f32>::zeros(1024);
     v.as_view().dump_mem(h_arr.as_view_mut(), stream.conn());
@@ -91,7 +93,8 @@ fn test_gpu_mux_fail() {
     println!("DEBUG: test: allocating...");
     GPUDeviceArray1d::<f32>::zeros(1024, stream.conn())
   }));
-  let y: Rc<AOp<_>> = x.gpu_mux(GPUDeviceId(1));
+  //let y: Rc<AOp<_>> = x.gpu_mux(GPUDeviceId(1));
+  let y: Val<_> = x.gpu_mux(GPUDeviceId(1));
   println!("DEBUG: test: eval...");
   y.eval(txn());
 }
@@ -103,7 +106,8 @@ fn test_gpu_mux() {
     println!("DEBUG: test: allocating...");
     GPUDeviceArray1d::<f32>::zeros(1024, stream.conn())
   }));
-  let y: Rc<AOp<_>> = x.gpu_mux(GPUDeviceId(0));
+  //let y: Rc<AOp<_>> = x.gpu_mux(GPUDeviceId(0));
+  let y: Val<_> = x.gpu_mux(GPUDeviceId(0));
   println!("DEBUG: test: eval...");
   y.eval(txn());
 }
