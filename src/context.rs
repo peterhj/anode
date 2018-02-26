@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#[cfg(feature = "gpu")] use devicemem_gpu::*;
+#[cfg(feature = "gpu")] use gpudevicemem::*;
 
 use std::cell::{RefCell};
 use std::collections::{VecDeque};

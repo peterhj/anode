@@ -22,8 +22,8 @@ use ops::*;
 use arithmetic::*;
 use cuda_blas::*;
 use cuda_dnn::*;
-use devicemem_gpu::*;
-use devicemem_gpu::array::*;
+use gpudevicemem::*;
+use gpudevicemem::array::*;
 use memarray::*;
 
 use std::cell::{RefMut};
@@ -243,7 +243,7 @@ where T: ZeroBits + Copy + 'static,
                 // TODO: zero out the whole thing.
                 println!("DEBUG: ZeroSrcOp: zeroing...");
                 let mut y = output.get_mut(txn, token);
-                y.as_view().set_zeros(&conn);
+                y.as_view_mut().set_zeros(conn);
               }
               _ => unimplemented!(),
             }
@@ -304,7 +304,7 @@ where T: ZeroBits + Copy + 'static,
                 // TODO: zero out the whole thing.
                 println!("DEBUG: ZeroSrcOp: zeroing...");
                 let mut y = output.get_mut(txn, token);
-                y.as_view().set_zeros(&conn);
+                y.as_view_mut().set_zeros(conn);
               }
               _ => unreachable!(),
             }
@@ -365,7 +365,7 @@ where T: ZeroBits + Copy + 'static,
                 // TODO: zero out the whole thing.
                 println!("DEBUG: ZeroSrcOp: zeroing...");
                 let mut y = output.get_mut(txn, token);
-                y.as_view().set_zeros(&conn);
+                y.as_view_mut().set_zeros(conn);
               }
               WriteCap::Accumulate => {}
             }
@@ -482,7 +482,8 @@ impl SumJoinOp {
   pub fn build_device_op<T, A>(inputs_: Vec<Rc<AOp<A>>>)
       -> Rc<FJoinOp<Self, A, A>>
   where T: Copy /*+ PseudoField*/,
-        A: GPUDeviceArrayZeros + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + 'static,
+        //A: GPUDeviceArrayZeros + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + 'static,
+        A: GPUDeviceArrayZeros + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>> + 'static,
   {
     let ext = OpExt{
       build: {
@@ -514,7 +515,7 @@ impl SumJoinOp {
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
             let conn = pool.conn();
-            let mut y = match output.get_mut(txn, token).flat_view() {
+            let mut y = match output.get_mut(txn, token).flat_view_mut() {
               None => panic!(),
               Some(y) => y,
             };
@@ -524,10 +525,10 @@ impl SumJoinOp {
             };
             match cap {
               WriteCap::Overwrite => {
-                y.copy(&x0, &conn);
+                y.copy(x0, conn.clone());
               }
               WriteCap::Accumulate => {
-                y.add(&x0, &conn);
+                y.add(x0, conn.clone());
               }
             }
             for i in 1 .. inputs.len() {
@@ -535,7 +536,7 @@ impl SumJoinOp {
                 None => panic!(),
                 Some(x) => x,
               };
-              y.add(&x, &conn);
+              y.add(x, conn.clone());
             }
           }
         })
@@ -553,7 +554,9 @@ impl SumJoinOp {
   pub fn build_device_batch_op<T, A>(inputs_: Vec<Rc<AOp<A>>>)
       -> Rc<FJoinOp<Self, A, A>>
   where T: Copy /*+ PseudoField*/,
-        A: GPUDeviceBatchArrayZeros + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + 'static,
+        //A: GPUDeviceBatchArrayZeros + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + 'static,
+        A: GPUDeviceBatchArrayZeros + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>> + 'static,
+        //A: GPUDeviceBatchArrayZeros + GPUFlatViewMut<T> + 'static,
   {
     let ext = OpExt{
       build: {
@@ -586,22 +589,22 @@ impl SumJoinOp {
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
             let conn = pool.conn();
-            let mut y = match output.get_mut(txn, token).flat_view() {
+            let batch_sz0 = inputs[0].get(txn).batch_size();
+            output.get_mut(txn, token).set_batch_size(batch_sz0);
+            let mut y = match output.get_mut(txn, token).flat_view_mut() {
               None => panic!(),
               Some(y) => y,
             };
-            let batch_sz0 = inputs[0].get(txn).batch_size();
             let x0 = match inputs[0].get(txn).flat_view() {
               None => panic!(),
               Some(x) => x,
             };
-            output.get_mut(txn, token).set_batch_size(batch_sz0);
             match cap {
               WriteCap::Overwrite => {
-                y.copy(&x0, &conn);
+                y.copy(x0, conn.clone());
               }
               WriteCap::Accumulate => {
-                y.add(&x0, &conn);
+                y.add(x0, conn.clone());
               }
             }
             for i in 1 .. inputs.len() {
@@ -611,7 +614,7 @@ impl SumJoinOp {
                 None => panic!(),
                 Some(x) => x,
               };
-              y.add(&x, &conn);
+              y.add(x, conn.clone());
             }
           }
         })
@@ -699,9 +702,10 @@ impl<This, T> RightTransposeLinearExt<GPUDeviceArray1d<T>, GPUDeviceArray1d<T>, 
 impl LinearMapOp {
   /*pub fn build_device_op<T, V1, V2, W>(input_: Rc<AOp<V1>>, map_: Rc<AOp<V2>>)
       -> Rc<F2Op<Self, V1, V2, W>>*/
-  pub fn build_device_op<T>(input_: Rc<AOp<GPUDeviceArray1d<T>>>, map_: Rc<AOp<GPUDeviceArray2d<T>>>)
+  pub fn build_device_op<T>(map_: Rc<AOp<GPUDeviceArray2d<T>>>, input_: Rc<AOp<GPUDeviceArray1d<T>>>)
       -> Rc<F2Op<Self, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>>>
-  where T: PseudoField + Copy + 'static,
+  // TODO: `ZeroBits` should not be necessary here.
+  where T: PseudoField + ZeroBits + Copy + 'static,
         CublasHandle: CublasBlasExt<T>,
   {
     let ext = OpExt{
@@ -730,7 +734,7 @@ impl LinearMapOp {
       apply: {
         let input = input_.value();
         let map = map_.value();
-        Rc::new(move |txn, state: RefMut<_>, output: RWVal<GPUDeviceArray1d<T>>| {
+        Rc::new(move |txn, _state: RefMut<_>, output: RWVal<GPUDeviceArray1d<T>>| {
           if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
@@ -743,18 +747,18 @@ impl LinearMapOp {
             assert_eq!(input.get(txn).size(), map.get(txn).size()[1]);
             assert_eq!(output.get_mut(txn, token).size(), map.get(txn).size()[0]);
             assert_eq!(1, map.get(txn).as_view().stride()[0]);
+            let a = map.get(txn).as_view();
+            let x = input.get(txn).as_view();
+            let mut y = output.get_mut(txn, token).as_view_mut();
             let res = unsafe { conn.cublas().gemv(
                 CublasTranspose::N,
-                sz2int(map.get(txn).as_view().size()[0]),
-                sz2int(map.get(txn).as_view().size()[1]),
+                sz2int(a.size()[0]),
+                sz2int(a.size()[1]),
                 &alpha,
-                map.get(txn).as_view().as_dptr(),
-                sz2int(map.get(txn).as_view().stride()[1]),
-                input.get(txn).as_view().as_dptr(),
-                sz2int(input.get(txn).as_view().stride()),
+                a.as_dptr(), sz2int(a.stride()[1]),
+                x.as_dptr(), sz2int(x.stride()),
                 &beta,
-                output.get_mut(txn, token).as_view().as_mut_dptr(),
-                sz2int(output.get_mut(txn, token).as_view().stride()),
+                y.as_mut_dptr(), sz2int(y.stride()),
             ) };
             if res.is_err() {
               panic!("LinearMapOp: cublas gemv error: {:?}", res);

@@ -16,7 +16,7 @@ limitations under the License.
 
 use super::*;
 
-//use std::marker::{PhantomData};
+use std::marker::{PhantomData};
 use std::ops::{DerefMut};
 use std::rc::{Rc};
 
@@ -58,12 +58,14 @@ impl<'a, Mem, T> MemIoWriter<'a> for FlatWriter<'a, Mem> where Mem: DerefMut<Tar
   }
 }
 
-pub struct SrcOp;
-pub struct PassOp;
-pub struct FreezeOp;
-pub struct CopyOp;
-pub struct CastOp;
+pub struct PassFun;
+pub struct FreezeFun;
+//pub struct CopyFun;
 
+pub struct CastFun;
+pub struct DequantizeFun<T, Scale> { pub base: T, pub range: T, _marker: PhantomData<Scale> }
+
+pub struct SrcOp;
 pub struct ZerosSrcOp;
 pub struct OnesSrcOp;
 // TODO: distribution parameters?
@@ -123,6 +125,20 @@ pub struct Pool2dShape {
   pub window:   [usize; 2],
   pub stride:   [usize; 2],
   pub pad:      [usize; 2],
+}
+
+pub trait PassExt<V> {
+  fn pass(&self) -> Rc<F1Op<PassFun, V, V>>;
+}
+
+pub trait FreezeExt<V> {
+  fn freeze(&self) -> Rc<F1Op<FreezeFun, V, V>>;
+}
+
+pub struct LinearScale;
+
+pub trait DequantizeExt<V, W, T, Scale=LinearScale> {
+  fn dequantize(&self, base: T, range: T) -> Rc<F1Op<DequantizeFun<T, Scale>, V, W>>;
 }
 
 pub trait SrcOpExt<V, Init> {

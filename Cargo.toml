@@ -9,7 +9,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
-gpu = ["cuda", "cuda_blas", "cuda_dnn", "devicemem_gpu"]
+gpu = ["cuda", "cuda_blas", "cuda_dnn", "gpudevicemem"]
 
 [build-dependencies]
 bindgen = "^0.32"
@@ -21,11 +21,13 @@ walkdir = "*"
 rand = "*"
 arithmetic = { path = "../libarithmetic" }
 #async_execution = { path = "../async_execution" }
+colorimage = { path = "../colorimage" }
 cuda = { path = "../libcuda", optional = true }
 cuda_blas = { path = "../libcuda_blas", optional = true }
 cuda_dnn = { path = "../libcuda_dnn", optional = true }
-#devicemem_cuda = { path = "../libdevicemem_cuda", optional = true }
-devicemem_gpu = { path = "../devicemem_gpu", optional = true }
 #float = { path = "../libfloat" }
+gpudevicemem = { path = "../gpudevicemem", optional = true }
 memarray = { path = "../memarray" }
 rng = "*"
+superdata = { path = "../superdata" }
+typemap = "*"

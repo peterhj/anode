@@ -19,34 +19,35 @@ limitations under the License.
 #![feature(get_type_id)]
 #![feature(slice_patterns)]
 #![feature(specialization)]
+//#![feature(trait_alias)]
 #![feature(unboxed_closures)]
 
 extern crate arithmetic;
-//extern crate async_execution;
 #[cfg(feature = "gpu")] extern crate cuda;
 #[cfg(feature = "gpu")] extern crate cuda_blas;
 #[cfg(feature = "gpu")] extern crate cuda_dnn;
-#[cfg(feature = "gpu")] extern crate devicemem_gpu;
 //extern crate float;
-//extern crate fnv;
-extern crate memarray;
-extern crate rng;
-
+#[cfg(feature = "gpu")] extern crate gpudevicemem;
 //#[macro_use] extern crate lazy_static;
-//extern crate libc;
+extern crate memarray;
 extern crate rand;
+extern crate rng;
+extern crate typemap;
 
+use analysis::{LivenessAnalysis};
 use ops::{MemIoReader, MemIoWriter, OnesSrcOp, OnesSrcOpMaybeExt, SumJoinOp, SumJoinOpMaybeExt, SumJoinOpExt};
 #[cfg(feature = "gpu")] use ops_gpu::{GPUMuxFun};
 
-#[cfg(feature = "gpu")] use devicemem_gpu::{GPUDeviceId};
+#[cfg(feature = "gpu")] use gpudevicemem::{GPUDeviceId};
+use typemap::{CloneMap, TypeMap};
 
 use std::any::{Any};
 use std::cell::{Cell, RefCell, Ref, RefMut};
 use std::collections::{HashMap, HashSet};
-use std::collections::hash_map::{Entry};
+//use std::collections::hash_map::{Entry};
 use std::rc::{Rc};
 
+pub mod analysis;
 pub mod config;
 pub mod context;
 pub mod ffi;
@@ -192,12 +193,19 @@ pub trait IOVal {
   fn _serialize(&self, txn: Txn, reader: &mut FnMut(&Any));
 }
 
-pub trait ANode {
-  fn _push(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode));
-  fn _pop(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode));
+pub trait Analyses {
+  fn _liveness(&self) -> Option<LivenessAnalysis>;
+}
 
+pub trait ANode {
   fn _walk(&self) -> &Walk;
   fn _io(&self) -> &IOVal;
+  fn _analyses(&self) -> &Analyses { unimplemented!(); }
+  //fn _pred_fwd(&self, pred_buf: &mut Vec<Rc<ANode>>);
+  //fn _pred_rev(&self, pred_buf: &mut Vec<Rc<ANode>>);
+
+  fn _push(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode));
+  fn _pop(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode));
 
   fn _txn(&self) -> Option<Txn>;
   fn _persist(&self, txn: Txn);
@@ -235,31 +243,12 @@ pub trait AOp<V>: ANode {
   fn _pop_adjoint(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ this: Rc<AOp<V>>, sink: &mut Sink) { unimplemented!(); }
   fn adjoint(&self, sink: &mut Sink) -> (Rc<ANode>, Rc<AOp<V>>);
 
-  //#[cfg(feature = "gpu")] fn gpu_mux(&self, dev: GPUDeviceId) -> Rc<AOp<V>> { unimplemented!(); }
-  //#[cfg(feature = "gpu")] fn gpu_mux(&self, dev: GPUDeviceId) -> (Rc<ANode>, Rc<AOp<V>>) { unimplemented!(); }
-  //fn clobber(&self) -> (Rc<ANode>, Rc<AOp<V>>) { unimplemented!(); }
-
   // TODO
   fn _substitute(&self, subs: Vec<(RWVar, Rc<Any>)>) -> Option<(Rc<ANode>, Rc<AOp<V>>)> { None }
   fn _inplace(&self) -> Option<(Rc<ANode>, Rc<AOp<V>>)> { None }
 
   fn _apply_val(&self, txn: Txn, val: RWVal<V>);
 }
-
-/*pub trait AVal: IOVal + Clone {
-  type T;
-
-  fn exact_duplicate(&self) -> Self where Self: Sized;
-  fn root_var(&self) -> RWVar;
-  fn tmp_var(&self) -> RVar;
-
-  fn txn(&self) -> Option<Txn>;
-  //fn load(&self, txn: Txn, writer: &mut Any);
-  //fn store(&self, txn: Txn, reader: &mut Any);
-  fn reset(&self);
-  fn release(&self);
-  fn persist(&self, txn: Txn);
-}*/
 
 pub trait WrapOpExt<V> {
   //fn substitute(&self) -> Option<Rc<AOp<V>>>;
@@ -275,13 +264,13 @@ pub struct Node {
   node: Rc<ANode>,
 }
 
-pub struct Op<V> {
+pub struct Val<A> {
   node: Rc<ANode>,
-  op:   Rc<AOp<V>>,
+  op:   Rc<AOp<A>>,
 }
 
-impl<V> Op<V> {
-  pub fn to_node(&self) -> Node {
+impl<A> Val<A> {
+  pub fn node(&self) -> Node {
     Node{node: self.node.clone()}
   }
 }
@@ -388,12 +377,10 @@ impl Sink {
   }
 }
 
-pub struct ClobberTransform {
-}
-
 pub struct OpBase<V> {
   ref_:     NodeRef,
   stack:    WalkStack,
+  analyses: CloneMap,
   tng_op:   RefCell<Option<(Rc<ANode>, Rc<AOp<V>>)>>,
 }
 
@@ -402,8 +389,15 @@ impl<V> Default for OpBase<V> {
     OpBase{
       ref_:     NodeRef::default(),
       stack:    WalkStack::default(),
+      analyses: TypeMap::custom(),
       tng_op:   RefCell::new(None),
     }
+  }
+}
+
+impl<V> Analyses for OpBase<V> {
+  fn _liveness(&self) -> Option<LivenessAnalysis> {
+    self.analyses.get::<LivenessAnalysis>().map(|x| x.clone())
   }
 }
 
@@ -1179,20 +1173,34 @@ impl<F, V> FSrcOp<F, V> {
 }
 
 impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
-  fn _push(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    // TODO
-  }
-
-  fn _pop(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    // TODO
-  }
-
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
 
   fn _io(&self) -> &IOVal {
     &self.val
+  }
+
+  fn _analyses(&self) -> &Analyses {
+    &self.base
+  }
+
+  /*fn _pred_fwd(&self, _pred_buf: &mut Vec<Rc<ANode>>) {
+  }
+
+  fn _pred_rev(&self, _pred_buf: &mut Vec<Rc<ANode>>) {
+  }*/
+
+  fn _push(&self, _stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.push(epoch) {
+      apply(self);
+    }
+  }
+
+  fn _pop(&self, _stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.pop(epoch) {
+      apply(self);
+    }
   }
 
   fn _txn(&self) -> Option<Txn> {
@@ -1359,34 +1367,41 @@ impl<F, V1, W> F1Op<F, V1, W> {
       y:    y,
     }
   }
-
-  /*pub fn greedy_clobber(&self) -> Rc<F1GreedyClobberOp<F, V1, W>> {
-    // TODO
-    unimplemented!();
-  }*/
 }
 
 impl<F, V1, W> ANode for F1Op<F, V1, W> where RWVal<W>: IOVal + 'static {
-  fn _push(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    if self.base.stack.push(epoch) {
-      self.x_._push(epoch, apply);
-      apply(self);
-    }
-  }
-
-  fn _pop(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    if self.base.stack.pop(epoch) {
-      apply(self);
-      self.x_._pop(epoch, apply);
-    }
-  }
-
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
 
   fn _io(&self) -> &IOVal {
     &self.y
+  }
+
+  /*fn _pred_fwd(&self, pred_buf: &mut Vec<Rc<ANode>>) {
+    pred_buf.push(self.x_.clone());
+  }
+
+  fn _pred_rev(&self, pred_buf: &mut Vec<Rc<ANode>>) {
+    pred_buf.push(self.x_.clone());
+  }*/
+
+  fn _push(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.push(epoch) {
+      if stop_txn.is_none() || stop_txn != self._txn() {
+        self.x_._push(stop_txn, epoch, apply);
+      }
+      apply(self);
+    }
+  }
+
+  fn _pop(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.pop(epoch) {
+      apply(self);
+      if stop_txn.is_none() || stop_txn != self._txn() {
+        self.x_._pop(stop_txn, epoch, apply);
+      }
+    }
   }
 
   fn _txn(&self) -> Option<Txn> {
@@ -1506,15 +1521,7 @@ impl<F, V> AOp<V> for F1Op<F, V, V> where RWVal<V>: IOVal + 'static {
   }
 }
 
-/*pub struct F1GreedyClobberOp<F, V1, W> {
-  base: OpBase<W>,
-  ext:  OpExt<F, W>,
-  fun:  F,
-  x_:   Rc<AOp<V1>>,
-  y:    RWVal<W>,
-}
-
-pub struct F1ClobberOp<F, V1, W> {
+/*pub struct F1ClobberOp<F, V1, W> {
   base: OpBase<W>,
   ext:  OpExt<F, W>,
   fun:  RefCell<F>,
@@ -1614,28 +1621,42 @@ impl<F, V1, V2, W> F2Op<F, V1, V2, W> {
 }
 
 impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where RWVal<W>: IOVal + 'static {
-  fn _push(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    if self.base.stack.push(epoch) {
-      self.x1_._push(epoch, apply);
-      self.x2_._push(epoch, apply);
-      apply(self);
-    }
-  }
-
-  fn _pop(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    if self.base.stack.pop(epoch) {
-      apply(self);
-      self.x2_._pop(epoch, apply);
-      self.x1_._pop(epoch, apply);
-    }
-  }
-
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
 
   fn _io(&self) -> &IOVal {
     &self.y
+  }
+
+  /*fn _pred_fwd(&self, pred_buf: &mut Vec<Rc<ANode>>) {
+    pred_buf.push(self.x1_.clone());
+    pred_buf.push(self.x2_.clone());
+  }
+
+  fn _pred_rev(&self, pred_buf: &mut Vec<Rc<ANode>>) {
+    pred_buf.push(self.x2_.clone());
+    pred_buf.push(self.x1_.clone());
+  }*/
+
+  fn _push(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.push(epoch) {
+      if stop_txn.is_none() || stop_txn != self._txn() {
+        self.x1_._push(stop_txn, epoch, apply);
+        self.x2_._push(stop_txn, epoch, apply);
+      }
+      apply(self);
+    }
+  }
+
+  fn _pop(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.pop(epoch) {
+      apply(self);
+      if stop_txn.is_none() || stop_txn != self._txn() {
+        self.x2_._pop(stop_txn, epoch, apply);
+        self.x1_._pop(stop_txn, epoch, apply);
+      }
+    }
   }
 
   fn _txn(&self) -> Option<Txn> {
@@ -1737,32 +1758,46 @@ pub struct F3Op<F, V1, V2, V3, W> {
 }
 
 impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where RWVal<W>: IOVal + 'static {
-  fn _push(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    if self.base.stack.push(epoch) {
-      // TODO: apply priority.
-      self.x1_._push(epoch, apply);
-      self.x2_._push(epoch, apply);
-      self.x3_._push(epoch, apply);
-      apply(self);
-    }
-  }
-
-  fn _pop(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    if self.base.stack.pop(epoch) {
-      // TODO: apply priority.
-      apply(self);
-      self.x3_._pop(epoch, apply);
-      self.x2_._pop(epoch, apply);
-      self.x1_._pop(epoch, apply);
-    }
-  }
-
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
 
   fn _io(&self) -> &IOVal {
     &self.y
+  }
+
+  /*fn _pred_fwd(&self, pred_buf: &mut Vec<Rc<ANode>>) {
+    pred_buf.push(self.x1_.clone());
+    pred_buf.push(self.x2_.clone());
+    pred_buf.push(self.x3_.clone());
+  }
+
+  fn _pred_rev(&self, pred_buf: &mut Vec<Rc<ANode>>) {
+    pred_buf.push(self.x3_.clone());
+    pred_buf.push(self.x2_.clone());
+    pred_buf.push(self.x1_.clone());
+  }*/
+
+  fn _push(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.push(epoch) {
+      if stop_txn.is_none() || stop_txn != self._txn() {
+        self.x1_._push(stop_txn, epoch, apply);
+        self.x2_._push(stop_txn, epoch, apply);
+        self.x3_._push(stop_txn, epoch, apply);
+      }
+      apply(self);
+    }
+  }
+
+  fn _pop(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.pop(epoch) {
+      apply(self);
+      if stop_txn.is_none() || stop_txn != self._txn() {
+        self.x3_._pop(stop_txn, epoch, apply);
+        self.x2_._pop(stop_txn, epoch, apply);
+        self.x1_._pop(stop_txn, epoch, apply);
+      }
+    }
   }
 
   fn _txn(&self) -> Option<Txn> {
@@ -1876,30 +1911,46 @@ impl<F, V, W> FJoinOp<F, V, W> {
 }
 
 impl<F, V, W> ANode for FJoinOp<F, V, W> where RWVal<W>: IOVal + 'static {
-  fn _push(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    if self.base.stack.push(epoch) {
-      for x_ in self.xs_.iter() {
-        x_._push(epoch, apply);
-      }
-      apply(self);
-    }
-  }
-
-  fn _pop(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    if self.base.stack.pop(epoch) {
-      apply(self);
-      for x_ in self.xs_.iter().rev() {
-        x_._pop(epoch, apply);
-      }
-    }
-  }
-
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
 
   fn _io(&self) -> &IOVal {
     &self.y
+  }
+
+  /*fn _pred_fwd(&self, pred_buf: &mut Vec<Rc<ANode>>) {
+    for x_ in self.xs_.iter() {
+      pred_buf.push(x_.clone());
+    }
+  }
+
+  fn _pred_rev(&self, pred_buf: &mut Vec<Rc<ANode>>) {
+    for x_ in self.xs_.iter().rev() {
+      pred_buf.push(x_.clone());
+    }
+  }*/
+
+  fn _push(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.push(epoch) {
+      if stop_txn.is_none() || stop_txn != self._txn() {
+        for x_ in self.xs_.iter() {
+          x_._push(stop_txn, epoch, apply);
+        }
+      }
+      apply(self);
+    }
+  }
+
+  fn _pop(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.pop(epoch) {
+      apply(self);
+      if stop_txn.is_none() || stop_txn != self._txn() {
+        for x_ in self.xs_.iter().rev() {
+          x_._pop(stop_txn, epoch, apply);
+        }
+      }
+    }
   }
 
   fn _txn(&self) -> Option<Txn> {
