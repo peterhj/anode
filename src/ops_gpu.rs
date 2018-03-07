@@ -47,8 +47,7 @@ pub trait GPUDeviceMemIoWriter<'a> {
 
 pub struct GPUMuxFun<A> {
   pub dev:  GPUDeviceId,
-  //pub op:   Rc<AOp<A>>,
-  pub op:   Val<A>,
+  pub val:  Val<A>,
 }
 
 impl<A> GPUMuxFun<A> where A: 'static {
@@ -65,23 +64,13 @@ impl<A> GPUMuxFun<A> where A: 'static {
           unimplemented!();
         })
       },
-      prepare: {
-        Some(Rc::new(move |txn: Txn, state: RefMut<GPUMuxFun<A>>| {
-          // FIXME: replace opaque callback with ctrl dependency.
-          //state.op._prepare(txn);
-        }))
-      },
-      cleanup: {
-        Some(Rc::new(move |txn: Txn, state: RefMut<GPUMuxFun<A>>| {
-          // FIXME: replace opaque callback with ctrl dependency.
-          //state.op._cleanup(txn);
-        }))
-      },
+      prepare: None,
+      cleanup: None,
       apply: {
-        Rc::new(move |txn: Txn, state: RefMut<GPUMuxFun<A>>, _output: AVal<A>| {
+        Rc::new(move |txn: Txn, state: RefMut<GPUMuxFun<A>>, _output: OVal<A>| {
           let ctx = implicit_ctx().multi_gpu().unwrap().gpu(state.dev);
           let guard = push_ctx(ctx);
-          state.op._apply(txn);
+          state.val._apply(txn);
         })
       },
       tangent: None,
@@ -126,7 +115,7 @@ where A: 'static, F: (Fn(GPUDeviceStreamPool) -> A) + 'static,
       prepare: None,
       cleanup: None,
       apply: {
-        Rc::new(move |txn: Txn, state: RefMut<_>, output: AVal<A>| {
+        Rc::new(move |txn: Txn, state: RefMut<_>, output: OVal<A>| {
           if let Some(_) = output.write(txn) {
             panic!("WARNING: SrcOpExt: should never write");
           }
@@ -180,7 +169,7 @@ where T: ZeroBits + Copy + 'static,
       prepare: None,
       cleanup: None,
       apply: {
-        Rc::new(move |txn: Txn, state: RefMut<_>, output: AVal<GPUDeviceArray1d<T>>| {
+        Rc::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<T>>| {
           if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
@@ -242,7 +231,7 @@ where T: ZeroBits + Copy + 'static,
       prepare: None,
       cleanup: None,
       apply: {
-        Rc::new(move |txn: Txn, state: RefMut<_>, output: AVal<GPUDeviceArray2d<T>>| {
+        Rc::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray2d<T>>| {
           if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
@@ -304,7 +293,7 @@ where T: ZeroBits + Copy + 'static,
       prepare: None,
       cleanup: None,
       apply: {
-        Rc::new(move |txn: Txn, state: RefMut<_>, output: AVal<GPUDeviceArray4d<T>>| {
+        Rc::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray4d<T>>| {
           if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
@@ -368,7 +357,7 @@ impl<F> FlatMapFun<F> where F: Clone + 'static {
       cleanup: None,
       apply: {
         let x_ = x_.clone();
-        Rc::new(move |txn: Txn, state: RefMut<FlatMapFun<F>>, output: AVal<A>| {
+        Rc::new(move |txn: Txn, state: RefMut<FlatMapFun<F>>, output: OVal<A>| {
           let x_ = x_.clone();
           if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu().unwrap();
@@ -398,7 +387,8 @@ impl<F> FlatMapFun<F> where F: Clone + 'static {
       }),
       adjoint: Some({
         Rc::new(move |x_: Val<A>, sink: &mut Sink| {
-          // Do nothing.
+          // TODO
+          unimplemented!();
         })
       }),
       inplace: Some({
@@ -462,7 +452,7 @@ impl SumJoinOp {
       apply: {
         //let inputs: Vec<_> = inputs_.iter().map(|x_| x_.value()).collect();
         let inputs_ = inputs_.clone();
-        Rc::new(move |txn: Txn, state: RefMut<_>, output: AVal<A>| {
+        Rc::new(move |txn: Txn, state: RefMut<_>, output: OVal<A>| {
           if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
@@ -538,7 +528,7 @@ impl SumJoinOp {
       apply: {
         //let inputs: Vec<_> = inputs_.iter().map(|x_| x_.value()).collect();
         let inputs_ = inputs_.clone();
-        Rc::new(move |txn: Txn, state: RefMut<_>, output: AVal<A>| {
+        Rc::new(move |txn: Txn, state: RefMut<_>, output: OVal<A>| {
           //let inputs_ = inputs_.clone();
           if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu().unwrap();
@@ -698,7 +688,7 @@ impl LinearMapOp {
         //let map = map_.value();
         let input_ = input_.clone();
         let map_ = map_.clone();
-        Rc::new(move |txn, _state: RefMut<_>, output: AVal<GPUDeviceArray1d<T>>| {
+        Rc::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceArray1d<T>>| {
           if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
