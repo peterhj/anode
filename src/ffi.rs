@@ -5,14 +5,16 @@
 #[cfg(feature = "gpu")]
 pub mod routines_gpu {
 
+use gpudevicemem::ffi::routines_gpu::{KernelConfig};
+
 use cuda::ffi::runtime::{CUstream_st};
 
-#[derive(Clone, Copy)]
+/*#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct KernelConfig {
   pub block_sz:     u32,
   pub max_block_ct: u32,
-}
+}*/
 
 include!(concat!(env!("OUT_DIR"), "/routines_gpu_bind.rs"));
 

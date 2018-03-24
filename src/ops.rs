@@ -82,7 +82,8 @@ pub struct FlatSumJoinOp;
 pub struct BatchSumJoinOp;
 pub struct FlatMapFun<FlatMapF> { pub f: FlatMapF, }
 pub struct FlatMapInplaceFun<FlatMapF> { pub f: FlatMapF, }
-pub struct FlatLinearMapOp;
+pub struct FlatLinearMapFun;
+pub struct InnerProductFun;
 pub struct LinearMapOp;
 pub struct LeftTransposeLinearMapOp;
 pub struct RightTransposeLinearMapOp;
@@ -98,8 +99,8 @@ pub struct SoftmaxNLLFusedOp;
 pub struct SoftmaxCrossEntropyFusedOp;
 pub struct SoftmaxEntropyFusedOp;
 
-pub struct SquareFlatMapF;
 pub struct ModulusFlatMapF;
+pub struct SquareFlatMapF;
 pub struct PositiveClipFlatMapF;
 pub struct UnitStepFlatMapF;
 pub struct LogPositiveClipFlatMapF;

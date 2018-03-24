@@ -44,3 +44,12 @@ impl LivenessAnalysisInner {
     }
   }
 }
+
+#[derive(Clone)]
+pub struct DominanceAnalysis {
+  //inner:    Rc<RefCell<DominanceAnalysisInner>>,
+}
+
+impl Key for DominanceAnalysis {
+  type Value = Self;
+}
