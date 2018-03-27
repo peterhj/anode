@@ -205,7 +205,7 @@ pub trait SumExt<X, V> {
 
 pub trait FlatMultOpExt<X, V1, A, V2, Y, W>
 {
-  fn flat_mult(self, x: Rc<AOp<V1>>) -> Rc<F2Op<FlatLinearMapOp, V1, V2, W>>;
+  fn flat_mult(self, x: Rc<AOp<V1>>) -> Rc<F2Op<FlatLinearMapFun, V1, V2, W>>;
 }
 
 pub trait MultOpExt<X, V1, A, V2, Y, W>

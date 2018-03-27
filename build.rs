@@ -60,6 +60,8 @@ fn main() {
       .whitelist_function("anode_gpu_unit_step_flat_map_f32")
       .whitelist_function("anode_gpu_log_positive_clip_flat_map_f32")
       .whitelist_function("anode_gpu_positive_reciprocal_flat_map_f32")
+      .whitelist_function("anode_gpu_tanh_flat_map_f32")
+      .whitelist_function("anode_gpu_rcosh2_flat_map_f32")
       .generate()
       .expect("bindgen failed to generate cuda kernel bindings")
       .write_to_file(out_dir.join("routines_gpu_bind.rs"))

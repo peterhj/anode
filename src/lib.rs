@@ -17,6 +17,7 @@ limitations under the License.
 #![feature(conservative_impl_trait)]
 #![feature(fn_traits)]
 #![feature(get_type_id)]
+//#![feature(optin_builtin_traits)]
 #![feature(slice_patterns)]
 #![feature(specialization)]
 //#![feature(trait_alias)]
@@ -30,6 +31,7 @@ extern crate arithmetic;
 #[cfg(feature = "gpu")] extern crate gpudevicemem;
 //#[macro_use] extern crate lazy_static;
 extern crate memarray;
+extern crate parking_lot;
 extern crate rand;
 extern crate rng;
 extern crate typemap;
@@ -39,6 +41,7 @@ use ops::{MemIoReader, MemIoWriter, OnesSrcOp, OnesSrcOpMaybeExt, SumJoinOp, Sum
 #[cfg(feature = "gpu")] use ops_gpu::{GPUMuxFun};
 
 #[cfg(feature = "gpu")] use gpudevicemem::{GPUDeviceId};
+use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use typemap::{CloneMap, TypeMap};
 
 use std::any::{Any};
@@ -47,7 +50,8 @@ use std::collections::{HashMap, HashSet};
 //use std::collections::hash_map::{Entry};
 use std::ops::{Deref, DerefMut};
 use std::rc::{Rc};
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+//use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc};
 use std::sync::mpsc::{SyncSender, Receiver};
 
 pub mod analysis;
@@ -479,12 +483,14 @@ impl<V> Val<V> where V: 'static {
   }
 
   //pub fn get(&self, txn: Txn) -> Ref<V> {
-  pub fn get(&self, txn: Txn) -> RwMapRef<RWValBuf<V>, V, impl Fn(&RWValBuf<V>) -> &V> {
+  //pub fn get(&self, txn: Txn) -> RwMapRef<RWValBuf<V>, V, impl Fn(&RWValBuf<V>) -> &V> {
+  pub fn get(&self, txn: Txn) -> RwLockReadGuard<V> {
     self.op._value().get(txn, self.rvar)
   }
 
   //pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RefMut<V> {
-  pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwMapRefMut<RWValBuf<V>, V, impl Fn(&mut RWValBuf<V>) -> &mut V> {
+  //pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwMapRefMut<RWValBuf<V>, V, impl Fn(&mut RWValBuf<V>) -> &mut V> {
+  pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwLockWriteGuard<V> {
     self.op._value().get_mut(txn, self.xvar, token)
   }
 
@@ -520,12 +526,14 @@ impl<V> OVal<V> where V: 'static {
   }
 
   //pub fn get(&self, txn: Txn) -> Ref<V> {
-  pub fn get(&self, txn: Txn) -> RwMapRef<RWValBuf<V>, V, impl Fn(&RWValBuf<V>) -> &V> {
+  //pub fn get(&self, txn: Txn) -> RwMapRef<RWValBuf<V>, V, impl Fn(&RWValBuf<V>) -> &V> {
+  pub fn get(&self, txn: Txn) -> RwLockReadGuard<V> {
     self.val.get(txn, self.rvar)
   }
 
   //pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RefMut<V> {
-  pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwMapRefMut<RWValBuf<V>, V, impl Fn(&mut RWValBuf<V>) -> &mut V> {
+  //pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwMapRefMut<RWValBuf<V>, V, impl Fn(&mut RWValBuf<V>) -> &mut V> {
+  pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwLockWriteGuard<V> {
     self.val.get_mut(txn, self.xvar, token)
   }
 }
@@ -712,14 +720,14 @@ impl<A> RwBox<A> {
   pub fn borrow(&self) -> RwRef<A> {
     match self {
       &RwBox::Local(ref buf) => RwRef::Local(buf.borrow()),
-      &RwBox::Shared(ref buf) => RwRef::Shared(buf.read().unwrap()),
+      &RwBox::Shared(ref buf) => RwRef::Shared(buf.read()),
     }
   }
 
   pub fn borrow_mut(&self) -> RwRefMut<A> {
     match self {
       &RwBox::Local(ref buf) => RwRefMut::Local(buf.borrow_mut()),
-      &RwBox::Shared(ref buf) => RwRefMut::Shared(buf.write().unwrap()),
+      &RwBox::Shared(ref buf) => RwRefMut::Shared(buf.write()),
     }
   }
 }
@@ -788,6 +796,13 @@ impl<'a, A> DerefMut for RwRefMut<'a, A> where A: 'a {
 }
 
 impl<'a, A> RwRefMut<'a, A> where A: 'a {
+  pub fn try_downgrade(self) -> Option<RwRef<'a, A>> {
+    match self {
+      RwRefMut::Local(buf) => None,
+      RwRefMut::Shared(buf) => Some(RwRef::Shared(buf.downgrade())),
+    }
+  }
+
   pub fn map<T, F>(self, f: F) -> RwMapRefMut<'a, A, T, F> where T: 'a, F: Fn(&mut A) -> &mut T {
     RwMapRefMut{
       ref_: self,
@@ -819,7 +834,7 @@ impl<'a, A, T, F> DerefMut for RwMapRefMut<'a, A, T, F> where A: 'a, T: 'a, F: F
 pub struct RWValBuf<T> {
   mode:         WriteMode,
   curr_txn:     Option<Txn>,
-  l_consumers:  HashSet<RVar>,
+  l_consumers:  Mutex<HashSet<RVar>>,
   d_consumers:  HashSet<RVar>,
   l_producers:  HashSet<RWVar>,
   d_producers:  HashSet<RWVar>,
@@ -831,13 +846,16 @@ impl<T> Default for RWValBuf<T> {
     RWValBuf{
       mode:         WriteMode::Exclusive,
       curr_txn:     None,
-      l_consumers:  HashSet::new(),
+      l_consumers:  Mutex::new(HashSet::new()),
       d_consumers:  HashSet::new(),
       l_producers:  HashSet::new(),
       d_producers:  HashSet::new(),
       data:         None,
     }
   }
+}
+
+impl<T> RWValBuf<T> {
 }
 
 pub struct ShareableRWVal<T> {
@@ -856,7 +874,8 @@ pub struct RWVal<T> {
   //ref_:     ValRef,
   alloc:    Arc<Fn(Txn) -> T>,
   //buf:      Rc<RefCell<RWValBuf<T>>>,
-  buf:      RwBox<RWValBuf<T>>,
+  //buf:      RwBox<RWValBuf<T>>,
+  buf:      Arc<RwLock<RWValBuf<T>>>,
   borrow:   (),
 }
 
@@ -880,32 +899,38 @@ impl<T> IO for RWVal<T> where T: 'static {
 
 impl<T> RWVal<T> where T: 'static {
   pub fn from(alloc: Arc<Fn(Txn) -> T>) -> Self {
-    let buf = Rc::new(RefCell::new(RWValBuf::default()));
+    //let buf = Rc::new(RefCell::new(RWValBuf::default()));
+    let buf = Arc::new(RwLock::new(RWValBuf::default()));
     RWVal{
       //ref_:     ValRef::default(),
       alloc:    alloc,
-      buf:      RwBox::Local(buf),
+      //buf:      RwBox::Local(buf),
+      buf:      buf,
       borrow:   (),
     }
   }
 
-  pub fn shared(alloc: Arc<Fn(Txn) -> T>) -> Self {
+  /*pub fn shared(alloc: Arc<Fn(Txn) -> T>) -> Self {
     let buf = Arc::new(RwLock::new(RWValBuf::default()));
     RWVal{
       alloc:    alloc,
       buf:      RwBox::Shared(buf),
       borrow:   (),
     }
-  }
+  }*/
 
   pub fn share(&self) -> Option<ShareableRWVal<T>> {
-    match &self.buf {
+    /*match &self.buf {
       &RwBox::Local(_) => None,
       &RwBox::Shared(ref buf) => Some(ShareableRWVal{
         alloc:  self.alloc.clone(),
         buf:    buf.clone(),
       }),
-    }
+    }*/
+    Some(ShareableRWVal{
+      alloc:  self.alloc.clone(),
+      buf:    self.buf.clone(),
+    })
   }
 
   pub fn _clone(&self) -> Self {
@@ -918,7 +943,7 @@ impl<T> RWVal<T> where T: 'static {
   }
 
   pub fn _set_accumulate(&self) {
-    let mut buf = self.buf.borrow_mut();
+    let mut buf = self.buf.write();
     match buf.mode {
       WriteMode::Exclusive => {
         buf.mode = WriteMode::Accumulate;
@@ -929,7 +954,7 @@ impl<T> RWVal<T> where T: 'static {
   }
 
   pub fn _set_clobber(&self) {
-    let mut buf = self.buf.borrow_mut();
+    let mut buf = self.buf.write();
     match buf.mode {
       WriteMode::Exclusive => {
         buf.mode = WriteMode::Clobber;
@@ -940,37 +965,41 @@ impl<T> RWVal<T> where T: 'static {
   }
 
   pub fn txn(&self) -> Option<Txn> {
-    let buf = self.buf.borrow();
+    let buf = self.buf.read();
     buf.curr_txn
   }
 
   pub fn reset(&self) {
-    let mut buf = self.buf.borrow_mut();
+    let mut buf = self.buf.write();
     buf.curr_txn = None;
-    buf.l_consumers.clear();
+    buf.l_consumers.lock().clear();
     buf.d_consumers.clear();
     buf.l_producers.clear();
     buf.d_producers.clear();
   }
 
   pub fn release(&self) {
-    self.reset();
-    let mut buf = self.buf.borrow_mut();
+    let mut buf = self.buf.write();
+    buf.curr_txn = None;
+    buf.l_consumers.lock().clear();
+    buf.d_consumers.clear();
+    buf.l_producers.clear();
+    buf.d_producers.clear();
     buf.data = None;
   }
 
   pub fn persist(&self, txn: Txn, /*rvar: RVar,*/ xvar: RWVar) {
-    let new_txn = {
-      let buf = self.buf.borrow();
-      buf.curr_txn.is_none() || buf.curr_txn.unwrap() != txn
-    };
+    let mut buf = self.buf.write();
+
+    let new_txn = buf.curr_txn.is_none() || buf.curr_txn.unwrap() != txn;
     if new_txn {
-      self.reset();
-      let mut buf = self.buf.borrow_mut();
       buf.curr_txn = Some(txn);
+      buf.l_consumers.lock().clear();
+      buf.d_consumers.clear();
+      buf.l_producers.clear();
+      buf.d_producers.clear();
     }
 
-    let mut buf = self.buf.borrow_mut();
     assert!(!buf.d_producers.contains(&xvar),
         "`persist` should be called before all other writes");
     match buf.l_producers.len() {
@@ -982,23 +1011,23 @@ impl<T> RWVal<T> where T: 'static {
       }
       _ => panic!("`persist` should be called before all other writes"),
     }
-    assert!(buf.l_consumers.is_empty(),
+    assert!(buf.l_consumers.lock().is_empty(),
         "`persist` should be called before reads");
     buf.l_producers.insert(xvar);
   }
 
   pub fn write(&self, txn: Txn, xvar: RWVar) -> Option<(WriteCap, WriteToken)> {
-    let new_txn = {
-      let buf = self.buf.borrow();
-      buf.curr_txn.is_none() || buf.curr_txn.unwrap() != txn
-    };
+    let mut buf = self.buf.write();
+
+    let new_txn = buf.curr_txn.is_none() || buf.curr_txn.unwrap() != txn;
     if new_txn {
-      self.reset();
-      let mut buf = self.buf.borrow_mut();
       buf.curr_txn = Some(txn);
+      buf.l_consumers.lock().clear();
+      buf.d_consumers.clear();
+      buf.l_producers.clear();
+      buf.d_producers.clear();
     }
 
-    let mut buf = self.buf.borrow_mut();
     match buf.mode {
       WriteMode::Exclusive => {
         match (buf.l_producers.len(), buf.d_producers.len()) {
@@ -1012,7 +1041,7 @@ impl<T> RWVal<T> where T: 'static {
           (_, 0) => panic!("attempting multiple writes to `Exclusive` val"),
           (_, _) => panic!("all writes to `Exclusive` val must be live"),
         }
-        assert!(buf.l_consumers.is_empty(),
+        assert!(buf.l_consumers.lock().is_empty(),
             "attempting write to `Exclusive` val after read");
       }
       WriteMode::Accumulate => {
@@ -1025,7 +1054,7 @@ impl<T> RWVal<T> where T: 'static {
           }
           (_, _) => panic!("all writes to `Accumulate` val must be live"),
         }
-        assert!(buf.l_consumers.is_empty(),
+        assert!(buf.l_consumers.lock().is_empty(),
             "attempting write to `Accumulate` val after read");
       }
       WriteMode::Clobber => {
@@ -1039,11 +1068,12 @@ impl<T> RWVal<T> where T: 'static {
           (_, _) => panic!("attempting multiple live writes to `Clobber` val"),
         }
         let &mut RWValBuf{
-            ref mut l_consumers,
+            ref l_consumers,
             ref mut d_consumers,
             ref mut l_producers,
             ref mut d_producers,
             ..} = &mut *buf;
+        let mut l_consumers = l_consumers.lock();
         d_consumers.extend(l_consumers.drain());
         d_producers.extend(l_producers.drain());
       }
@@ -1060,63 +1090,78 @@ impl<T> RWVal<T> where T: 'static {
   }
 
   //pub fn get(&self, txn: Txn, rvar: RVar) -> Ref<T> {
-  pub fn get(&self, txn: Txn, rvar: RVar) -> RwMapRef<RWValBuf<T>, T, impl Fn(&RWValBuf<T>) -> &T> {
-    {
-      let mut buf = self.buf.borrow_mut();
+  //pub fn get(&self, txn: Txn, rvar: RVar) -> RwMapRef<RWValBuf<T>, T, impl Fn(&RWValBuf<T>) -> &T> {
+  pub fn get(&self, txn: Txn, rvar: RVar) -> RwLockReadGuard<T> {
+    //let buf = self.buf.upgradable_read();
+    let buf = self.buf.read();
 
-      let mut valid_txn = false;
-      if let Some(curr_txn) = buf.curr_txn {
-        if curr_txn == txn {
-          valid_txn = true;
-        }
+    let mut valid_txn = false;
+    if let Some(curr_txn) = buf.curr_txn {
+      if curr_txn == txn {
+        valid_txn = true;
       }
-      assert!(valid_txn,
-          "attempting a read with an invalid txn (did you forget to `persist` or `write`?)");
-
-      assert!(!buf.d_consumers.contains(&rvar),
-          "attempting a stale read (the value has been clobbered)");
-      match buf.l_producers.len() {
-        0 => panic!("attempting an invalid read (the value was never written)"),
-        1 => {}
-        _ => panic!("attempting an invalid read (too many live writes)"),
-      }
-      buf.l_consumers.insert(rvar);
-
-      assert!(buf.data.is_some(),
-          "attempting a read on empty data");
     }
-    let buf = self.buf.borrow();
+    assert!(valid_txn,
+        "attempting a read with an invalid txn (did you forget to `persist` or `write`?)");
+
+    assert!(!buf.d_consumers.contains(&rvar),
+        "attempting a stale read (the value has been clobbered)");
+    match buf.l_producers.len() {
+      0 => panic!("attempting an invalid read (the value was never written)"),
+      1 => {}
+      _ => panic!("attempting an invalid read (too many live writes)"),
+    }
+    /*let buf = if !buf.l_consumers.borrow().contains(&rvar) {
+      let mut buf = buf.upgrade();
+      buf.l_consumers.insert(rvar);
+      buf.downgrade()
+    } else {
+      buf.downgrade()
+    };*/
+    {
+      let mut l_consumers = buf.l_consumers.lock();
+      if !l_consumers.contains(&rvar) {
+        l_consumers.insert(rvar);
+      }
+    }
+
+    assert!(buf.data.is_some(),
+        "attempting a read on empty data");
+
     //Ref::map(buf, |buf| buf.data.as_ref().unwrap())
-    buf.map(|buf| buf.data.as_ref().unwrap())
+    //buf.map(|buf| buf.data.as_ref().unwrap())
+    RwLockReadGuard::map(buf, |buf| buf.data.as_ref().unwrap())
   }
 
   //pub fn get_mut(&self, txn: Txn, /*rvar: RVar,*/ xvar: RWVar, token: WriteToken) -> RefMut<T> {
-  pub fn get_mut(&self, txn: Txn, xvar: RWVar, token: WriteToken) -> RwMapRefMut<RWValBuf<T>, T, impl Fn(&mut RWValBuf<T>) -> &mut T> {
+  //pub fn get_mut(&self, txn: Txn, xvar: RWVar, token: WriteToken) -> RwMapRefMut<RWValBuf<T>, T, impl Fn(&mut RWValBuf<T>) -> &mut T> {
+  pub fn get_mut(&self, txn: Txn, xvar: RWVar, token: WriteToken) -> RwLockWriteGuard<T> {
+    let mut buf = self.buf.write();
     assert_eq!(xvar, token.xvar);
-    let mut buf = self.buf.borrow_mut();
-    {
-      let mut valid_txn = false;
-      if let Some(curr_txn) = buf.curr_txn {
-        if curr_txn == txn {
-          valid_txn = true;
-        }
-      }
-      assert!(valid_txn,
-          "attempting a write with an invalid txn (did you forget to `write`?)");
 
-      assert!(buf.l_consumers.is_empty(),
-          "attempting a write-after-read (check your `get` and `get_mut` order)");
-      assert!(!buf.d_producers.contains(&xvar),
-          "attempting an invalid write (the value has been clobbered)");
-      assert!(buf.l_producers.contains(&xvar),
-          "attempting an invalid write (did you forget to `write`?)");
-
-      if buf.data.is_none() {
-        buf.data = Some((self.alloc)(txn));
+    let mut valid_txn = false;
+    if let Some(curr_txn) = buf.curr_txn {
+      if curr_txn == txn {
+        valid_txn = true;
       }
     }
+    assert!(valid_txn,
+        "attempting a write with an invalid txn (did you forget to `write`?)");
+
+    assert!(buf.l_consumers.lock().is_empty(),
+        "attempting a write-after-read (check your `get` and `get_mut` order)");
+    assert!(!buf.d_producers.contains(&xvar),
+        "attempting an invalid write (the value has been clobbered)");
+    assert!(buf.l_producers.contains(&xvar),
+        "attempting an invalid write (did you forget to `write`?)");
+
+    if buf.data.is_none() {
+      buf.data = Some((self.alloc)(txn));
+    }
+
     //RefMut::map(buf, |buf| buf.data.as_mut().unwrap())
-    buf.map(|buf| buf.data.as_mut().unwrap())
+    //buf.map(|buf| buf.data.as_mut().unwrap())
+    RwLockWriteGuard::map(buf, |buf| buf.data.as_mut().unwrap())
   }
 
   /*pub fn set<F>(&self, txn: Txn, xvar: RWVar, f: F) where F: FnOnce(RefMut<T>) {
