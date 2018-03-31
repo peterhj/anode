@@ -6,5 +6,5 @@ like Theano, TensorFlow, and PyTorch.
 
 Unlike other similar frameworks, `anode` is particularly dedicated to making
 multi-GPU and distributed execution as easy and efficient as possible on common
-systems, including single multi-GPU boxes, GPU instances in the cloud, and
-clusters connected by fast interconnects.
+systems, including multi-GPU boxes, GPU instances in the cloud, and clusters
+connected with fast interconnect.
