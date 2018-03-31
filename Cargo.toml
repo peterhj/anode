@@ -19,13 +19,14 @@ walkdir = "*"
 [dependencies]
 #lazy_static = "*"
 rand = "*"
+time = "*"
 arithmetic = { path = "../libarithmetic" }
 #async_execution = { path = "../async_execution" }
 colorimage = { path = "../colorimage" }
 cuda = { path = "../libcuda", optional = true }
 cuda_blas = { path = "../libcuda_blas", optional = true }
 cuda_dnn = { path = "../libcuda_dnn", optional = true }
-#float = { path = "../libfloat" }
+float = { path = "../libfloat" }
 gpudevicemem = { path = "../gpudevicemem", optional = true }
 memarray = { path = "../memarray" }
 parking_lot = "*"

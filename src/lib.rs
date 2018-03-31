@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#![feature(conservative_impl_trait)]
 #![feature(fn_traits)]
 #![feature(get_type_id)]
 //#![feature(optin_builtin_traits)]
@@ -1118,12 +1117,7 @@ impl<T> RWVal<T> where T: 'static {
     } else {
       buf.downgrade()
     };*/
-    {
-      let mut l_consumers = buf.l_consumers.lock();
-      if !l_consumers.contains(&rvar) {
-        l_consumers.insert(rvar);
-      }
-    }
+    buf.l_consumers.lock().insert(rvar);
 
     assert!(buf.data.is_some(),
         "attempting a read on empty data");

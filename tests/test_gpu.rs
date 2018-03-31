@@ -34,7 +34,7 @@ fn test_gpu_src_eval_fail() {
 fn test_gpu_zeros_eval() {
   println!();
 
-  let x: Val<_> = zeros(Rc::new(|stream: GPUDeviceStreamPool| {
+  let x: Val<_> = zeros(Rc::new(|conn: GPUDeviceConn| {
     let mut h_arr = MemArray1d::<f32>::zeros(1024);
     {
       let mut h_arr = h_arr.as_view_mut();
@@ -43,11 +43,11 @@ fn test_gpu_zeros_eval() {
         x[k] = k as f32;
       }
     }
-    let mut arr = GPUDeviceArray1d::<f32>::zeros(1024, stream.conn());
-    arr.as_view_mut().copy_mem(h_arr.as_view(), stream.conn());
+    let mut arr = GPUDeviceArray1d::<f32>::zeros(1024, conn.clone());
+    arr.as_view_mut().copy_mem(h_arr.as_view(), conn.clone());
 
     let mut h_arr2 = MemArray1d::<f32>::zeros(1024);
-    arr.as_view().dump_mem(h_arr2.as_view_mut(), stream.conn());
+    arr.as_view().dump_mem(h_arr2.as_view_mut(), conn.clone());
     {
       let mut h_arr2 = h_arr2.as_view();
       let x = h_arr2.flat_slice().unwrap();
@@ -81,7 +81,7 @@ fn test_gpu_zeros_eval() {
   }
 
   println!("DEBUG: sleeping...");
-  sleep(Duration::from_secs(5));
+  sleep(Duration::from_secs(2));
   println!("DEBUG: done sleeping");
 }
 
@@ -89,9 +89,9 @@ fn test_gpu_zeros_eval() {
 #[should_panic]
 fn test_gpu_mux_fail() {
   println!();
-  let x = zeros(Rc::new(|stream: GPUDeviceStreamPool| {
+  let x = zeros(Rc::new(|conn: GPUDeviceConn| {
     println!("DEBUG: test: allocating...");
-    GPUDeviceArray1d::<f32>::zeros(1024, stream.conn())
+    GPUDeviceArray1d::<f32>::zeros(1024, conn)
   }));
   //let y: Rc<AOp<_>> = x.gpu_mux(GPUDeviceId(1));
   let y: Val<_> = x.gpu_mux(GPUDeviceId(1));
@@ -102,9 +102,9 @@ fn test_gpu_mux_fail() {
 #[test]
 fn test_gpu_mux() {
   println!();
-  let x = zeros(Rc::new(|stream: GPUDeviceStreamPool| {
+  let x = zeros(Rc::new(|conn: GPUDeviceConn| {
     println!("DEBUG: test: allocating...");
-    GPUDeviceArray1d::<f32>::zeros(1024, stream.conn())
+    GPUDeviceArray1d::<f32>::zeros(1024, conn)
   }));
   //let y: Rc<AOp<_>> = x.gpu_mux(GPUDeviceId(0));
   let y: Val<_> = x.gpu_mux(GPUDeviceId(0));

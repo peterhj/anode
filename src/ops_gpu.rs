@@ -141,10 +141,15 @@ where A: 'static, F: (Fn(GPUDeviceStreamPool) -> A) + 'static,
 
 impl<T, F> ZerosSrcOpExt<GPUDeviceArray1d<T>, Rc<F>> for ZerosSrcOp
 where T: ZeroBits + Copy + 'static,
-      F: (Fn(GPUDeviceStreamPool) -> GPUDeviceArray1d<T>) + 'static,
+      //F: (Fn(GPUDeviceStreamPool) -> GPUDeviceArray1d<T>) + 'static,
+      F: (Fn(GPUDeviceConn) -> GPUDeviceArray1d<T>) + 'static,
 {
   //fn build(init_val: Rc<F>) -> Rc<FSrcOp<ZerosSrcOp, GPUDeviceArray1d<T>>> {
   fn build(init_val: Rc<F>) -> Val<GPUDeviceArray1d<T>> {
+    let ctx = implicit_ctx().gpu().unwrap();
+    let pool = ctx.pool();
+    let section = GPUAsyncSection::new(pool.conn());
+    let init_section = section.clone();
     let ext = OpExt{
       build: {
         Box::new(move |args| {
@@ -157,12 +162,15 @@ where T: ZeroBits + Copy + 'static,
         //Box::new(move |state: RefMut<ZerosSrcOp>| {
           println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: init...");
           let init_val = init_val.clone();
+          let section = init_section.clone();
           RWVal::from(Arc::new(move |txn: Txn| {
             println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: init: allocating...");
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
-            // TODO: actually, duplicate the closure.
-            init_val(pool)
+            let conn = pool.conn();
+            // FIXME: this part really requires auto-wait and auto-registration.
+            let mut guard = section.enter(conn.clone());
+            init_val(conn)
           }))
         })
       },
@@ -171,14 +179,19 @@ where T: ZeroBits + Copy + 'static,
       apply: {
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<T>>| {
           if let Some((cap, token)) = output.write(txn) {
+            //println!("DEBUG: ZeroSrcOp: zeroing (GPUDeviceArray1d)...");
+            println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: apply: writing...");
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
             let conn = pool.conn();
             match cap {
               WriteCap::Assign => {
-                // TODO: zero out the whole thing.
-                println!("DEBUG: ZeroSrcOp: zeroing...");
+                // TODO: Because async sections do not currently use reentrant
+                // mutexes for events, we need to make section entries fairly
+                // fine-grained to avoid nesting as in this case.
                 let mut y = output.get_mut(txn, token);
+                let mut guard = section.enter(conn.clone());
+                guard._wait(y.async_data());
                 y.as_view_mut().set_zeros(conn);
               }
               _ => unimplemented!(),
@@ -505,9 +518,9 @@ impl<F> FlatMapInplaceFun<F> {
 impl SumJoinOp {
   pub fn build_device_op<T, A>(inputs_: Vec<Val<A>>)
       -> Rc<FJoinOp<Self, A, A>>
-  where T: Copy /*+ PseudoField*/,
+  where T: Copy + 'static/* + PseudoField*/,
         //A: GPUDeviceArrayZeros + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + 'static,
-        A: GPUDeviceArrayZeros + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>> + 'static,
+        A: GPUDeviceArrayZeros<T> + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>> + 'static,
   {
     let ext = OpExt{
       build: {
