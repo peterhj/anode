@@ -69,6 +69,7 @@ pub struct SrcOp;
 pub struct ZerosSrcOp;
 pub struct OnesSrcOp;
 // TODO: distribution parameters?
+pub struct RandomBitsSrcOp;
 pub struct UniformSrcOp;
 pub struct NormalSrcOp;
 
@@ -148,58 +149,56 @@ pub trait DequantizeExt<V, W, T, Scale=LinearScale> {
 }
 
 pub trait SrcOpExt<V, Init> {
-  //fn build(init: Init) -> Rc<FSrcOp<SrcOp, V>>;
   fn build(init: Init) -> Val<V>;
 }
 
-//pub fn src<V, Init>(init: Init) -> Rc<FSrcOp<SrcOp, V>> where SrcOp: SrcOpExt<V, Init> {
 pub fn src<V, Init>(init: Init) -> Val<V> where SrcOp: SrcOpExt<V, Init> {
   <SrcOp as SrcOpExt<V, Init>>::build(init)
 }
 
-pub trait ZerosSrcOpExt<V, Init> {
-  //fn build(init: Init) -> Rc<FSrcOp<ZerosSrcOp, V>>;
+pub trait RandomBitsSrcOpExt<V, Init> {
   fn build(init: Init) -> Val<V>;
 }
 
-//pub fn zeros<V, Init>(init: Init) -> Rc<FSrcOp<ZerosSrcOp, V>> where ZerosSrcOp: ZerosSrcOpExt<V, Init> {
+pub fn random_bits<V, Init>(init: Init) -> Val<V> where RandomBitsSrcOp: RandomBitsSrcOpExt<V, Init> {
+  <RandomBitsSrcOp as RandomBitsSrcOpExt<V, Init>>::build(init)
+}
+
+pub trait ZerosSrcOpExt<V, Init> {
+  fn build(init: Init) -> Val<V>;
+}
+
 pub fn zeros<V, Init>(init: Init) -> Val<V> where ZerosSrcOp: ZerosSrcOpExt<V, Init> {
   <ZerosSrcOp as ZerosSrcOpExt<V, Init>>::build(init)
 }
 
 pub trait OnesSrcOpMaybeExt<V> {
-  //fn maybe_build() -> Option<Rc<FSrcOp<OnesSrcOp, V>>>;
   fn maybe_build() -> Option<Val<V>>;
 }
 
 impl<V> OnesSrcOpMaybeExt<V> for OnesSrcOp {
-  //default fn maybe_build() -> Option<Rc<FSrcOp<OnesSrcOp, V>>> {
   default fn maybe_build() -> Option<Val<V>> {
     None
   }
 }
 
 pub trait SumJoinOpMaybeExt<V> {
-  //fn maybe_build(xs_: Vec<Rc<AOp<V>>>) -> Option<Rc<FJoinOp<SumJoinOp, V, V>>>;
   fn maybe_build(xs_: Vec<Val<V>>) -> Option<Val<V>>;
 }
 
 impl<V> SumJoinOpMaybeExt<V> for SumJoinOp {
-  //default fn maybe_build(xs_: Vec<Rc<AOp<V>>>) -> Option<Rc<FJoinOp<SumJoinOp, V, V>>> {
   default fn maybe_build(xs_: Vec<Val<V>>) -> Option<Val<V>> {
     None
   }
 }
 
 impl<V> SumJoinOpMaybeExt<V> for SumJoinOp where SumJoinOp: SumJoinOpExt<V> {
-  //fn maybe_build(xs_: Vec<Rc<AOp<V>>>) -> Option<Rc<FJoinOp<SumJoinOp, V, V>>> {
   fn maybe_build(xs_: Vec<Val<V>>) -> Option<Val<V>> {
     Some(<SumJoinOp as SumJoinOpExt<V>>::build(xs_))
   }
 }
 
 pub trait SumJoinOpExt<V> {
-  //fn build(xs_: Vec<Rc<AOp<V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>>;
   fn build(xs_: Vec<Val<V>>) -> Val<V>;
 }
 

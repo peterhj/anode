@@ -64,8 +64,6 @@ impl<A> GPUMuxFun<A> where A: 'static {
           unimplemented!();
         })
       },
-      //prepare: None,
-      //cleanup: None,
       apply: {
         Box::new(move |txn: Txn, state: RefMut<GPUMuxFun<A>>, _output: OVal<A>| {
           let ctx = implicit_ctx().multi_gpu().unwrap().gpu(state.dev);
@@ -118,12 +116,94 @@ where A: 'static,
           }))
         })
       },
-      //prepare: None,
-      //cleanup: None,
       apply: {
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<A>| {
           if let Some(_) = output.write(txn) {
             panic!("WARNING: SrcOpExt: should never write");
+          }
+        })
+      },
+      tangent: Some({
+        Box::new(move || {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      adjoint: Some({
+        Box::new(move |x_: Val<A>, sink: &mut Sink| {
+          // Do nothing.
+        })
+      }),
+      inplace: None,
+    };
+    let value = (ext.init)();
+    Val::from(Rc::new(FSrcOp::new(SrcOp, ext, value)))
+  }
+}
+
+impl<T, A, F> RandomBitsSrcOpExt<A, Rc<F>> for RandomBitsSrcOp
+//where A: GPUDeviceAsyncMem + AsViewMut + 'static,
+where T: Copy,
+      A: FlatView<FlatViewTy=GPUDeviceArrayView1d<T>>
+          + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>>
+          + GPUDeviceAsyncMem
+          + 'static,
+      F: (Fn(GPUDeviceConn) -> A) + 'static,
+{
+  fn build(init_val: Rc<F>) -> Val<A> {
+    let ext = OpExt{
+      build: {
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      },
+      init: {
+        Box::new(move || {
+        //Box::new(move |state: RefMut<SrcOp>| {
+          println!("DEBUG: RandomBitsSrcOpExt: init gpu...");
+          let section = GPULazyAsyncSection::default();
+          let init_val = init_val.clone();
+          RWVal::from(Arc::new(move |txn: Txn| {
+            println!("DEBUG: RandomBitsSrcOpExt: init gpu: allocating...");
+            let ctx = implicit_ctx().gpu().unwrap();
+            let pool = ctx.pool();
+            let conn = pool.conn();
+            // FIXME: this part really requires auto-wait and auto-registration.
+            let mut section = section.clone();
+            let guard = section.enter(conn.clone());
+            init_val(conn)
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        //let rng_seed = LazyConst::default();
+        let rng_offset = TCell::new(0_u64);
+        let rng = LazyCurandGenerator::default_shared_local();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<A>| {
+          if let Some((cap, token)) = output.write(txn) {
+            println!("DEBUG: RandomBitsSrcOpExt: apply: writing...");
+            let ctx = implicit_ctx().gpu().unwrap();
+            let pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            match cap {
+              WriteCap::Assign => {
+                // TODO
+                let mut y = output.get_mut(txn, token);
+                guard._wait(y.async_data());
+                let mut flat_y = y.flat_view_mut().unwrap();
+                let n_elems = flat_y.size();
+                rng_offset.rollback(txn);
+                let prev_offset = rng_offset.propose(txn, |x| x + n_elems as u64);
+                //rng.borrow_mut().set_seed(rng_seed.set_once(|| implicit_ctx().slow_rng().gen_u64()));
+                rng.borrow_mut().set_offset(prev_offset);
+                flat_y.fill_random(&mut *rng.borrow_mut(), conn);
+              }
+              _ => unimplemented!(),
+            }
           }
         })
       },
@@ -175,8 +255,6 @@ where T: ZeroBits + Copy + 'static,
           }))
         })
       },
-      //prepare: None,
-      //cleanup: None,
       apply: {
         let section = GPULazyAsyncSection::default();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<T>>| {
@@ -239,8 +317,6 @@ where T: ZeroBits + Copy + 'static,
           }))
         })
       },
-      //prepare: None,
-      //cleanup: None,
       apply: {
         let section = GPULazyAsyncSection::default();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray2d<T>>| {
@@ -304,8 +380,6 @@ where T: ZeroBits + Copy + 'static,
           }))
         })
       },
-      //prepare: None,
-      //cleanup: None,
       apply: {
         let section = GPULazyAsyncSection::default();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray4d<T>>| {
@@ -405,8 +479,9 @@ impl ApplyGPUFlatMap<f32> for PositiveClipFlatMapF {
 
 impl<T, A> BuildGPUFlatMapAdj<T, A> for PositiveClipFlatMapF
 where T: Copy,
-      A: FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + 'static
-          + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>> + 'static,
+      A: FlatView<FlatViewTy=GPUDeviceArrayView1d<T>>
+          + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>>
+          + 'static,
       UnitStepFlatMapF: ApplyGPUFlatMap<T>,
 {
   fn build_gpu_adj(&self, adj_y_: Val<A>, y_: Val<A>) -> Val<A> {
@@ -434,8 +509,9 @@ impl ApplyGPUFlatMap<f32> for UnitStepFlatMapF {
 
 impl<T, A> BuildGPUFlatMapAdj<T, A> for UnitStepFlatMapF
 where T: Copy,
-      A: FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + 'static
-          + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>> + 'static,
+      A: FlatView<FlatViewTy=GPUDeviceArrayView1d<T>>
+          + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>>
+          + 'static,
 {
   fn build_gpu_adj(&self, adj_y_: Val<A>, y_: Val<A>) -> Val<A> {
     // TODO
@@ -483,8 +559,9 @@ impl<F> FlatMapFun<F> where F: Clone + 'static {
   pub fn build_gpu_op<T, A>(f_config: F, x_: Val<A>)
       -> Rc<F1Op<Self, A, A>>
   where T: Copy,
-        A: FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + 'static
-            + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>> + 'static,
+        A: FlatView<FlatViewTy=GPUDeviceArrayView1d<T>>
+            + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>>
+            + 'static,
         F: ApplyGPUFlatMap<T> + BuildGPUFlatMapAdj<T, A>,
   {
     let ext = OpExt{
@@ -506,8 +583,6 @@ impl<F> FlatMapFun<F> where F: Clone + 'static {
           unimplemented!();
         })
       },
-      //prepare: None,
-      //cleanup: None,
       apply: {
         let section = GPULazyAsyncSection::default();
         let f_config = f_config.clone();
@@ -606,8 +681,6 @@ impl SumJoinOp {
           }))
         })
       },
-      //prepare: None,
-      //cleanup: None,
       apply: {
         let section = GPULazyAsyncSection::default();
         //let inputs: Vec<_> = inputs_.iter().map(|x_| x_.value()).collect();
@@ -688,8 +761,6 @@ impl SumJoinOp {
           }))
         })
       },
-      //prepare: None,
-      //cleanup: None,
       apply: {
         //let inputs: Vec<_> = inputs_.iter().map(|x_| x_.value()).collect();
         let inputs_ = inputs_.clone();
@@ -846,8 +917,6 @@ impl LinearMapOp {
           }))
         })
       },
-      //prepare: None,
-      //cleanup: None,
       apply: {
         //let input = input_.value();
         //let map = map_.value();

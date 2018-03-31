@@ -72,7 +72,7 @@ pub fn gen_thread_local_uid() -> u64 {
   })
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Txn(u64);
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -675,6 +675,138 @@ pub struct NodeRefMap<T> {
   node_map: HashMap<NodeRef, T>,
 }
 
+pub struct TCell<T> where T: Copy {
+  inner:    RefCell<TCellInner<T>>,
+}
+
+impl<T> TCell<T> where T: Copy {
+  pub fn new(init_value: T) -> Self {
+    TCell{inner: RefCell::new(TCellInner::new(init_value))}
+  }
+
+  pub fn persist(&self, txn: Txn) {
+    self.inner.borrow_mut().persist(txn);
+  }
+
+  pub fn get(&self, txn: Txn) -> T {
+    self.inner.borrow_mut().get(txn)
+  }
+
+  pub fn propose<F>(&self, txn: Txn, f: F) -> T where F: Fn(T) -> T {
+    self.inner.borrow_mut().propose(txn, f)
+  }
+
+  pub fn commit(&self, txn: Txn) {
+    self.inner.borrow_mut().commit(txn);
+  }
+
+  pub fn rollback(&self, txn: Txn) {
+    self.inner.borrow_mut().rollback(txn);
+  }
+}
+
+pub struct TCellInner<T> where T: Copy {
+  init:     T,
+  state:    (Option<Txn>, T),
+  proposal: Option<(Txn, T)>,
+}
+
+impl<T> TCellInner<T> where T: Copy {
+  pub fn new(init_value: T) -> Self {
+    TCellInner{
+      init:     init_value,
+      state:    (None, init_value),
+      proposal: None,
+    }
+  }
+
+  pub fn persist(&mut self, txn: Txn) {
+    // TODO
+    unimplemented!();
+  }
+
+  pub fn get(&mut self, txn: Txn) -> T {
+    if self.proposal.is_some() {
+      self.commit(txn);
+    }
+    assert!(self.proposal.is_none(),
+        "cannot read from TCell which has an uncommitted proposal");
+    let new_read_txn = match self.state.0 {
+      None => true,
+      Some(curr_txn) => if curr_txn < txn {
+        true
+      } else if curr_txn == txn {
+        false
+      } else {
+        panic!("causal violation, probably a bug in your code");
+      }
+    };
+    assert!(!new_read_txn);
+    self.state.1
+  }
+
+  pub fn propose<F>(&mut self, txn: Txn, f: F) -> T where F: FnOnce(T) -> T {
+    let new_write_txn = match self.proposal {
+      None => true,
+      Some((prop_txn, _)) => if prop_txn < txn {
+        true
+      } else if prop_txn == txn {
+        false
+      } else {
+        panic!("causal violation, probably a bug in your code");
+      }
+    };
+    if new_write_txn {
+      self.force_commit();
+      assert!(self.proposal.is_none(),
+          "cannot write to TCell which has a non-rollbackable proposal");
+    }
+    let prev_value = match self.state.0 {
+      None => self.init,
+      Some(curr_txn) => if curr_txn <= txn {
+        self.state.1
+      } else {
+        panic!("causal violation, probably a bug in your code");
+      }
+    };
+    if new_write_txn {
+      let next_value = f(prev_value);
+      //println!("DEBUG: TCell: propose: setting proposal value");
+      //println!("DEBUG: TCell: propose: setting proposal value: {:?} -> {:?}", prev_value, next_value);
+      self.proposal = Some((txn, next_value));
+    }
+    prev_value
+  }
+
+  pub fn rollback(&mut self, txn: Txn) {
+    if let Some(curr_txn) = self.state.0 {
+      assert!(curr_txn != txn,
+          "unable to rollback, as proposal was already committed");
+    }
+    if let Some((prop_txn, _)) = self.proposal {
+      if prop_txn == txn {
+        self.proposal = None;
+      }
+    }
+  }
+
+  pub fn commit(&mut self, txn: Txn) {
+    if let Some((prop_txn, prop_value)) = self.proposal {
+      if prop_txn == txn {
+        self.state = (Some(prop_txn), prop_value);
+        self.proposal = None;
+      }
+    }
+  }
+
+  pub fn force_commit(&mut self) {
+    if let Some((prop_txn, prop_value)) = self.proposal {
+      self.state = (Some(prop_txn), prop_value);
+      self.proposal = None;
+    }
+  }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WriteCap {
   Assign,
@@ -701,7 +833,7 @@ impl<'a> WriteToken<'a> {
   }
 }
 
-pub enum RwBox<A> {
+/*pub enum RwBox<A> {
   Local(Rc<RefCell<A>>),
   Shared(Arc<RwLock<A>>),
 }
@@ -828,7 +960,7 @@ impl<'a, A, T, F> DerefMut for RwMapRefMut<'a, A, T, F> where A: 'a, T: 'a, F: F
   fn deref_mut(&mut self) -> &mut Self::Target {
     (self.map)(&mut *self.ref_)
   }
-}
+}*/
 
 pub struct RWValBuf<T> {
   mode:         WriteMode,

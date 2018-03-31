@@ -31,6 +31,17 @@ fn test_gpu_src_eval_fail() {
 }
 
 #[test]
+fn test_gpu_random_src_eval() {
+  println!();
+  let x: Val<_> = random_bits(Rc::new(|conn: GPUDeviceConn| {
+    GPUDeviceArray1d::<u32>::zeros(1024, conn)
+  }));
+  x.eval(txn());
+  x.eval(txn());
+  x.eval(txn());
+}
+
+#[test]
 fn test_gpu_zeros_eval() {
   println!();
 
