@@ -24,8 +24,8 @@ fn test_stream() {
 #[should_panic]
 fn test_gpu_src_eval_fail() {
   println!();
-  let x: Val<_> = src(Rc::new(|stream: GPUDeviceStreamPool| {
-    GPUDeviceArray1d::<f32>::zeros(1024, stream.conn())
+  let x: Val<_> = src(Rc::new(|conn: GPUDeviceConn| {
+    GPUDeviceArray1d::<f32>::zeros(1024, conn)
   }));
   x.eval(txn());
 }

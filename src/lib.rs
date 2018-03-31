@@ -1269,8 +1269,8 @@ impl<'a, T> FnMut<(WriteCap, &'a mut Any)> for FlatWriter<'a, T> where FlatWrite
 pub struct OpExt<F, V> {
   build:    Box<Fn(Vec<Rc<Any>>) -> Val<V>>,
   init:     Box<Fn() -> RWVal<V>>,
-  prepare:  Option<Box<Fn(Txn, RefMut<F>)>>,
-  cleanup:  Option<Box<Fn(Txn, RefMut<F>)>>,
+  //prepare:  Option<Box<Fn(Txn, RefMut<F>)>>,
+  //cleanup:  Option<Box<Fn(Txn, RefMut<F>)>>,
   apply:    Box<Fn(Txn, RefMut<F>, OVal<V>)>,
   tangent:  Option<Box<Fn() -> Val<V>>>,
   adjoint:  Option<Box<Fn(Val<V>, &mut Sink)>>,

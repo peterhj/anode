@@ -80,8 +80,8 @@ pub struct SumJoinOp;
 pub struct SumJoinAccumulateOp;
 pub struct FlatSumJoinOp;
 pub struct BatchSumJoinOp;
-pub struct FlatMapFun<FlatMapF> { pub f: FlatMapF, }
-pub struct FlatMapInplaceFun<FlatMapF> { pub f: FlatMapF, }
+pub struct FlatMapFun<FlatMapF> { pub f: FlatMapF }
+pub struct FlatMapInplaceFun<FlatMapF> { pub f: FlatMapF }
 pub struct FlatLinearMapFun;
 pub struct InnerProductFun;
 pub struct LinearMapOp;
@@ -93,21 +93,23 @@ pub struct Conv3dLinearMapOp;
 pub struct TransposeConv1dLinearMapOp;
 pub struct TransposeConv2dLinearMapOp;
 pub struct TransposeConv3dLinearMapOp;
-pub struct Resample2dOp<ResampleF> { f: ResampleF, }
+pub struct Resample2dOp<ResampleF> { pub f: ResampleF }
+pub struct ReduceFun<ReduceF> { pub f: ReduceF, /*pub axes: _*/ }
+pub struct BatchNormFun { /*pub axes: _*/ }
 
 pub struct SoftmaxNLLFusedOp;
 pub struct SoftmaxCrossEntropyFusedOp;
 pub struct SoftmaxEntropyFusedOp;
 
-pub struct ModulusFlatMapF;
-pub struct SquareFlatMapF;
-pub struct PositiveClipFlatMapF;
-pub struct UnitStepFlatMapF;
-pub struct LogPositiveClipFlatMapF;
-pub struct PositiveReciprocalFlatMapF;
-pub struct NormalCdfFlatMapF;
-pub struct TanhFlatMapF;
-pub struct RCosh2FlatMapF;
+#[derive(Clone)] pub struct ModulusFlatMapF;
+#[derive(Clone)] pub struct SquareFlatMapF;
+#[derive(Clone)] pub struct PositiveClipFlatMapF;
+#[derive(Clone)] pub struct UnitStepFlatMapF;
+#[derive(Clone)] pub struct LogPositiveClipFlatMapF;
+#[derive(Clone)] pub struct PositiveReciprocalFlatMapF;
+#[derive(Clone)] pub struct NormalCdfFlatMapF;
+#[derive(Clone)] pub struct TanhFlatMapF;
+#[derive(Clone)] pub struct RCosh2FlatMapF;
 
 pub struct Conv2dShape {
   pub axes:     [usize; 2],
@@ -127,6 +129,9 @@ pub struct Pool2dShape {
   pub stride:   [usize; 2],
   pub pad:      [usize; 2],
 }
+
+#[derive(Clone)] pub struct MeanReduceF;
+#[derive(Clone)] pub struct VarianceReduceF;
 
 pub trait PassExt<V> {
   fn pass(&self) -> Rc<F1Op<PassFun, V, V>>;

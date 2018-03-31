@@ -64,8 +64,8 @@ impl<A> GPUMuxFun<A> where A: 'static {
           unimplemented!();
         })
       },
-      prepare: None,
-      cleanup: None,
+      //prepare: None,
+      //cleanup: None,
       apply: {
         Box::new(move |txn: Txn, state: RefMut<GPUMuxFun<A>>, _output: OVal<A>| {
           let ctx = implicit_ctx().multi_gpu().unwrap().gpu(state.dev);
@@ -88,10 +88,11 @@ impl<A> GPUMuxFun<A> where A: 'static {
 }
 
 impl<A, F> SrcOpExt<A, Rc<F>> for SrcOp
-where A: 'static, F: (Fn(GPUDeviceStreamPool) -> A) + 'static,
+where A: 'static,
+      //F: (Fn(GPUDeviceStreamPool) -> A) + 'static,
+      F: (Fn(GPUDeviceConn) -> A) + 'static,
 {
-  //fn build(init_gpu_val: Rc<F>) -> Rc<FSrcOp<SrcOp, A>> {
-  fn build(init_gpu_val: Rc<F>) -> Val<A> {
+  fn build(init_val: Rc<F>) -> Val<A> {
     let ext = OpExt{
       build: {
         Box::new(move |args| {
@@ -103,17 +104,22 @@ where A: 'static, F: (Fn(GPUDeviceStreamPool) -> A) + 'static,
         Box::new(move || {
         //Box::new(move |state: RefMut<SrcOp>| {
           println!("DEBUG: SrcOpExt: init gpu...");
-          let init_gpu_val = init_gpu_val.clone();
+          let init_val = init_val.clone();
+          let section = GPULazyAsyncSection::default();
           RWVal::from(Arc::new(move |txn: Txn| {
             println!("DEBUG: SrcOpExt: init gpu: allocating...");
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
-            init_gpu_val(pool)
+            let conn = pool.conn();
+            // FIXME: this part really requires auto-wait and auto-registration.
+            let mut section = section.clone();
+            let guard = section.enter(conn.clone());
+            init_val(conn)
           }))
         })
       },
-      prepare: None,
-      cleanup: None,
+      //prepare: None,
+      //cleanup: None,
       apply: {
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<A>| {
           if let Some(_) = output.write(txn) {
@@ -141,15 +147,9 @@ where A: 'static, F: (Fn(GPUDeviceStreamPool) -> A) + 'static,
 
 impl<T, F> ZerosSrcOpExt<GPUDeviceArray1d<T>, Rc<F>> for ZerosSrcOp
 where T: ZeroBits + Copy + 'static,
-      //F: (Fn(GPUDeviceStreamPool) -> GPUDeviceArray1d<T>) + 'static,
       F: (Fn(GPUDeviceConn) -> GPUDeviceArray1d<T>) + 'static,
 {
-  //fn build(init_val: Rc<F>) -> Rc<FSrcOp<ZerosSrcOp, GPUDeviceArray1d<T>>> {
   fn build(init_val: Rc<F>) -> Val<GPUDeviceArray1d<T>> {
-    let ctx = implicit_ctx().gpu().unwrap();
-    let pool = ctx.pool();
-    let section = GPUAsyncSection::new(pool.conn());
-    let init_section = section.clone();
     let ext = OpExt{
       build: {
         Box::new(move |args| {
@@ -162,35 +162,34 @@ where T: ZeroBits + Copy + 'static,
         //Box::new(move |state: RefMut<ZerosSrcOp>| {
           println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: init...");
           let init_val = init_val.clone();
-          let section = init_section.clone();
+          let section = GPULazyAsyncSection::default();
           RWVal::from(Arc::new(move |txn: Txn| {
             println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: init: allocating...");
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
             let conn = pool.conn();
             // FIXME: this part really requires auto-wait and auto-registration.
-            let mut guard = section.enter(conn.clone());
+            let mut section = section.clone();
+            let guard = section.enter(conn.clone());
             init_val(conn)
           }))
         })
       },
-      prepare: None,
-      cleanup: None,
+      //prepare: None,
+      //cleanup: None,
       apply: {
+        let section = GPULazyAsyncSection::default();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<T>>| {
           if let Some((cap, token)) = output.write(txn) {
-            //println!("DEBUG: ZeroSrcOp: zeroing (GPUDeviceArray1d)...");
             println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: apply: writing...");
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
             let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
             match cap {
               WriteCap::Assign => {
-                // TODO: Because async sections do not currently use reentrant
-                // mutexes for events, we need to make section entries fairly
-                // fine-grained to avoid nesting as in this case.
                 let mut y = output.get_mut(txn, token);
-                let mut guard = section.enter(conn.clone());
                 guard._wait(y.async_data());
                 y.as_view_mut().set_zeros(conn);
               }
@@ -221,7 +220,6 @@ impl<T, F> ZerosSrcOpExt<GPUDeviceArray2d<T>, Rc<F>> for ZerosSrcOp
 where T: ZeroBits + Copy + 'static,
       F: (Fn(GPUDeviceStreamPool) -> GPUDeviceArray2d<T>) + 'static,
 {
-  //fn build(init_val: Rc<F>) -> Rc<FSrcOp<ZerosSrcOp, GPUDeviceArray2d<T>>> {
   fn build(init_val: Rc<F>) -> Val<GPUDeviceArray2d<T>> {
     let ext = OpExt{
       build: {
@@ -241,19 +239,23 @@ where T: ZeroBits + Copy + 'static,
           }))
         })
       },
-      prepare: None,
-      cleanup: None,
+      //prepare: None,
+      //cleanup: None,
       apply: {
+        let section = GPULazyAsyncSection::default();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray2d<T>>| {
           if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
             let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
             match cap {
               WriteCap::Assign => {
                 // TODO: zero out the whole thing.
                 println!("DEBUG: ZeroSrcOp: zeroing...");
                 let mut y = output.get_mut(txn, token);
+                guard._wait(y.async_data());
                 y.as_view_mut().set_zeros(conn);
               }
               _ => unreachable!(),
@@ -283,7 +285,6 @@ impl<T, F> ZerosSrcOpExt<GPUDeviceArray4d<T>, Rc<F>> for ZerosSrcOp
 where T: ZeroBits + Copy + 'static,
       F: (Fn(GPUDeviceStreamPool) -> GPUDeviceArray4d<T>) + 'static,
 {
-  //fn build(init_val: Rc<F>) -> Rc<FSrcOp<ZerosSrcOp, GPUDeviceArray4d<T>>> {
   fn build(init_val: Rc<F>) -> Val<GPUDeviceArray4d<T>> {
     let ext = OpExt{
       build: {
@@ -303,19 +304,23 @@ where T: ZeroBits + Copy + 'static,
           }))
         })
       },
-      prepare: None,
-      cleanup: None,
+      //prepare: None,
+      //cleanup: None,
       apply: {
+        let section = GPULazyAsyncSection::default();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray4d<T>>| {
           if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
             let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
             match cap {
               WriteCap::Assign => {
                 // TODO: zero out the whole thing.
                 println!("DEBUG: ZeroSrcOp: zeroing...");
                 let mut y = output.get_mut(txn, token);
+                guard._wait(y.async_data());
                 y.as_view_mut().set_zeros(conn);
               }
               WriteCap::Accumulate => {}
@@ -345,6 +350,11 @@ pub trait ApplyGPUFlatMap<T> where T: Copy {
   fn apply_gpu_flat_map(&self, x: GPUDeviceArrayView1d<T>, y: GPUDeviceArrayViewMut1d<T>, conn: GPUDeviceConn);
 }
 
+pub trait BuildGPUFlatMapAdj<T, A> {
+  fn build_gpu_adj(&self, adj_y_: Val<A>, y_: Val<A>) -> Val<A> { unimplemented!(); }
+  fn build_gpu_adj2(&self, adj_y_: Val<A>, x_: Val<A>, y_: Val<A>) -> Val<A> { unimplemented!(); }
+}
+
 impl ApplyGPUFlatMap<f32> for ModulusFlatMapF {
   fn apply_gpu_flat_map(&self, x: GPUDeviceArrayView1d<f32>, y: GPUDeviceArrayViewMut1d<f32>, conn: GPUDeviceConn) {
     assert!(x.size() <= u32::max_value() as _);
@@ -357,6 +367,9 @@ impl ApplyGPUFlatMap<f32> for ModulusFlatMapF {
         conn.cuda_stream().as_mut_ptr(),
     ) };
   }
+}
+
+impl<T, A> BuildGPUFlatMapAdj<T, A> for ModulusFlatMapF {
 }
 
 impl ApplyGPUFlatMap<f32> for SquareFlatMapF {
@@ -373,6 +386,9 @@ impl ApplyGPUFlatMap<f32> for SquareFlatMapF {
   }
 }
 
+impl<T, A> BuildGPUFlatMapAdj<T, A> for SquareFlatMapF {
+}
+
 impl ApplyGPUFlatMap<f32> for PositiveClipFlatMapF {
   fn apply_gpu_flat_map(&self, x: GPUDeviceArrayView1d<f32>, y: GPUDeviceArrayViewMut1d<f32>, conn: GPUDeviceConn) {
     assert!(x.size() <= u32::max_value() as _);
@@ -384,6 +400,21 @@ impl ApplyGPUFlatMap<f32> for PositiveClipFlatMapF {
         conn.cuda_kernel_config() as *const _,
         conn.cuda_stream().as_mut_ptr(),
     ) };
+  }
+}
+
+impl<T, A> BuildGPUFlatMapAdj<T, A> for PositiveClipFlatMapF
+where T: Copy,
+      A: FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + 'static
+          + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>> + 'static,
+      UnitStepFlatMapF: ApplyGPUFlatMap<T>,
+{
+  fn build_gpu_adj(&self, adj_y_: Val<A>, y_: Val<A>) -> Val<A> {
+    // TODO: use fused kernel to avoid an extra allocation.
+    let dy_dx_ = Val::from(FlatMapFun::<UnitStepFlatMapF>::build_gpu_op::<T, A>(UnitStepFlatMapF, y_));
+    //let adj_x = dy_dx_.flat_mult(adj_y);
+    //adj_x
+    unimplemented!();
   }
 }
 
@@ -401,6 +432,19 @@ impl ApplyGPUFlatMap<f32> for UnitStepFlatMapF {
   }
 }
 
+impl<T, A> BuildGPUFlatMapAdj<T, A> for UnitStepFlatMapF
+where T: Copy,
+      A: FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + 'static
+          + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>> + 'static,
+{
+  fn build_gpu_adj(&self, adj_y_: Val<A>, y_: Val<A>) -> Val<A> {
+    // TODO
+    //let adj_x = zeros_like(adj_y_);
+    //adj_x
+    unimplemented!();
+  }
+}
+
 impl ApplyGPUFlatMap<f32> for TanhFlatMapF {
   fn apply_gpu_flat_map(&self, x: GPUDeviceArrayView1d<f32>, y: GPUDeviceArrayViewMut1d<f32>, conn: GPUDeviceConn) {
     assert!(x.size() <= u32::max_value() as _);
@@ -413,6 +457,9 @@ impl ApplyGPUFlatMap<f32> for TanhFlatMapF {
         conn.cuda_stream().as_mut_ptr(),
     ) };
   }
+}
+
+impl<T, A> BuildGPUFlatMapAdj<T, A> for TanhFlatMapF {
 }
 
 impl ApplyGPUFlatMap<f32> for RCosh2FlatMapF {
@@ -429,13 +476,16 @@ impl ApplyGPUFlatMap<f32> for RCosh2FlatMapF {
   }
 }
 
+impl<T, A> BuildGPUFlatMapAdj<T, A> for RCosh2FlatMapF {
+}
+
 impl<F> FlatMapFun<F> where F: Clone + 'static {
   pub fn build_gpu_op<T, A>(f_config: F, x_: Val<A>)
       -> Rc<F1Op<Self, A, A>>
   where T: Copy,
         A: FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + 'static
             + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>> + 'static,
-        F: ApplyGPUFlatMap<T>,
+        F: ApplyGPUFlatMap<T> + BuildGPUFlatMapAdj<T, A>,
   {
     let ext = OpExt{
       build: {
@@ -456,21 +506,29 @@ impl<F> FlatMapFun<F> where F: Clone + 'static {
           unimplemented!();
         })
       },
-      prepare: None,
-      cleanup: None,
+      //prepare: None,
+      //cleanup: None,
       apply: {
+        let section = GPULazyAsyncSection::default();
+        let f_config = f_config.clone();
         let x_ = x_.clone();
-        Box::new(move |txn: Txn, state: RefMut<FlatMapFun<F>>, output: OVal<A>| {
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<A>| {
           let x_ = x_.clone();
           if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
             let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
             match cap {
               WriteCap::Assign => {
                 let x = x_.get(txn);
+                let flat_x = x.flat_view().unwrap();
                 let mut y = output.get_mut(txn, token);
-                state.f.apply_gpu_flat_map(x.flat_view().unwrap(), y.flat_view_mut().unwrap(), conn);
+                let mut flat_y = y.flat_view_mut().unwrap();
+                guard._wait(flat_x.async_data());
+                guard._wait(flat_y.async_data());
+                f_config.apply_gpu_flat_map(flat_x, flat_y, conn);
               }
               _ => unimplemented!(),
             }
@@ -484,16 +542,20 @@ impl<F> FlatMapFun<F> where F: Clone + 'static {
         })
       }),
       adjoint: Some({
-        Box::new(move |x_: Val<A>, sink: &mut Sink| {
-          // TODO
-          unimplemented!();
+        let f_config = f_config.clone();
+        let x_ = x_.clone();
+        Box::new(move |y_: Val<A>, sink: &mut Sink| {
+          let x_ = x_.clone();
+          if let Some(adj_y_) = sink.get_adj::<A>(y_.var()) {
+            let adj_x_ = f_config.build_gpu_adj(y_, adj_y_);
+            sink.put_adj::<A>(x_.var(), adj_x_);
+          }
         })
       }),
       inplace: Some({
         let f_config = f_config.clone();
         Box::new(move |x_: Val<A>| {
-          let op = FlatMapInplaceFun::<F>::build_gpu_op::<T, A>(f_config.clone(), x_);
-          Val::from(op)
+          Val::from(FlatMapInplaceFun::<F>::build_gpu_op::<T, A>(f_config.clone(), x_))
         })
       }),
     };
@@ -544,9 +606,10 @@ impl SumJoinOp {
           }))
         })
       },
-      prepare: None,
-      cleanup: None,
+      //prepare: None,
+      //cleanup: None,
       apply: {
+        let section = GPULazyAsyncSection::default();
         //let inputs: Vec<_> = inputs_.iter().map(|x_| x_.value()).collect();
         let inputs_ = inputs_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<A>| {
@@ -554,14 +617,18 @@ impl SumJoinOp {
             let ctx = implicit_ctx().gpu().unwrap();
             let pool = ctx.pool();
             let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
             let mut y = match output.get_mut(txn, token).flat_view_mut() {
               None => panic!(),
               Some(y) => y,
             };
+            guard._wait(y.async_data());
             let x0 = match inputs_[0].get(txn).flat_view() {
               None => panic!(),
               Some(x) => x,
             };
+            guard._wait(x0.async_data());
             match cap {
               WriteCap::Assign => {
                 y.copy(x0, conn.clone());
@@ -575,6 +642,7 @@ impl SumJoinOp {
                 None => panic!(),
                 Some(x) => x,
               };
+              guard._wait(x.async_data());
               y.add(x, conn.clone());
             }
           }
@@ -620,8 +688,8 @@ impl SumJoinOp {
           }))
         })
       },
-      prepare: None,
-      cleanup: None,
+      //prepare: None,
+      //cleanup: None,
       apply: {
         //let inputs: Vec<_> = inputs_.iter().map(|x_| x_.value()).collect();
         let inputs_ = inputs_.clone();
@@ -778,8 +846,8 @@ impl LinearMapOp {
           }))
         })
       },
-      prepare: None,
-      cleanup: None,
+      //prepare: None,
+      //cleanup: None,
       apply: {
         //let input = input_.value();
         //let map = map_.value();
