@@ -9,7 +9,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
-gpu = ["cuda", "cuda_blas", "cuda_dnn", "gpudevicemem"]
+gpu = ["cuda", "cuda_blas", "cuda_coll", "cuda_dnn", "gpudevicemem"]
 
 [build-dependencies]
 bindgen = "^0.32"
@@ -25,6 +25,7 @@ arithmetic = { path = "../libarithmetic" }
 colorimage = { path = "../colorimage" }
 cuda = { path = "../libcuda", optional = true }
 cuda_blas = { path = "../libcuda_blas", optional = true }
+cuda_coll = { path = "../cuda_coll", optional = true }
 cuda_dnn = { path = "../libcuda_dnn", optional = true }
 float = { path = "../libfloat" }
 gpudevicemem = { path = "../gpudevicemem", optional = true }

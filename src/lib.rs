@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#![feature(const_fn)]
 #![feature(fn_traits)]
 #![feature(get_type_id)]
 //#![feature(optin_builtin_traits)]
@@ -25,6 +26,7 @@ limitations under the License.
 extern crate arithmetic;
 #[cfg(feature = "gpu")] extern crate cuda;
 #[cfg(feature = "gpu")] extern crate cuda_blas;
+#[cfg(feature = "gpu")] extern crate cuda_coll;
 #[cfg(feature = "gpu")] extern crate cuda_dnn;
 //extern crate float;
 #[cfg(feature = "gpu")] extern crate gpudevicemem;

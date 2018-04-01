@@ -14,11 +14,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#[cfg(feature = "gpu")] use cuda_coll::*;
 #[cfg(feature = "gpu")] use gpudevicemem::*;
+use parking_lot::{Mutex};
 
 use std::cell::{RefCell};
 use std::collections::{VecDeque};
 use std::rc::{Rc};
+use std::sync::{Arc};
+
+static NCCL_GROUP_MUTEX: Mutex<()> = Mutex::new(());
 
 thread_local! {
   static IMPLICIT:  RefCell<Vec<Rc<ExecutionCtx + 'static>>> = RefCell::new(vec![]);
@@ -110,22 +115,33 @@ impl ThreadPoolCtx {
 }
 
 #[cfg(feature = "gpu")]
-//#[derive(Clone)]
+pub struct NcclState {
+  comm_id:  NcclUniqueId,
+  comm:     NcclComm,
+  rank:     i32,
+  max_rank: i32,
+}
+
+#[cfg(feature = "gpu")]
 pub struct GPUDeviceCtx {
   // TODO: optional nccl stuff.
-  pool: GPUDeviceStreamPool,
-  //nccl_comm:    Option<NcclComm>,
+  pool:         GPUDeviceStreamPool,
+  nccl_state:   Option<Arc<Mutex<NcclState>>>,
 }
 
 #[cfg(feature = "gpu")]
 impl ExecutionCtx for GPUDeviceCtx {
   fn gpu(&self) -> Option<Rc<GPUDeviceCtx>> {
-    Some(Rc::new(GPUDeviceCtx{pool: self.pool.clone()}))
+    Some(Rc::new(GPUDeviceCtx{
+      pool:         self.pool.clone(),
+      nccl_state:   self.nccl_state.clone(),
+    }))
   }
 
   fn multi_gpu(&self) -> Option<Rc<MultiGPUDeviceCtx>> {
     Some(Rc::new(MultiGPUDeviceCtx{
-      md_pools: vec![self.pool.clone()],
+      md_pools:     vec![self.pool.clone()],
+      nccl_states:  vec![self.nccl_state.clone()],
     }))
   }
 }
@@ -134,7 +150,8 @@ impl ExecutionCtx for GPUDeviceCtx {
 impl Default for GPUDeviceCtx {
   fn default() -> Self {
     GPUDeviceCtx{
-      pool: GPUDeviceStreamPool::new(GPUDeviceId(0)),
+      pool:         GPUDeviceStreamPool::new(GPUDeviceId(0)),
+      nccl_state:   None,
     }
   }
 }
@@ -152,7 +169,8 @@ impl GPUDeviceCtx {
 
 #[cfg(feature = "gpu")]
 pub struct MultiGPUDeviceCtx {
-  md_pools: Vec<GPUDeviceStreamPool>,
+  md_pools:     Vec<GPUDeviceStreamPool>,
+  nccl_states:  Vec<Option<Arc<Mutex<NcclState>>>>,
 }
 
 #[cfg(feature = "gpu")]
@@ -162,7 +180,10 @@ impl ExecutionCtx for MultiGPUDeviceCtx {
   }
 
   fn multi_gpu(&self) -> Option<Rc<MultiGPUDeviceCtx>> {
-    Some(Rc::new(MultiGPUDeviceCtx{md_pools: self.md_pools.clone()}))
+    Some(Rc::new(MultiGPUDeviceCtx{
+      md_pools:     self.md_pools.clone(),
+      nccl_states:  self.nccl_states.clone(),
+    }))
   }
 }
 
@@ -170,11 +191,33 @@ impl ExecutionCtx for MultiGPUDeviceCtx {
 impl Default for MultiGPUDeviceCtx {
   fn default() -> Self {
     let mut md_pools = vec![];
-    for rank in 0 .. GPUDeviceId::count() {
-      md_pools.push(GPUDeviceStreamPool::new(GPUDeviceId(rank as _)));
+    let mut nccl_states  = vec![];
+    let count = GPUDeviceId::count();
+    let comm_id = NcclUniqueId::create().unwrap();
+    for rank in 0 .. count {
+      let pool = GPUDeviceStreamPool::new(GPUDeviceId(rank as _));
+      md_pools.push(pool);
     }
+    NCCL_GROUP_MUTEX.raw_lock();
+    unsafe { NcclComm::group_start() };
+    for rank in 0 .. count {
+      let nccl_state = {
+        let conn = md_pools[rank].conn();
+        let comm = NcclComm::init_rank(rank as _, count as _, comm_id.clone()).unwrap();
+        NcclState{
+          comm_id:  comm_id.clone(),
+          comm:     comm,
+          rank:     rank as _,
+          max_rank: count as _,
+        }
+      };
+      nccl_states.push(Some(Arc::new(Mutex::new(nccl_state))));
+    }
+    unsafe { NcclComm::group_end() };
+    unsafe { NCCL_GROUP_MUTEX.raw_unlock() };
     MultiGPUDeviceCtx{
-      md_pools: md_pools,
+      md_pools:     md_pools,
+      nccl_states:  nccl_states,
     }
   }
 }
@@ -188,7 +231,10 @@ impl MultiGPUDeviceCtx {
   pub fn gpu(&self, device: GPUDeviceId) -> Rc<GPUDeviceCtx> {
     assert!(device.rank() < self.md_pools.len(),
         "MultiGPUDeviceCtx: trying to activate an invalid device");
-    Rc::new(GPUDeviceCtx{pool: self.md_pools[device.rank()].clone()})
+    Rc::new(GPUDeviceCtx{
+      pool:         self.md_pools[device.rank()].clone(),
+      nccl_state:   self.nccl_states[device.rank()].clone(),
+    })
   }
 }
 
