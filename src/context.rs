@@ -25,17 +25,29 @@ use std::sync::{Arc};
 
 static NCCL_GROUP_MUTEX: Mutex<()> = Mutex::new(());
 
+lazy_static! {
+  static ref DEFAULT_CTX: Mutex<Option<DefaultCtx>> = Mutex::new(None);
+}
+
 thread_local! {
   static IMPLICIT:  RefCell<Vec<Rc<ExecutionCtx + 'static>>> = RefCell::new(vec![]);
-  static STREAM:    RefCell<VecDeque<Rc<ExecutionCtx + 'static>>> = RefCell::new(VecDeque::new());
+  //static STREAM:    RefCell<VecDeque<Rc<ExecutionCtx + 'static>>> = RefCell::new(VecDeque::new());
+}
+
+pub fn default_ctx() -> Rc<ExecutionCtx + 'static> {
+  let mut ctx = DEFAULT_CTX.lock();
+  if ctx.is_none() {
+    *ctx = Some(DefaultCtx::default());
+  }
+  Rc::new((*ctx.as_ref().unwrap()).clone())
 }
 
 pub fn implicit_ctx() -> Rc<ExecutionCtx + 'static> {
   IMPLICIT.with(|stack| {
     let mut stack = stack.borrow_mut();
     if stack.is_empty() {
-      // TODO: if there is no context, create a `DefaultCtx`.
-      stack.push(Rc::new(DefaultCtx::default()));
+      // If there is no context, create a `DefaultCtx`.
+      stack.push(default_ctx());
     }
     let ctx = stack.last().unwrap().clone();
     /*STREAM.with(|stream| {
@@ -74,6 +86,9 @@ pub fn push_ctx(ctx: Rc<ExecutionCtx + 'static>) -> CtxGuard {
 
 pub struct CtxGuard;
 
+impl !Send for CtxGuard {}
+impl !Sync for CtxGuard {}
+
 impl Drop for CtxGuard {
   fn drop(&mut self) {
     IMPLICIT.with(|stack| {
@@ -87,12 +102,10 @@ impl Drop for CtxGuard {
 #[cfg(not(feature = "gpu"))]
 pub type DefaultCtx = NullCtx;
 
-//#[cfg(feature = "gpu")]
-//pub type DefaultCtx = GPUDeviceCtx;
 #[cfg(feature = "gpu")]
 pub type DefaultCtx = MultiGPUDeviceCtx;
 
-//#[derive(Clone)]
+#[derive(Clone)]
 pub struct NullCtx;
 
 impl Default for NullCtx {
@@ -104,7 +117,6 @@ impl Default for NullCtx {
 impl ExecutionCtx for NullCtx {
 }
 
-//#[derive(Clone)]
 pub struct ThreadPoolCtx {
 }
 
@@ -168,6 +180,7 @@ impl GPUDeviceCtx {
 }
 
 #[cfg(feature = "gpu")]
+#[derive(Clone)]
 pub struct MultiGPUDeviceCtx {
   md_pools:     Vec<GPUDeviceStreamPool>,
   nccl_states:  Vec<Option<Arc<Mutex<NcclState>>>>,
@@ -253,7 +266,7 @@ pub struct SharedMuxGPUDeviceCtxBuilder {
 
 #[cfg(feature = "gpu")]
 impl SharedMuxGPUDeviceCtxBuilder {
-  pub fn into_ctx(self, device_index: usize) -> GPUDeviceCtx {
+  pub fn into_ctx(self, device: GPUDeviceId) -> GPUDeviceCtx {
     // TODO: create a new stream for this ctx.
     //let nccl_comm = NcclComm::init_rank(self.nccl_uid, self.num_devs, device_index).unwrap();
     /*GPUDeviceCtx{

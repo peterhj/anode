@@ -17,7 +17,6 @@ cc = "*"
 walkdir = "*"
 
 [dependencies]
-#lazy_static = "*"
 rand = "*"
 time = "*"
 arithmetic = { path = "../libarithmetic" }
@@ -29,6 +28,7 @@ cuda_coll = { path = "../cuda_coll", optional = true }
 cuda_dnn = { path = "../libcuda_dnn", optional = true }
 float = { path = "../libfloat" }
 gpudevicemem = { path = "../gpudevicemem", optional = true }
+lazy_static = "*"
 memarray = { path = "../memarray" }
 parking_lot = { version = "*", features = ["nightly"] }
 rng = "*"

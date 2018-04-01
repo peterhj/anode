@@ -17,7 +17,7 @@ limitations under the License.
 #![feature(const_fn)]
 #![feature(fn_traits)]
 #![feature(get_type_id)]
-//#![feature(optin_builtin_traits)]
+#![feature(optin_builtin_traits)]
 #![feature(slice_patterns)]
 #![feature(specialization)]
 //#![feature(trait_alias)]
@@ -30,7 +30,7 @@ extern crate arithmetic;
 #[cfg(feature = "gpu")] extern crate cuda_dnn;
 //extern crate float;
 #[cfg(feature = "gpu")] extern crate gpudevicemem;
-//#[macro_use] extern crate lazy_static;
+#[macro_use] extern crate lazy_static;
 extern crate memarray;
 extern crate parking_lot;
 extern crate rand;
