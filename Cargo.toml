@@ -20,6 +20,7 @@ walkdir = "*"
 rand = "*"
 time = "*"
 arithmetic = { path = "../libarithmetic" }
+arrayidx = { path = "../arrayidx" }
 #async_execution = { path = "../async_execution" }
 colorimage = { path = "../colorimage" }
 cuda = { path = "../libcuda", optional = true }

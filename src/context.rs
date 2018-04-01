@@ -14,12 +14,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+use arrayidx::*;
 #[cfg(feature = "gpu")] use cuda_coll::*;
-#[cfg(feature = "gpu")] use gpudevicemem::*;
+#[cfg(feature = "gpu")] use gpudevicemem::{*, array::*};
+use memarray::*;
 use parking_lot::{Mutex};
 
 use std::cell::{RefCell};
 use std::collections::{VecDeque};
+use std::ptr::{null_mut};
 use std::rc::{Rc};
 use std::sync::{Arc};
 
@@ -248,6 +251,76 @@ impl MultiGPUDeviceCtx {
       pool:         self.md_pools[device.rank()].clone(),
       nccl_state:   self.nccl_states[device.rank()].clone(),
     })
+  }
+
+  pub fn sync_broadcast<T>(&self, src: GPUDeviceArrayView1d<T>, mut dst: Vec<GPUDeviceArrayViewMut1d<T>>, root_dev: GPUDeviceId) where T: NcclDataType {
+    {
+      let conn = self.md_pools[root_dev.rank()].conn();
+      dst[root_dev.rank()].copy(src, conn);
+    }
+    for rank in 0 .. self.num_gpus() {
+      let conn = self.md_pools[rank].conn();
+      conn.sync();
+    }
+    NCCL_GROUP_MUTEX.raw_lock();
+    unsafe { NcclComm::group_start() };
+    for rank in 0 .. self.num_gpus() {
+      let conn = self.md_pools[rank].conn();
+      // FIXME: size checks.
+      if dst[rank].size().is_packed(&dst[rank].stride()) {
+        let mut stream = conn.cuda_stream();
+        let mut nccl_state = self.nccl_states[rank].as_ref().unwrap().lock();
+        let res = unsafe { nccl_state.comm.broadcast(
+            dst[rank].as_mut_dptr(),
+            dst[rank].size(),
+            root_dev.0,
+            stream.as_mut_ptr(),
+        ) };
+        assert!(res.is_ok());
+      } else {
+        unimplemented!();
+      }
+    }
+    unsafe { NcclComm::group_end() };
+    unsafe { NCCL_GROUP_MUTEX.raw_unlock() };
+    for rank in 0 .. self.num_gpus() {
+      let conn = self.md_pools[rank].conn();
+      conn.sync();
+    }
+  }
+
+  pub fn sync_reduce<T>(&self, src: Vec<GPUDeviceArrayView1d<T>>, dst: &mut GPUDeviceArrayViewMut1d<T>, op: NcclReduceOp, root_dev: GPUDeviceId) where T: NcclDataType {
+    for rank in 0 .. self.num_gpus() {
+      let conn = self.md_pools[rank].conn();
+      conn.sync();
+    }
+    NCCL_GROUP_MUTEX.raw_lock();
+    unsafe { NcclComm::group_start() };
+    for rank in 0 .. self.num_gpus() {
+      let conn = self.md_pools[rank].conn();
+      let mut stream = conn.cuda_stream();
+      let mut nccl_state = self.nccl_states[rank].as_ref().unwrap().lock();
+      // FIXME: size checks.
+      if src[rank].size().is_packed(&src[rank].stride()) {
+        let res = unsafe { nccl_state.comm.reduce(
+            src[rank].as_dptr(),
+            if rank == root_dev.rank() { dst.as_mut_dptr() } else { null_mut() },
+            src[rank].size(),
+            op,
+            root_dev.0,
+            stream.as_mut_ptr(),
+        ) };
+        assert!(res.is_ok());
+      } else {
+        unimplemented!();
+      }
+    }
+    unsafe { NcclComm::group_end() };
+    unsafe { NCCL_GROUP_MUTEX.raw_unlock() };
+    for rank in 0 .. self.num_gpus() {
+      let conn = self.md_pools[rank].conn();
+      conn.sync();
+    }
   }
 }
 
