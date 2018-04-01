@@ -30,8 +30,7 @@ cuda_dnn = { path = "../libcuda_dnn", optional = true }
 float = { path = "../libfloat" }
 gpudevicemem = { path = "../gpudevicemem", optional = true }
 memarray = { path = "../memarray" }
-parking_lot = "*"
-#parking_lot = { path = "../parking_lot" }
+parking_lot = { version = "*", features = ["nightly"] }
 rng = "*"
 superdata = { path = "../superdata" }
 typemap = "*"
