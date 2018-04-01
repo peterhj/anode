@@ -253,7 +253,7 @@ impl MultiGPUDeviceCtx {
     })
   }
 
-  pub fn sync_broadcast<T>(&self, src: GPUDeviceArrayView1d<T>, mut dst: Vec<GPUDeviceArrayViewMut1d<T>>, root_dev: GPUDeviceId) where T: NcclDataType {
+  pub fn sync_broadcast_group<T>(&self, src: GPUDeviceArrayView1d<T>, mut dst: Vec<GPUDeviceArrayViewMut1d<T>>, root_dev: GPUDeviceId) where T: NcclDataType {
     {
       let conn = self.md_pools[root_dev.rank()].conn();
       dst[root_dev.rank()].copy(src, conn);
@@ -266,10 +266,10 @@ impl MultiGPUDeviceCtx {
     unsafe { NcclComm::group_start() };
     for rank in 0 .. self.num_gpus() {
       let conn = self.md_pools[rank].conn();
+      let mut stream = conn.cuda_stream();
+      let mut nccl_state = self.nccl_states[rank].as_ref().unwrap().lock();
       // FIXME: size checks.
       if dst[rank].size().is_packed(&dst[rank].stride()) {
-        let mut stream = conn.cuda_stream();
-        let mut nccl_state = self.nccl_states[rank].as_ref().unwrap().lock();
         let res = unsafe { nccl_state.comm.broadcast(
             dst[rank].as_mut_dptr(),
             dst[rank].size(),
@@ -289,7 +289,7 @@ impl MultiGPUDeviceCtx {
     }
   }
 
-  pub fn sync_reduce<T>(&self, src: Vec<GPUDeviceArrayView1d<T>>, dst: &mut GPUDeviceArrayViewMut1d<T>, op: NcclReduceOp, root_dev: GPUDeviceId) where T: NcclDataType {
+  pub fn sync_reduce_group<T>(&self, src: Vec<GPUDeviceArrayView1d<T>>, mut dst: GPUDeviceArrayViewMut1d<T>, op: NcclReduceOp, root_dev: GPUDeviceId) where T: NcclDataType {
     for rank in 0 .. self.num_gpus() {
       let conn = self.md_pools[rank].conn();
       conn.sync();
