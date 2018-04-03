@@ -43,6 +43,7 @@ use analysis::{LivenessAnalysis};
 use ops::{OnesSrcOp, OnesSrcOpMaybeExt, SumJoinOp, SumJoinOpMaybeExt, SumJoinOpExt};
 #[cfg(feature = "gpu")] use ops_gpu::{GPUMuxFun};
 
+use arrayidx::{ArrayIndex};
 #[cfg(feature = "gpu")] use gpudevicemem::{GPUDeviceId};
 use memarray::{Array};
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -723,9 +724,35 @@ pub struct FlatIO<Buf> {
   offset:   usize,
 }
 
+impl<Buf> FlatIO<Buf> {
+  pub fn new(buffer: Buf) -> Self {
+    FlatIO{
+      buffer:   buffer,
+      offset:   0,
+    }
+  }
+
+  pub fn take(self) -> Buf {
+    self.buffer
+  }
+}
+
 pub struct ArrayIO<Arr> where Arr: Array {
   array:    Arr,
   offset:   <Arr as Array>::Idx,
+}
+
+impl<Arr> ArrayIO<Arr> where Arr: Array {
+  pub fn new(array: Arr) -> Self {
+    ArrayIO{
+      array:    array,
+      offset:   <<Arr as Array>::Idx as ArrayIndex>::zero(),
+    }
+  }
+
+  pub fn take(self) -> Arr {
+    self.array
+  }
 }
 
 /*pub struct BatchArrayIO<Arr> where Arr: Array {
