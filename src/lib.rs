@@ -44,6 +44,7 @@ use ops::{OnesSrcOp, OnesSrcOpMaybeExt, SumJoinOp, SumJoinOpMaybeExt, SumJoinOpE
 #[cfg(feature = "gpu")] use ops_gpu::{GPUMuxFun};
 
 #[cfg(feature = "gpu")] use gpudevicemem::{GPUDeviceId};
+use memarray::{Array};
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use typemap::{CloneMap, TypeMap};
 
@@ -722,9 +723,15 @@ pub struct FlatIO<Buf> {
   offset:   usize,
 }
 
-/*pub struct FlatIOBuf {
-  buffer:   Box<Any>,
-  offset:   usize,
+pub struct ArrayIO<Arr> where Arr: Array {
+  array:    Arr,
+  offset:   <Arr as Array>::Idx,
+}
+
+/*pub struct BatchArrayIO<Arr> where Arr: Array {
+  array:    Arr,
+  offset:   <Arr as Array>::Idx,
+  eloffset: usize,
 }*/
 
 pub struct TCell<T> where T: Copy {

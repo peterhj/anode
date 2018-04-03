@@ -20,6 +20,7 @@ use ffi::routines_gpu::*;
 use ops::*;
 
 use arithmetic::*;
+use arrayidx::*;
 use cuda_blas::*;
 use cuda_dnn::*;
 use gpudevicemem::*;
@@ -70,6 +71,136 @@ impl<T> FlatIO<MemArray1d<T>> where T: Copy {
     slice
   }
 }
+
+impl<T> ArrayIO<MemArray1d<T>> where T: Copy {
+  pub fn next_view(&mut self, size: usize) -> MemArrayView1d<T> {
+    let prev_offset = self.offset;
+    let next_offset = self.offset + size;
+    let slice = self.array.as_view().view(prev_offset .. next_offset);
+    self.offset = next_offset;
+    slice
+  }
+
+  pub fn next_view_mut(&mut self, size: usize) -> MemArrayViewMut1d<T> {
+    let prev_offset = self.offset;
+    let next_offset = self.offset + size;
+    let slice = self.array.as_view_mut().view_mut(prev_offset .. next_offset);
+    self.offset = next_offset;
+    slice
+  }
+}
+
+impl<T> ArrayIO<MemArray2d<T>> where T: Copy {
+  pub fn next_view(&mut self, size: [usize; 2]) -> MemArrayView2d<T> {
+    let prev_offset = self.offset;
+    let next_offset = self.offset.index_add(&size);
+    let slice = self.array.as_view().view(
+        prev_offset[0] .. next_offset[0],
+        prev_offset[1] .. next_offset[1],
+    );
+    self.offset = next_offset;
+    slice
+  }
+
+  pub fn next_view_mut(&mut self, size: [usize; 2]) -> MemArrayViewMut2d<T> {
+    let prev_offset = self.offset;
+    let next_offset = self.offset.index_add(&size);
+    let slice = self.array.as_view_mut().view_mut(
+        prev_offset[0] .. next_offset[0],
+        prev_offset[1] .. next_offset[1],
+    );
+    self.offset = next_offset;
+    slice
+  }
+}
+
+impl<T> ArrayIO<MemArray3d<T>> where T: Copy {
+  pub fn next_view(&mut self, size: [usize; 3]) -> MemArrayView3d<T> {
+    let prev_offset = self.offset;
+    let next_offset = self.offset.index_add(&size);
+    let slice = self.array.as_view().view(
+        prev_offset[0] .. next_offset[0],
+        prev_offset[1] .. next_offset[1],
+        prev_offset[2] .. next_offset[2],
+    );
+    self.offset = next_offset;
+    slice
+  }
+
+  pub fn next_view_mut(&mut self, size: [usize; 3]) -> MemArrayViewMut3d<T> {
+    let prev_offset = self.offset;
+    let next_offset = self.offset.index_add(&size);
+    let slice = self.array.as_view_mut().view_mut(
+        prev_offset[0] .. next_offset[0],
+        prev_offset[1] .. next_offset[1],
+        prev_offset[2] .. next_offset[2],
+    );
+    self.offset = next_offset;
+    slice
+  }
+}
+
+impl<T> ArrayIO<MemArray4d<T>> where T: Copy {
+  pub fn next_view(&mut self, size: [usize; 4]) -> MemArrayView4d<T> {
+    let prev_offset = self.offset;
+    let next_offset = self.offset.index_add(&size);
+    let slice = self.array.as_view().view(
+        prev_offset[0] .. next_offset[0],
+        prev_offset[1] .. next_offset[1],
+        prev_offset[2] .. next_offset[2],
+        prev_offset[3] .. next_offset[3],
+    );
+    self.offset = next_offset;
+    slice
+  }
+
+  pub fn next_view_mut(&mut self, size: [usize; 4]) -> MemArrayViewMut4d<T> {
+    let prev_offset = self.offset;
+    let next_offset = self.offset.index_add(&size);
+    let slice = self.array.as_view_mut().view_mut(
+        prev_offset[0] .. next_offset[0],
+        prev_offset[1] .. next_offset[1],
+        prev_offset[2] .. next_offset[2],
+        prev_offset[3] .. next_offset[3],
+    );
+    self.offset = next_offset;
+    slice
+  }
+}
+
+/*impl<T> BatchArrayIO<OuterBatchMemArray3d<T>> where T: Copy {
+  pub fn next_view(&mut self, size: [usize; 3], batch_sz: usize) -> MemArrayView4d<T> {
+    let prev_offset = self.offset;
+    let next_offset = self.offset.index_add(&size);
+    let prev_eloffset = self.eloffset;
+    let next_eloffset = self.eloffset + batch_sz;
+    let slice = self.array.as_view().view(
+        prev_offset[0] .. next_offset[0],
+        prev_offset[1] .. next_offset[1],
+        prev_offset[2] .. next_offset[2],
+        prev_eloffset .. next_eloffset,
+    );
+    self.offset = next_offset;
+    self.eloffset = next_eloffset;
+    slice
+  }
+
+  pub fn next_view_mut(&mut self, size: [usize; 3], batch_sz: usize) -> MemArrayViewMut4d<T> {
+    let prev_offset = self.offset;
+    let next_offset = self.offset.index_add(&size);
+    let prev_eloffset = self.eloffset;
+    let next_eloffset = self.eloffset + batch_sz;
+    let slice = self.array.as_view_mut().view_mut(
+        prev_offset[0] .. next_offset[0],
+        prev_offset[1] .. next_offset[1],
+        prev_offset[2] .. next_offset[2],
+        prev_eloffset .. next_eloffset,
+    );
+    self.offset = next_offset;
+    self.eloffset = next_eloffset;
+    slice
+  }
+}*/
 
 impl<T> FlatIO<GPUDeviceArray1d<T>> where T: Copy {
   pub fn next_slice(&mut self, size: usize) -> GPUDeviceArrayView1d<T> {
