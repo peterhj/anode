@@ -24,9 +24,9 @@ arrayidx = { path = "../arrayidx" }
 #async_execution = { path = "../async_execution" }
 colorimage = { path = "../colorimage" }
 cuda = { path = "../libcuda", optional = true }
-cuda_blas = { path = "../libcuda_blas", optional = true }
+cuda_blas = { path = "../cuda_blas", optional = true }
 cuda_coll = { path = "../cuda_coll", optional = true }
-cuda_dnn = { path = "../libcuda_dnn", optional = true }
+cuda_dnn = { path = "../cuda_dnn", optional = true }
 float = { path = "../libfloat" }
 gpudevicemem = { path = "../gpudevicemem", optional = true }
 lazy_static = "*"

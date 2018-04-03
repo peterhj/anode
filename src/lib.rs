@@ -39,7 +39,8 @@ extern crate rng;
 extern crate typemap;
 
 use analysis::{LivenessAnalysis};
-use ops::{MemIoReader, MemIoWriter, OnesSrcOp, OnesSrcOpMaybeExt, SumJoinOp, SumJoinOpMaybeExt, SumJoinOpExt};
+//use ops::{MemIoReader, MemIoWriter};
+use ops::{OnesSrcOp, OnesSrcOpMaybeExt, SumJoinOp, SumJoinOpMaybeExt, SumJoinOpExt};
 #[cfg(feature = "gpu")] use ops_gpu::{GPUMuxFun};
 
 #[cfg(feature = "gpu")] use gpudevicemem::{GPUDeviceId};
@@ -195,11 +196,9 @@ pub trait Walk {
   fn outdegree(&self) -> usize;
 }
 
-pub trait IO {
-  //fn _load(&self, txn: Txn, writer: &mut Any);
-  //fn _store(&self, txn: Txn, reader: &mut Any);
-  fn _deserialize(&self, txn: Txn, writer: &mut FnMut(WriteCap, &mut Any));
-  fn _serialize(&self, txn: Txn, reader: &mut FnMut(&Any));
+pub trait IOVal {
+  fn _deserialize(&self, txn: Txn, rvar: RVar, dst: &mut Any);
+  fn _serialize(&self, txn: Txn, xvar: RWVar, src: &mut Any);
 }
 
 pub trait AnalysisTags {
@@ -208,7 +207,7 @@ pub trait AnalysisTags {
 
 pub trait ANode {
   fn _walk(&self) -> &Walk;
-  fn _io(&self) -> &IO;
+  fn _io(&self) -> &IOVal;
   fn _analysis_tags(&self) -> &AnalysisTags { unimplemented!(); }
 
   fn _pred_fwd(&self, pred_buf: &mut Vec<Node>) { unimplemented!(); }
@@ -355,6 +354,17 @@ impl Node {
 
   pub fn var(&self) -> RWVar {
     self.xvar
+  }
+}
+
+impl IONode for Node {
+  fn deserialize(&self, txn: Txn, dst: &mut Any) {
+    // FIXME
+    self.node._io()._deserialize(txn, self.rvar, dst);
+  }
+
+  fn serialize(&self, txn: Txn, src: &mut Any) {
+    self.node._io()._serialize(txn, self.xvar, src);
   }
 }
 
@@ -677,6 +687,45 @@ pub struct VarCollection {
 pub struct NodeRefMap<T> {
   node_map: HashMap<NodeRef, T>,
 }
+
+pub struct NodeVec {
+  nodes:    Vec<Node>,
+}
+
+impl NodeVec {
+  pub fn from(nodes: Vec<Node>) -> Self {
+    NodeVec{nodes: nodes}
+  }
+}
+
+impl IONode for NodeVec {
+  fn deserialize(&self, txn: Txn, dst: &mut Any) {
+    for node in self.nodes.iter() {
+      node.deserialize(txn, dst);
+    }
+  }
+
+  fn serialize(&self, txn: Txn, src: &mut Any) {
+    for node in self.nodes.iter() {
+      node.serialize(txn, src);
+    }
+  }
+}
+
+pub trait IONode {
+  fn deserialize(&self, txn: Txn, dst: &mut Any);
+  fn serialize(&self, txn: Txn, src: &mut Any);
+}
+
+pub struct FlatIO<Buf> {
+  buffer:   Buf,
+  offset:   usize,
+}
+
+/*pub struct FlatIOBuf {
+  buffer:   Box<Any>,
+  offset:   usize,
+}*/
 
 pub struct TCell<T> where T: Copy {
   inner:    RefCell<TCellInner<T>>,
@@ -1013,8 +1062,9 @@ pub struct RWVal<T> {
   borrow:   (),
 }
 
-impl<T> IO for RWVal<T> where T: 'static {
-  fn _deserialize(&self, txn: Txn, write: &mut FnMut(WriteCap, &mut Any)) {
+impl<T> IOVal for RWVal<T> where T: 'static {
+  //fn _deserialize(&self, txn: Txn, write: &mut FnMut(WriteCap, &mut Any)) {
+  default fn _deserialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
     // TODO
     unimplemented!();
     /*if let Some((cap, token)) = self.write(txn) {
@@ -1023,7 +1073,8 @@ impl<T> IO for RWVal<T> where T: 'static {
     }*/
   }
 
-  fn _serialize(&self, txn: Txn, read: &mut FnMut(&Any)) {
+  //fn _serialize(&self, txn: Txn, read: &mut FnMut(&Any)) {
+  default fn _serialize(&self, txn: Txn, xvar: RWVar, src: &mut Any) {
     // TODO
     unimplemented!();
     /*let buf = self.get(txn);
@@ -1305,7 +1356,7 @@ impl<T> RWVal<T> where T: 'static {
   }*/
 }
 
-pub trait IoReadable<'a>: Sized + 'static {
+/*pub trait IoReadable<'a>: Sized + 'static {
   fn read(&'a self, reader: &mut IoReader<'a>) {
     reader.read(self);
   }
@@ -1399,7 +1450,7 @@ impl<'a, T> FnMut<(WriteCap, &'a mut Any)> for FlatWriter<'a, T> where FlatWrite
   extern "rust-call" fn call_mut(&mut self, args: (WriteCap, &'a mut Any)) -> () {
     self.write(args.0, args.1);
   }
-}
+}*/
 
 pub struct OpExt<F, V> {
   build:    Box<Fn(Vec<Rc<Any>>) -> Val<V>>,
@@ -1474,12 +1525,12 @@ impl<F, V> FSrcOp<F, V> {
   }
 }
 
-impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IO + 'static {
+impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
 
-  fn _io(&self) -> &IO {
+  fn _io(&self) -> &IOVal {
     &self.val
   }
 
@@ -1560,7 +1611,7 @@ impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IO + 'static {
   }*/
 }
 
-impl<F, V> AOp<V> for FSrcOp<F, V> where RWVal<V>: IO + 'static {
+impl<F, V> AOp<V> for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
   fn _make_value(&self) -> RWVal<V> {
     (self.ext.init)()
     //(self.ext.init)(self.fun.borrow_mut())
@@ -1643,12 +1694,12 @@ impl<F, V1, W> F1Op<F, V1, W> {
   }
 }
 
-impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IO + 'static {
+impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'static {
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
 
-  fn _io(&self) -> &IO {
+  fn _io(&self) -> &IOVal {
     &self.y
   }
 
@@ -1719,7 +1770,7 @@ impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IO + 'stati
   }
 }
 
-impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IO + 'static {
+impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'static {
   fn _make_value(&self) -> RWVal<W> {
     (self.ext.init)()
     //(self.ext.init)(self.fun.borrow_mut())
@@ -1783,7 +1834,7 @@ impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IO + 'stat
   }
 }
 
-impl<F, V> AOp<V> for F1Op<F, V, V> where V: 'static, RWVal<V>: IO + 'static {
+impl<F, V> AOp<V> for F1Op<F, V, V> where V: 'static, RWVal<V>: IOVal + 'static {
   fn _inplace(&self) -> Option<Val<V>> {
     match self.ext.inplace {
       None => None,
@@ -1822,12 +1873,12 @@ impl<F, V1, V2, W> F2Op<F, V1, V2, W> {
   }
 }
 
-impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, RWVal<W>: IO + 'static {
+impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, RWVal<W>: IOVal + 'static {
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
 
-  fn _io(&self) -> &IO {
+  fn _io(&self) -> &IOVal {
     &self.y
   }
 
@@ -1904,7 +1955,7 @@ impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, 
   }
 }
 
-impl<F, V1, V2, W> AOp<W> for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, RWVal<W>: IO + 'static {
+impl<F, V1, V2, W> AOp<W> for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, RWVal<W>: IOVal + 'static {
   fn _make_value(&self) -> RWVal<W> {
     (self.ext.init)()
     //(self.ext.init)(self.fun.borrow_mut())
@@ -1979,12 +2030,12 @@ impl<F, V1, V2, V3, W> F3Op<F, V1, V2, V3, W> {
   }
 }
 
-impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 'static, V3: 'static, RWVal<W>: IO + 'static {
+impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 'static, V3: 'static, RWVal<W>: IOVal + 'static {
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
 
-  fn _io(&self) -> &IO {
+  fn _io(&self) -> &IOVal {
     &self.y
   }
 
@@ -2067,7 +2118,7 @@ impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: '
   }
 }
 
-impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 'static, V3: 'static, RWVal<W>: IO + 'static {
+impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 'static, V3: 'static, RWVal<W>: IOVal + 'static {
   fn _make_value(&self) -> RWVal<W> {
     (self.ext.init)()
     //(self.ext.init)(self.fun.borrow_mut())
@@ -2140,12 +2191,12 @@ impl<F, V, W> FJoinOp<F, V, W> {
   }
 }
 
-impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IO + 'static {
+impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'static {
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
 
-  fn _io(&self) -> &IO {
+  fn _io(&self) -> &IOVal {
     &self.y
   }
 
@@ -2228,7 +2279,7 @@ impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IO + 'stati
   }
 }
 
-impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IO + 'static {
+impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'static {
   fn _make_value(&self) -> RWVal<W> {
     (self.ext.init)()
     //(self.ext.init)(self.fun.borrow_mut())
@@ -2282,7 +2333,7 @@ impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IO + 'stat
   }
 }
 
-impl<F, V> AOp<V> for FJoinOp<F, V, V> where RWVal<V>: IO + 'static {
+impl<F, V> AOp<V> for FJoinOp<F, V, V> where RWVal<V>: IOVal + 'static {
   fn _inplace(&self) -> Option<Val<V>> {
     match self.ext.inplace {
       None => {}

@@ -20,7 +20,7 @@ use std::marker::{PhantomData};
 use std::ops::{DerefMut};
 use std::rc::{Rc};
 
-pub trait MemIoReader<'a> {
+/*pub trait MemIoReader<'a> {
   fn read_mem(&mut self, src: &'a Any) -> Option<()>;
 }
 
@@ -56,7 +56,7 @@ impl<'a, Mem, T> MemIoWriter<'a> for FlatWriter<'a, Mem> where Mem: DerefMut<Tar
       None
     }
   }
-}
+}*/
 
 pub struct PassFun;
 pub struct FreezeFun;
