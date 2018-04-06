@@ -65,8 +65,13 @@ pub mod context;
 pub mod ffi;
 pub mod ops;
 #[cfg(feature = "gpu")] pub mod ops_gpu;
+#[cfg(feature = "mpi")] pub mod ops_mpi;
 
-thread_local!(static UID_COUNTER: Cell<u64> = Cell::new(0));
+thread_local! {
+  static UID_COUNTER: Cell<u64> = Cell::new(0);
+
+  static WRAP_VAL_STACK: RefCell<Vec<Rc<Any>>> = RefCell::new(Vec::new());
+}
 
 pub fn gen_thread_local_uid() -> u64 {
   UID_COUNTER.with(|counter| {
@@ -256,6 +261,36 @@ pub trait AOp<V>: ANode {
   fn _inplace(&self) -> Option<Val<V>> { None }
 }
 
+pub fn push_wrapper<Wrap>(wrapper: Wrap) -> WrapGuard where Wrap: Any + 'static {
+  WRAP_VAL_STACK.with(|stack| {
+    let mut stack = stack.borrow_mut();
+    stack.push(Rc::new(wrapper));
+    WrapGuard
+  })
+}
+
+pub struct WrapGuard;
+
+impl !Send for WrapGuard {}
+impl !Sync for WrapGuard {}
+
+impl Drop for WrapGuard {
+  fn drop(&mut self) {
+    WRAP_VAL_STACK.with(|stack| {
+      let mut stack = stack.borrow_mut();
+      assert!(stack.pop().is_some());
+    });
+  }
+}
+
+pub struct GPUMuxWrap {
+  pub dev:  GPUDeviceId,
+}
+
+/*pub trait WrapVal: Any {
+  fn wrap<V>(&self, val: Val<V>) -> Val<V> where Self: 'static;
+}*/
+
 pub trait WrapValExt<V> {
   //fn substitute(&self) -> Option<Val<V>>;
   fn inplace(&self) -> Option<Val<V>>;
@@ -390,7 +425,7 @@ impl<V> Clone for Val<V> {
 }
 
 impl<V> Val<V> where V: 'static {
-  pub fn from<Op>(op: Rc<Op>) -> Self where Op: AOp<V> + 'static {
+  pub fn from_nowrap<Op>(op: Rc<Op>) -> Self where Op: AOp<V> + 'static {
     let rvar = RVar::default();
     Val{
       node: op.clone(),
@@ -398,6 +433,31 @@ impl<V> Val<V> where V: 'static {
       xvar: RWVar(rvar),
       rvar: rvar,
     }
+  }
+
+  pub fn from<Op>(op: Rc<Op>) -> Self where Op: AOp<V> + 'static {
+    let rvar = RVar::default();
+    let val = Val{
+      node: op.clone(),
+      op:   op,
+      xvar: RWVar(rvar),
+      rvar: rvar,
+    };
+    let val = WRAP_VAL_STACK.with(|stack| {
+      let stack = stack.borrow();
+      if stack.is_empty() {
+        val
+      } else {
+        let wrapper = stack[stack.len() - 1].clone();
+        if let Some(wrapper) = wrapper.downcast_ref::<GPUMuxWrap>() {
+          val.gpu_mux(wrapper.dev)
+        } else {
+          // TODO: warn on unsupported wrapper.
+          val
+        }
+      }
+    });
+    val
   }
 
   pub fn to_node(&self) -> Node {
@@ -508,8 +568,17 @@ impl<V> Val<V> where V: 'static {
     self.op._value().get_mut(txn, self.xvar, token)
   }
 
-  pub fn tangent(&self) -> Val<V> { unimplemented!(); }
-  pub fn adjoint(&self, sink: &mut Sink) -> Val<V> { unimplemented!(); }
+  pub fn _make_value(&self) -> RWVal<V> {
+    self.op._make_value()
+  }
+
+  pub fn tangent(&self) -> Val<V> {
+    unimplemented!();
+  }
+
+  pub fn adjoint(&self, sink: &mut Sink) -> Val<V> {
+    unimplemented!();
+  }
 }
 
 pub struct OVal<V> {
@@ -1488,7 +1557,7 @@ impl<'a, T> FnMut<(WriteCap, &'a mut Any)> for FlatWriter<'a, T> where FlatWrite
 
 pub struct OpExt<F, V> {
   build:    Box<Fn(Vec<Rc<Any>>) -> Val<V>>,
-  init:     Box<Fn() -> RWVal<V>>,
+  make_val: Box<Fn(RefMut<F>) -> RWVal<V>>,
   //prepare:  Option<Box<Fn(Txn, RefMut<F>)>>,
   //cleanup:  Option<Box<Fn(Txn, RefMut<F>)>>,
   apply:    Box<Fn(Txn, RefMut<F>, OVal<V>)>,
@@ -1512,9 +1581,23 @@ pub struct OpExt<F, V> {
   }
 }*/
 
-impl<V> WrapValExt<V> for Rc<AOp<V>> where V: 'static {
+/*impl<V> WrapValExt<V> for Rc<AOp<V>> where V: 'static {
   fn inplace(&self) -> Option<Val<V>> {
     self._inplace()
+  }
+}*/
+
+impl<V> WrapValExt<V> for Val<V> where V: 'static {
+  fn inplace(&self) -> Option<Val<V>> {
+    self._op()._inplace()
+  }
+}
+
+#[cfg(not(feature = "gpu"))]
+impl<V> GPUWrapValExt<V> for Val<V> where V: 'static {
+  fn gpu_mux(&self, _dev: GPUDeviceId) -> Val<V> {
+    // TODO: cant quite just impl a no-op, since it still uses the
+    // `GPUDeviceId` type.
   }
 }
 
@@ -1535,7 +1618,7 @@ impl<V> GPUWrapValExt<V> for Val<V> where V: 'static {
       ctrl: ctrl,
       val:  self._op()._value()._clone(),
     });
-    Val::from(op)
+    Val::from_nowrap(op)
   }
 }
 
@@ -1548,11 +1631,15 @@ pub struct FSrcOp<F, V> {
 }
 
 impl<F, V> FSrcOp<F, V> {
-  pub fn new(fun: F, ext: OpExt<F, V>, val: RWVal<V>) -> Self {
+  //pub fn new(fun: F, ext: OpExt<F, V>, val: RWVal<V>) -> Self {
+  pub fn new(fun: F, ext: OpExt<F, V>) -> Self {
+    let state = RefCell::new(fun);
+    let val = (ext.make_val)(state.borrow_mut());
     FSrcOp{
       base: OpBase::default(),
       ext:  ext,
-      fun:  RefCell::new(fun),
+      //fun:  RefCell::new(fun),
+      fun:  state,
       ctrl: vec![],
       val:  val,
     }
@@ -1647,8 +1734,8 @@ impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
 
 impl<F, V> AOp<V> for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
   fn _make_value(&self) -> RWVal<V> {
-    (self.ext.init)()
-    //(self.ext.init)(self.fun.borrow_mut())
+    //(self.ext.make_val)()
+    (self.ext.make_val)(self.fun.borrow_mut())
   }
 
   fn _value(&self) -> &RWVal<V> {
@@ -1716,11 +1803,15 @@ pub struct F1Op<F, V1, W> {
 }
 
 impl<F, V1, W> F1Op<F, V1, W> {
-  pub fn new(fun: F, ext: OpExt<F, W>, x_: Val<V1>, y: RWVal<W>) -> Self {
+  //pub fn new(fun: F, ext: OpExt<F, W>, x_: Val<V1>, y: RWVal<W>) -> Self {
+  pub fn new(fun: F, ext: OpExt<F, W>, x_: Val<V1>) -> Self {
+    let state = RefCell::new(fun);
+    let y = (ext.make_val)(state.borrow_mut());
     F1Op{
       base: OpBase::default(),
       ext:  ext,
-      fun:  RefCell::new(fun),
+      //fun:  RefCell::new(fun),
+      fun:  state,
       ctrl: vec![],
       x_:   x_,
       y:    y,
@@ -1806,8 +1897,8 @@ impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'st
 
 impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'static {
   fn _make_value(&self) -> RWVal<W> {
-    (self.ext.init)()
-    //(self.ext.init)(self.fun.borrow_mut())
+    //(self.ext.make_val)()
+    (self.ext.make_val)(self.fun.borrow_mut())
   }
 
   fn _value(&self) -> &RWVal<W> {
@@ -1894,11 +1985,15 @@ pub struct F2Op<F, V1, V2, W> {
 }
 
 impl<F, V1, V2, W> F2Op<F, V1, V2, W> {
-  pub fn new(fun: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>, y: RWVal<W>) -> Self {
+  //pub fn new(fun: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>, y: RWVal<W>) -> Self {
+  pub fn new(fun: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>) -> Self {
+    let state = RefCell::new(fun);
+    let y = (ext.make_val)(state.borrow_mut());
     F2Op{
       base: OpBase::default(),
       ext:  ext,
-      fun:  RefCell::new(fun),
+      //fun:  RefCell::new(fun),
+      fun:  state,
       ctrl: vec![],
       x1_:  x1_,
       x2_:  x2_,
@@ -1991,8 +2086,8 @@ impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, 
 
 impl<F, V1, V2, W> AOp<W> for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, RWVal<W>: IOVal + 'static {
   fn _make_value(&self) -> RWVal<W> {
-    (self.ext.init)()
-    //(self.ext.init)(self.fun.borrow_mut())
+    //(self.ext.make_val)()
+    (self.ext.make_val)(self.fun.borrow_mut())
   }
 
   fn _value(&self) -> &RWVal<W> {
@@ -2050,11 +2145,15 @@ pub struct F3Op<F, V1, V2, V3, W> {
 }
 
 impl<F, V1, V2, V3, W> F3Op<F, V1, V2, V3, W> {
-  pub fn new(fun: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>, x3_: Val<V3>, y: RWVal<W>) -> Self {
+  //pub fn new(fun: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>, x3_: Val<V3>, y: RWVal<W>) -> Self {
+  pub fn new(fun: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>, x3_: Val<V3>) -> Self {
+    let state = RefCell::new(fun);
+    let y = (ext.make_val)(state.borrow_mut());
     F3Op{
       base: OpBase::default(),
       ext:  ext,
-      fun:  RefCell::new(fun),
+      //fun:  RefCell::new(fun),
+      fun:  state,
       ctrl: vec![],
       x1_:  x1_,
       x2_:  x2_,
@@ -2154,8 +2253,8 @@ impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: '
 
 impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 'static, V3: 'static, RWVal<W>: IOVal + 'static {
   fn _make_value(&self) -> RWVal<W> {
-    (self.ext.init)()
-    //(self.ext.init)(self.fun.borrow_mut())
+    //(self.ext.make_val)()
+    (self.ext.make_val)(self.fun.borrow_mut())
   }
 
   fn _value(&self) -> &RWVal<W> {
@@ -2213,11 +2312,15 @@ pub struct FJoinOp<F, V, W> {
 }
 
 impl<F, V, W> FJoinOp<F, V, W> {
-  pub fn new(fun: F, ext: OpExt<F, W>, xs_: Vec<Val<V>>, y: RWVal<W>) -> Self {
+  //pub fn new(fun: F, ext: OpExt<F, W>, xs_: Vec<Val<V>>, y: RWVal<W>) -> Self {
+  pub fn new(fun: F, ext: OpExt<F, W>, xs_: Vec<Val<V>>) -> Self {
+    let state = RefCell::new(fun);
+    let y = (ext.make_val)(state.borrow_mut());
     FJoinOp{
       base: OpBase::default(),
       ext:  ext,
-      fun:  RefCell::new(fun),
+      //fun:  RefCell::new(fun),
+      fun:  state,
       ctrl: vec![],
       xs_:  xs_,
       y:    y,
@@ -2315,8 +2418,8 @@ impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'st
 
 impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'static {
   fn _make_value(&self) -> RWVal<W> {
-    (self.ext.init)()
-    //(self.ext.init)(self.fun.borrow_mut())
+    //(self.ext.make_val)()
+    (self.ext.make_val)(self.fun.borrow_mut())
   }
 
   fn _value(&self) -> &RWVal<W> {

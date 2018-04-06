@@ -76,7 +76,7 @@ fn test_gpu_zeros_eval() {
   x.eval(t);
 
   {
-    let ctx = implicit_ctx().gpu().unwrap();
+    let ctx = implicit_ctx().gpu();
     let stream = ctx.pool();
     //let x = x.value();
     let v = x.get(t);

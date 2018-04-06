@@ -22,6 +22,8 @@ use parking_lot::{Mutex};
 
 use std::cell::{RefCell};
 use std::collections::{VecDeque};
+#[cfg(feature = "mpi")] use std::env;
+#[cfg(feature = "mpi")] use std::ffi::{CString};
 use std::ptr::{null_mut};
 use std::rc::{Rc};
 use std::sync::{Arc};
@@ -74,9 +76,42 @@ pub fn implicit_ctx() -> Rc<ExecutionCtx + 'static> {
 
 pub trait ExecutionCtx {
   fn synchronize(&self) { unimplemented!(); }
-  fn thread_pool(&self) -> Option<Rc<ThreadPoolCtx>> { None }
-  #[cfg(feature = "gpu")] fn gpu(&self) -> Option<Rc<GPUDeviceCtx>> { None }
-  #[cfg(feature = "gpu")] fn multi_gpu(&self) -> Option<Rc<MultiGPUDeviceCtx>> { None }
+
+  fn maybe_thread_pool(&self) -> Option<Rc<ThreadPoolCtx>> { None }
+  #[cfg(feature = "gpu")] fn maybe_gpu(&self) -> Option<Rc<GPUDeviceCtx>> { None }
+  #[cfg(feature = "gpu")] fn maybe_multi_gpu(&self) -> Option<Rc<MultiGPUDeviceCtx>> { None }
+  #[cfg(feature = "mpi")] fn maybe_mpi(&self) -> Option<Rc<MPIProcessCtx>> { None }
+
+  fn thread_pool(&self) -> Rc<ThreadPoolCtx> {
+    match self.maybe_thread_pool() {
+      None => panic!("no thread pool ctx"),
+      Some(ctx) => ctx,
+    }
+  }
+
+  #[cfg(feature = "gpu")]
+  fn gpu(&self) -> Rc<GPUDeviceCtx> {
+    match self.maybe_gpu() {
+      None => panic!("no GPU device ctx"),
+      Some(ctx) => ctx,
+    }
+  }
+
+  #[cfg(feature = "gpu")]
+  fn multi_gpu(&self) -> Rc<MultiGPUDeviceCtx> {
+    match self.maybe_multi_gpu() {
+      None => panic!("no multi-GPU device ctx"),
+      Some(ctx) => ctx,
+    }
+  }
+
+  #[cfg(feature = "mpi")]
+  fn multi_mpi(&self) -> Rc<MPIProcessCtx> {
+    match self.maybe_mpi_rank() {
+      None => panic!("no MPI process ctx"),
+      Some(ctx) => ctx,
+    }
+  }
 }
 
 pub fn push_ctx(ctx: Rc<ExecutionCtx + 'static>) -> CtxGuard {
@@ -146,14 +181,14 @@ pub struct GPUDeviceCtx {
 
 #[cfg(feature = "gpu")]
 impl ExecutionCtx for GPUDeviceCtx {
-  fn gpu(&self) -> Option<Rc<GPUDeviceCtx>> {
+  fn maybe_gpu(&self) -> Option<Rc<GPUDeviceCtx>> {
     Some(Rc::new(GPUDeviceCtx{
       pool:         self.pool.clone(),
       nccl_state:   self.nccl_state.clone(),
     }))
   }
 
-  fn multi_gpu(&self) -> Option<Rc<MultiGPUDeviceCtx>> {
+  fn maybe_multi_gpu(&self) -> Option<Rc<MultiGPUDeviceCtx>> {
     Some(Rc::new(MultiGPUDeviceCtx{
       md_pools:     vec![self.pool.clone()],
       nccl_states:  vec![self.nccl_state.clone()],
@@ -191,11 +226,11 @@ pub struct MultiGPUDeviceCtx {
 
 #[cfg(feature = "gpu")]
 impl ExecutionCtx for MultiGPUDeviceCtx {
-  fn gpu(&self) -> Option<Rc<GPUDeviceCtx>> {
+  fn maybe_gpu(&self) -> Option<Rc<GPUDeviceCtx>> {
     Some(self.gpu(GPUDeviceId(0)))
   }
 
-  fn multi_gpu(&self) -> Option<Rc<MultiGPUDeviceCtx>> {
+  fn maybe_multi_gpu(&self) -> Option<Rc<MultiGPUDeviceCtx>> {
     Some(Rc::new(MultiGPUDeviceCtx{
       md_pools:     self.md_pools.clone(),
       nccl_states:  self.nccl_states.clone(),
@@ -347,6 +382,65 @@ impl SharedMuxGPUDeviceCtxBuilder {
       nccl_comm:    Some(nccl_comm),
     }*/
     unimplemented!();
+  }
+}
+
+#[cfg(feature = "mpi")]
+pub struct MPIProcessCtx {
+  rank: i32,
+  size: i32,
+}
+
+#[cfg(feature = "mpi")]
+impl Default for MPIProcessCtx {
+  fn default() -> Self {
+    let rank = MPIComm::world().rank().unwrap();
+    let size = MPIComm::world().size().unwrap();
+    MPIProcessCtx{
+      rank: rank,
+      size: size,
+    }
+  }
+}
+
+#[cfg(feature = "mpi")]
+pub struct MPIProcessGroup {
+}
+
+#[cfg(feature = "mpi")]
+impl MPIProcessGroup {
+  pub fn init() -> Vec<CString> {
+    let args: Vec<_> = env::args_os().collect();
+    let mut raw_argv = Vec::with_capacity(args.len());
+    for arg in args.drain() {
+      raw_argv.push(CString::new(arg).into_raw());
+    }
+    {
+      let mut argc: i32 = raw_argv.len() as _;
+      let mut raw_argv_copy = raw_argv.clone();
+      let mut argv = raw_argv_copy.as_mut_slice().as_mut_ptr();
+      let mut provided: i32 = -1;
+      let status = unsafe { MPI_Init_thread(
+          &mut argc as *mut _,
+          &mut argv as *mut _,
+          MPI_THREAD_SERIALIZED,
+          &mut provided as *mut _,
+      ) };
+      assert_eq!(status, MPI_SUCCESS);
+      assert!(MPI_THREAD_SERIALIZED <= provided);
+    }
+    let mut args = Vec::new();
+    for raw_arg in raw_argv.drain() {
+      args.push(unsafe { CString::from_raw(raw_arg) }.into_string().unwrap());
+    }
+    args
+  }
+
+  pub fn shutdown() {
+    let status = unsafe { MPI_Barrier(MPI_COMM_WORLD) };
+    assert_eq!(status, MPI_SUCCESS);
+    let status = unsafe { MPI_Finalize() };
+    assert_eq!(status, MPI_SUCCESS);
   }
 }
 

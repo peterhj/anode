@@ -10,6 +10,7 @@ path = "src/lib.rs"
 [features]
 default = []
 gpu = ["cuda", "cuda_blas", "cuda_coll", "cuda_dnn", "gpudevicemem"]
+mpi = []
 
 [build-dependencies]
 bindgen = "^0.32"
