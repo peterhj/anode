@@ -477,7 +477,12 @@ impl<A> GPUMuxFun<A> where A: 'static {
           state.val._apply(txn);
         })
       },
-      tangent: None,
+      tangent: Some({
+        Box::new(move |pass: Pass, state: RefMut<Self>, feedfwd: &mut FeedFwd| {
+          let guard = push_wrapper(GPUMuxWrap{dev: state.dev});
+          state.val._push_tangent(pass, feedfwd)
+        })
+      }),
       adjoint: Some({
         Box::new(move |pass: Pass, _this: Val<A>, state: RefMut<Self>, sink: &mut Sink| {
           let guard = push_wrapper(GPUMuxWrap{dev: state.dev});
@@ -530,12 +535,13 @@ where A: GPUDeviceAsyncMem + 'static,
           }
         })
       },
-      tangent: Some({
+      tangent: None,
+      /*tangent: Some({
         Box::new(move || {
           // TODO
           unimplemented!();
         })
-      }),
+      }),*/
       adjoint: Some({
         Box::new(move |_: Pass, this: Val<A>, state: RefMut<Self>, sink: &mut Sink| {
           // Do nothing.
@@ -615,12 +621,13 @@ where T: Copy,
           }
         })
       },
-      tangent: Some({
+      tangent: None,
+      /*tangent: Some({
         Box::new(move || {
           // TODO
           unimplemented!();
         })
-      }),
+      }),*/
       adjoint: Some({
         Box::new(move |_: Pass, this: Val<A>, state: RefMut<_>, sink: &mut Sink| {
           // Do nothing.
@@ -685,12 +692,13 @@ where T: ZeroBits + Copy + 'static,
           }
         })
       },
-      tangent: Some({
+      tangent: None,
+      /*tangent: Some({
         Box::new(move || {
           // TODO
           unimplemented!();
         })
-      }),
+      }),*/
       adjoint: Some({
         Box::new(move |_: Pass, this: Val<GPUDeviceArray1d<T>>, state: RefMut<Self>, sink: &mut Sink| {
           // Do nothing.
@@ -753,12 +761,13 @@ where T: ZeroBits + Copy + 'static,
           }
         })
       },
-      tangent: Some({
+      tangent: None,
+      /*tangent: Some({
         Box::new(move || {
           // TODO
           unimplemented!();
         })
-      }),
+      }),*/
       adjoint: Some({
         Box::new(move |_: Pass, this: Val<GPUDeviceArray2d<T>>, state: RefMut<Self>, sink: &mut Sink| {
           // Do nothing.
@@ -821,12 +830,13 @@ where T: ZeroBits + Copy + 'static,
           }
         })
       },
-      tangent: Some({
+      tangent: None,
+      /*tangent: Some({
         Box::new(move || {
           // TODO
           unimplemented!();
         })
-      }),
+      }),*/
       adjoint: Some({
         Box::new(move |_: Pass, this: Val<GPUDeviceArray4d<T>>, state: RefMut<Self>, sink: &mut Sink| {
           // Do nothing.
@@ -1032,12 +1042,13 @@ impl<F> FlatMapFun<F> where F: Clone + 'static {
           }
         })
       },
-      tangent: Some({
+      tangent: None,
+      /*tangent: Some({
         Box::new(move || {
           // TODO
           unimplemented!();
         })
-      }),
+      }),*/
       adjoint: Some({
         let f_config = f_config.clone();
         let x_ = x_.clone();
@@ -1381,11 +1392,11 @@ impl LinearMapOp {
       tangent: Some({
         let input_ = input_.clone();
         let map_ = map_.clone();
-        Box::new(move || {
+        Box::new(move |_: Pass, _state: RefMut<Self>, feedfwd: &mut FeedFwd| {
           let input_ = input_.clone();
           let map_ = map_.clone();
-          let tng_input_ = input_.tangent();
-          let tng_map_ = map_.tangent();
+          let tng_input_ = input_.tangent(feedfwd);
+          let tng_map_ = map_.tangent(feedfwd);
           // FIXME
           unimplemented!();
           //let y_ = map_.mult(tng_input_).add(tng_map_.mult(input_));
@@ -1398,11 +1409,14 @@ impl LinearMapOp {
         Box::new(move |_: Pass, y_: Val<GPUDeviceArray1d<T>>, state: RefMut<Self>, sink: &mut Sink| {
           let x_ = input_.clone();
           let a_ = map_.clone();
-          if let Some(adj_y_) = sink.get_adj::<GPUDeviceArray1d<T>>(y_.var()) {
+          //if let Some(adj_y_) = sink.get_adj::<GPUDeviceArray1d<T>>(y_.var()) {
+          if let Some(adj_y_) = y_.adjoint(sink) {
             let adj_a_ = adj_y_.mult_right_transpose(x_.clone());
             let adj_x_ = a_.mult_left_transpose(adj_y_);
-            sink.put_adj::<GPUDeviceArray2d<T>>(a_.var(), adj_a_);
-            sink.put_adj::<GPUDeviceArray1d<T>>(x_.var(), adj_x_);
+            //sink.put_adj::<GPUDeviceArray2d<T>>(a_.var(), adj_a_);
+            //sink.put_adj::<GPUDeviceArray1d<T>>(x_.var(), adj_x_);
+            a_.put_adjoint(adj_a_, sink);
+            x_.put_adjoint(adj_x_, sink);
           }
         })
       }),

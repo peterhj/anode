@@ -250,7 +250,7 @@ pub trait AOp<V>: ANode {
 
   fn _apply_output(&self, txn: Txn, val: OVal<V>);
 
-  fn _push_tangent(&self, pass: Pass, feed: &mut FeedFwd) -> Val<V> { unimplemented!(); }
+  fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<V> { unimplemented!(); }
   //fn tangent(&self) -> Val<V>;
 
   fn _pop_adjoint(&self, pass: Pass, this: Val<V>, sink: &mut Sink) { unimplemented!(); }
@@ -572,7 +572,12 @@ impl<V> Val<V> where V: 'static {
     self.op._make_value()
   }
 
-  pub fn tangent(&self) -> Val<V> {
+  pub fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<V> {
+    self.op._push_tangent(pass, feedfwd)
+  }
+
+  pub fn tangent(&self, feedfwd: &mut FeedFwd) -> Val<V> {
+    // TODO
     unimplemented!();
   }
 
@@ -580,8 +585,12 @@ impl<V> Val<V> where V: 'static {
     self.op._pop_adjoint(pass, self.clone(), sink);
   }
 
-  pub fn adjoint(&self, sink: &mut Sink) -> Val<V> {
-    unimplemented!();
+  pub fn adjoint(&self, sink: &mut Sink) -> Option<Val<V>> {
+    sink.get_adj::<V>(self.var())
+  }
+
+  pub fn put_adjoint(&self, adj: Val<V>, sink: &mut Sink) {
+    sink.put_adj::<V>(self.var(), adj);
   }
 }
 
@@ -1569,7 +1578,8 @@ pub struct OpExt<F, V> {
   //prepare:  Option<Box<Fn(Txn, RefMut<F>)>>,
   //cleanup:  Option<Box<Fn(Txn, RefMut<F>)>>,
   apply:    Box<Fn(Txn, RefMut<F>, OVal<V>)>,
-  tangent:  Option<Box<Fn() -> Val<V>>>,
+  //tangent:  Option<Box<Fn() -> Val<V>>>,
+  tangent:  Option<Box<Fn(Pass, RefMut<F>, &mut FeedFwd) -> Val<V>>>,
   //adjoint:  Option<Box<Fn(Val<V>, &mut Sink)>>,
   adjoint:  Option<Box<Fn(Pass, Val<V>, RefMut<F>, &mut Sink)>>,
   inplace:  Option<Box<Fn(Val<V>) -> Val<V>>>,
@@ -1751,10 +1761,10 @@ impl<F, V> AOp<V> for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
     &self.val
   }
 
-  fn _push_tangent(&self, pass: Pass, feed: &mut FeedFwd) -> Val<V> {
+  fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<V> {
     match self.ext.tangent {
       None => unimplemented!(),
-      Some(ref tangent) => (tangent)(),
+      Some(ref tangent) => (tangent)(pass, self.fun.borrow_mut(), feedfwd),
     }
   }
 
@@ -1766,7 +1776,7 @@ impl<F, V> AOp<V> for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
   fn _pop_adjoint(&self, pass: Pass, this: Val<V>, sink: &mut Sink) {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
-        None => panic!(),
+        None => {}
         Some(ref adjoint) => (adjoint)(pass, this, self.fun.borrow_mut(), sink),
       }
     }
@@ -1914,10 +1924,10 @@ impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 's
     &self.y
   }
 
-  fn _push_tangent(&self, pass: Pass, feed: &mut FeedFwd) -> Val<W> {
+  fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<W> {
     match self.ext.tangent {
       None => unimplemented!(),
-      Some(ref tangent) => (tangent)(),
+      Some(ref tangent) => (tangent)(pass, self.fun.borrow_mut(), feedfwd),
     }
   }
 
@@ -1931,13 +1941,25 @@ impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 's
     unimplemented!();
   }*/
 
+  /*fn _push_adjoint(&self, pass: Pass) {
+    // TODO
+    if self.base.stack.pop(pass) {
+      match self.ext.adjoint {
+        None => {}
+        Some(_) => {
+          self.x_._push_adjoint(pass);
+        }
+      }
+    }
+  }*/
+
   fn _pop_adjoint(&self, pass: Pass, this: Val<W>, sink: &mut Sink) {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
-        None => panic!(),
+        None => {}
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.fun.borrow_mut(), sink);
-          self.x_._op()._pop_adjoint(pass, self.x_.clone(), sink);
+          self.x_._pop_adjoint(pass, sink);
         }
       }
     }
@@ -2107,10 +2129,10 @@ impl<F, V1, V2, W> AOp<W> for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static,
     &self.y
   }
 
-  fn _push_tangent(&self, pass: Pass, feed: &mut FeedFwd) -> Val<W> {
+  fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<W> {
     match self.ext.tangent {
       None => unimplemented!(),
-      Some(ref tangent) => (tangent)(),
+      Some(ref tangent) => (tangent)(pass, self.fun.borrow_mut(), feedfwd),
     }
   }
 
@@ -2127,11 +2149,11 @@ impl<F, V1, V2, W> AOp<W> for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static,
   fn _pop_adjoint(&self, pass: Pass, this: Val<W>, sink: &mut Sink) {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
-        None => panic!(),
+        None => {}
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.fun.borrow_mut(), sink);
-          self.x2_._op()._pop_adjoint(pass, self.x2_.clone(), sink);
-          self.x1_._op()._pop_adjoint(pass, self.x1_.clone(), sink);
+          self.x2_._pop_adjoint(pass, sink);
+          self.x1_._pop_adjoint(pass, sink);
         }
       }
     }
@@ -2278,10 +2300,10 @@ impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 
     &self.y
   }
 
-  fn _push_tangent(&self, pass: Pass, feed: &mut FeedFwd) -> Val<W> {
+  fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<W> {
     match self.ext.tangent {
       None => unimplemented!(),
-      Some(ref tangent) => (tangent)(),
+      Some(ref tangent) => (tangent)(pass, self.fun.borrow_mut(), feedfwd),
     }
   }
 
@@ -2299,12 +2321,12 @@ impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 
   fn _pop_adjoint(&self, pass: Pass, this: Val<W>, sink: &mut Sink) {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
-        None => panic!(),
+        None => {}
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.fun.borrow_mut(), sink);
-          self.x3_._op()._pop_adjoint(pass, self.x3_.clone(), sink);
-          self.x2_._op()._pop_adjoint(pass, self.x2_.clone(), sink);
-          self.x1_._op()._pop_adjoint(pass, self.x1_.clone(), sink);
+          self.x3_._pop_adjoint(pass, sink);
+          self.x2_._pop_adjoint(pass, sink);
+          self.x1_._pop_adjoint(pass, sink);
         }
       }
     }
@@ -2447,10 +2469,18 @@ impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 's
     &self.y
   }
 
-  fn _push_tangent(&self, pass: Pass, feed: &mut FeedFwd) -> Val<W> {
-    match self.ext.tangent {
-      None => unimplemented!(),
-      Some(ref tangent) => (tangent)(),
+  fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<W> {
+    if self.base.stack.push(pass) {
+      for x_ in self.xs_.iter() {
+        x_._push_tangent(pass, feedfwd);
+      }
+      match self.ext.tangent {
+        None => unimplemented!(),
+        Some(ref tangent) => (tangent)(pass, self.fun.borrow_mut(), feedfwd),
+      }
+    } else {
+      // TODO
+      unimplemented!();
     }
   }
 
@@ -2467,11 +2497,11 @@ impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 's
   fn _pop_adjoint(&self, pass: Pass, this: Val<W>, sink: &mut Sink) {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
-        None => panic!(),
+        None => {}
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.fun.borrow_mut(), sink);
           for x_ in self.xs_.iter().rev() {
-            x_._op()._pop_adjoint(pass, x_.clone(), sink);
+            x_._pop_adjoint(pass, sink);
           }
         }
       }
