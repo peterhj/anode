@@ -479,11 +479,9 @@ impl<A> GPUMuxFun<A> where A: 'static {
       },
       tangent: None,
       adjoint: Some({
-        // TODO
-        //unimplemented!();
-        Box::new(move |x_: Val<A>, sink: &mut Sink| {
-          // TODO
-          unimplemented!();
+        Box::new(move |pass: Pass, _this: Val<A>, state: RefMut<Self>, sink: &mut Sink| {
+          let guard = push_wrapper(GPUMuxWrap{dev: state.dev});
+          state.val._pop_adjoint(pass, sink);
         })
       }),
       inplace: None,
@@ -539,7 +537,7 @@ where A: GPUDeviceAsyncMem + 'static,
         })
       }),
       adjoint: Some({
-        Box::new(move |x_: Val<A>, sink: &mut Sink| {
+        Box::new(move |_: Pass, this: Val<A>, state: RefMut<Self>, sink: &mut Sink| {
           // Do nothing.
         })
       }),
@@ -624,7 +622,7 @@ where T: Copy,
         })
       }),
       adjoint: Some({
-        Box::new(move |x_: Val<A>, sink: &mut Sink| {
+        Box::new(move |_: Pass, this: Val<A>, state: RefMut<_>, sink: &mut Sink| {
           // Do nothing.
         })
       }),
@@ -694,7 +692,7 @@ where T: ZeroBits + Copy + 'static,
         })
       }),
       adjoint: Some({
-        Box::new(move |x_: Val<GPUDeviceArray1d<T>>, sink: &mut Sink| {
+        Box::new(move |_: Pass, this: Val<GPUDeviceArray1d<T>>, state: RefMut<Self>, sink: &mut Sink| {
           // Do nothing.
         })
       }),
@@ -762,7 +760,7 @@ where T: ZeroBits + Copy + 'static,
         })
       }),
       adjoint: Some({
-        Box::new(move |x_: Val<GPUDeviceArray2d<T>>, sink: &mut Sink| {
+        Box::new(move |_: Pass, this: Val<GPUDeviceArray2d<T>>, state: RefMut<Self>, sink: &mut Sink| {
           // Do nothing.
         })
       }),
@@ -830,7 +828,7 @@ where T: ZeroBits + Copy + 'static,
         })
       }),
       adjoint: Some({
-        Box::new(move |x_: Val<GPUDeviceArray4d<T>>, sink: &mut Sink| {
+        Box::new(move |_: Pass, this: Val<GPUDeviceArray4d<T>>, state: RefMut<Self>, sink: &mut Sink| {
           // Do nothing.
         })
       }),
@@ -1043,7 +1041,7 @@ impl<F> FlatMapFun<F> where F: Clone + 'static {
       adjoint: Some({
         let f_config = f_config.clone();
         let x_ = x_.clone();
-        Box::new(move |y_: Val<A>, sink: &mut Sink| {
+        Box::new(move |_: Pass, y_: Val<A>, state: RefMut<Self>, sink: &mut Sink| {
           let x_ = x_.clone();
           if let Some(adj_y_) = sink.get_adj::<A>(y_.var()) {
             let adj_x_ = f_config.build_gpu_adj(y_, adj_y_);
@@ -1153,9 +1151,9 @@ impl SumJoinOp {
         })
       },
       // TODO
-      tangent:  None,
+      tangent: None,
       // TODO
-      adjoint:  None,
+      adjoint: None,
       inplace: None,
     };
     Rc::new(FJoinOp::new(SumJoinOp, ext, inputs_))
@@ -1231,9 +1229,9 @@ impl SumJoinOp {
         })
       },
       // TODO
-      tangent:  None,
+      tangent: None,
       // TODO
-      adjoint:  None,
+      adjoint: None,
       inplace: None,
     };
     Rc::new(FJoinOp::new(SumJoinOp, ext, inputs_))
@@ -1333,7 +1331,6 @@ impl LinearMapOp {
       },
       make_val: {
         let map_ = map_.clone();
-        //Box::new(move || {
         Box::new(move |state: RefMut<LinearMapOp>| {
           //let map = map_.value();
           let map_ = map_.clone();
@@ -1347,8 +1344,6 @@ impl LinearMapOp {
         })
       },
       apply: {
-        //let input = input_.value();
-        //let map = map_.value();
         let input_ = input_.clone();
         let map_ = map_.clone();
         Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceArray1d<T>>| {
@@ -1400,17 +1395,14 @@ impl LinearMapOp {
       adjoint: Some({
         let input_ = input_.clone();
         let map_ = map_.clone();
-        Box::new(move |y_: Val<GPUDeviceArray1d<T>>, sink: &mut Sink| {
-          //let make = make.clone();
-          let input_ = input_.clone();
-          let map_ = map_.clone();
-          let x_var = input_.var();
-          let a_var = map_.var();
+        Box::new(move |_: Pass, y_: Val<GPUDeviceArray1d<T>>, state: RefMut<Self>, sink: &mut Sink| {
+          let x_ = input_.clone();
+          let a_ = map_.clone();
           if let Some(adj_y_) = sink.get_adj::<GPUDeviceArray1d<T>>(y_.var()) {
-            let adj_a_ = adj_y_.mult_right_transpose(input_);
-            let adj_x_ = map_.mult_left_transpose(adj_y_);
-            sink.put_adj::<GPUDeviceArray2d<T>>(a_var, adj_a_);
-            sink.put_adj::<GPUDeviceArray1d<T>>(x_var, adj_x_);
+            let adj_a_ = adj_y_.mult_right_transpose(x_.clone());
+            let adj_x_ = a_.mult_left_transpose(adj_y_);
+            sink.put_adj::<GPUDeviceArray2d<T>>(a_.var(), adj_a_);
+            sink.put_adj::<GPUDeviceArray1d<T>>(x_.var(), adj_x_);
           }
         })
       }),

@@ -87,7 +87,7 @@ pub fn gen_thread_local_uid() -> u64 {
 pub struct Txn(u64);
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct Epoch(u64);
+pub struct Pass(u64);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct RVar(u64);
@@ -111,13 +111,13 @@ impl Default for Txn {
   }
 }
 
-pub fn epoch() -> Epoch {
-  Epoch::default()
+pub fn pass() -> Pass {
+  Pass::default()
 }
 
-impl Default for Epoch {
+impl Default for Pass {
   fn default() -> Self {
-    Epoch(gen_thread_local_uid())
+    Pass(gen_thread_local_uid())
   }
 }
 
@@ -140,7 +140,7 @@ impl Default for ValRef {
 }
 
 pub struct WalkStackEntry {
-  epoch:        Epoch,
+  pass:         Pass,
   push_degree:  usize,
   pop_degree:   usize,
   // TODO: cycle detection.
@@ -159,18 +159,18 @@ impl Walk for WalkStack {
 }
 
 impl WalkStack {
-  pub fn push(&self, epoch: Epoch) -> bool {
+  pub fn push(&self, pass: Pass) -> bool {
     let mut entries = self.entries.borrow_mut();
-    if entries.is_empty() || entries.last().unwrap().epoch < epoch {
+    if entries.is_empty() || entries.last().unwrap().pass < pass {
       entries.push(WalkStackEntry{
-        epoch:          epoch,
+        pass:           pass,
         push_degree:    1,
         pop_degree:     0,
       });
       true
-    } else if entries.last().unwrap().epoch > epoch {
+    } else if entries.last().unwrap().pass > pass {
       panic!();
-    } else if entries.last().unwrap().epoch == epoch {
+    } else if entries.last().unwrap().pass == pass {
       entries.last_mut().unwrap().push_degree += 1;
       false
     } else {
@@ -178,10 +178,10 @@ impl WalkStack {
     }
   }
 
-  pub fn pop(&self, epoch: Epoch) -> bool {
+  pub fn pop(&self, pass: Pass) -> bool {
     let mut entries = self.entries.borrow_mut();
     assert!(!entries.is_empty());
-    assert_eq!(entries.last().unwrap().epoch, epoch);
+    assert_eq!(entries.last().unwrap().pass, pass);
     entries.last_mut().unwrap().pop_degree += 1;
     if entries.last().unwrap().push_degree == entries.last().unwrap().pop_degree {
       entries.pop();
@@ -220,11 +220,11 @@ pub trait ANode {
   fn _pred_fwd(&self, pred_buf: &mut Vec<Node>) { unimplemented!(); }
   fn _pred_rev(&self, pred_buf: &mut Vec<Node>) { unimplemented!(); }
 
-  fn _push(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode));
-  fn _pop(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode));
+  fn _push(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode));
+  fn _pop(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode));
 
-  fn _push_fwd(&self, stop_txn: Option<Txn>, epoch: Epoch, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) { unimplemented!(); }
-  fn _pop_rev(&self, stop_txn: Option<Txn>, epoch: Epoch, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) { unimplemented!(); }
+  fn _push_fwd(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) { unimplemented!(); }
+  fn _pop_rev(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) { unimplemented!(); }
 
   fn _txn(&self) -> Option<Txn>;
   //fn _persist(&self, txn: Txn);
@@ -250,10 +250,10 @@ pub trait AOp<V>: ANode {
 
   fn _apply_output(&self, txn: Txn, val: OVal<V>);
 
-  fn _make_tangent(&self) -> Val<V> { unimplemented!(); }
-  fn tangent(&self) -> Val<V>;
+  fn _push_tangent(&self, pass: Pass, feed: &mut FeedFwd) -> Val<V> { unimplemented!(); }
+  //fn tangent(&self) -> Val<V>;
 
-  fn _pop_adjoint(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ this: Val<V>, sink: &mut Sink) { unimplemented!(); }
+  fn _pop_adjoint(&self, pass: Pass, this: Val<V>, sink: &mut Sink) { unimplemented!(); }
   //fn adjoint(&self, sink: &mut Sink) -> Val<V>;
 
   // TODO
@@ -330,8 +330,8 @@ impl RecvThreadVal {
 
 pub fn dup_cache<V>(root: Val<V>, cached: &HashSet<RWVar>) -> Val<V> where V: 'static {
   // TODO: need to recursively rebuild the graph; need to store predecessors.
-  let epoch = Epoch::default();
-  root._push_fwd(None, epoch, &mut |node, rvar, xvar| {
+  let pass = Pass::default();
+  root._push_fwd(None, pass, &mut |node, rvar, xvar| {
     // TODO
     if cached.contains(&xvar) {
       // TODO
@@ -340,7 +340,7 @@ pub fn dup_cache<V>(root: Val<V>, cached: &HashSet<RWVar>) -> Val<V> where V: 's
       node._pred_fwd(&mut preds);
     }
   });
-  root._pop_rev(None, epoch, &mut |_, _, _| {});
+  root._pop_rev(None, pass, &mut |_, _, _| {});
   // TODO
   unimplemented!();
 }
@@ -373,12 +373,12 @@ impl Node {
     &*self.node
   }
 
-  pub fn _push_fwd(&self, stop_txn: Option<Txn>, epoch: Epoch, apply: &mut FnMut(&ANode, RVar, RWVar)) {
-    self.node._push_fwd(stop_txn, epoch, self.rvar, self.xvar, apply);
+  pub fn _push_fwd(&self, stop_txn: Option<Txn>, pass: Pass, apply: &mut FnMut(&ANode, RVar, RWVar)) {
+    self.node._push_fwd(stop_txn, pass, self.rvar, self.xvar, apply);
   }
 
-  pub fn _pop_rev(&self, stop_txn: Option<Txn>, epoch: Epoch, apply: &mut FnMut(&ANode, RVar, RWVar)) {
-    self.node._pop_rev(stop_txn, epoch, self.rvar, self.xvar, apply);
+  pub fn _pop_rev(&self, stop_txn: Option<Txn>, pass: Pass, apply: &mut FnMut(&ANode, RVar, RWVar)) {
+    self.node._pop_rev(stop_txn, pass, self.rvar, self.xvar, apply);
   }
 
   pub fn _apply(&self, txn: Txn) {
@@ -425,12 +425,12 @@ impl<V> Clone for Val<V> {
 }
 
 impl<V> Val<V> where V: 'static {
-  pub fn from_nowrap<Op>(op: Rc<Op>) -> Self where Op: AOp<V> + 'static {
+  pub fn nowrap<Op>(op: Rc<Op>, xvar: RWVar) -> Self where Op: AOp<V> + 'static {
     let rvar = RVar::default();
     Val{
       node: op.clone(),
       op:   op,
-      xvar: RWVar(rvar),
+      xvar: xvar,
       rvar: rvar,
     }
   }
@@ -516,12 +516,12 @@ impl<V> Val<V> where V: 'static {
     &*self.op
   }
 
-  pub fn _push_fwd(&self, stop_txn: Option<Txn>, epoch: Epoch, apply: &mut FnMut(&ANode, RVar, RWVar)) {
-    self.op._push_fwd(stop_txn, epoch, self.rvar, self.xvar, apply);
+  pub fn _push_fwd(&self, stop_txn: Option<Txn>, pass: Pass, apply: &mut FnMut(&ANode, RVar, RWVar)) {
+    self.op._push_fwd(stop_txn, pass, self.rvar, self.xvar, apply);
   }
 
-  pub fn _pop_rev(&self, stop_txn: Option<Txn>, epoch: Epoch, apply: &mut FnMut(&ANode, RVar, RWVar)) {
-    self.op._pop_rev(stop_txn, epoch, self.rvar, self.xvar, apply);
+  pub fn _pop_rev(&self, stop_txn: Option<Txn>, pass: Pass, apply: &mut FnMut(&ANode, RVar, RWVar)) {
+    self.op._pop_rev(stop_txn, pass, self.rvar, self.xvar, apply);
   }
 
   pub fn _apply(&self, txn: Txn) {
@@ -576,6 +576,10 @@ impl<V> Val<V> where V: 'static {
     unimplemented!();
   }
 
+  pub fn _pop_adjoint(&self, pass: Pass, sink: &mut Sink) {
+    self.op._pop_adjoint(pass, self.clone(), sink);
+  }
+
   pub fn adjoint(&self, sink: &mut Sink) -> Val<V> {
     unimplemented!();
   }
@@ -619,6 +623,10 @@ impl<V> OVal<V> where V: 'static {
   pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwLockWriteGuard<V> {
     self.val.get_mut(txn, self.xvar, token)
   }
+}
+
+pub struct FeedFwd {
+  tng_map:  HashMap<RWVar, (Node, Rc<Any>)>,
 }
 
 pub struct Sink {
@@ -690,25 +698,25 @@ impl Sink {
   }
 }
 
-pub struct OpBase<V> {
+pub struct OpBase {
   ref_:     NodeRef,
   stack:    WalkStack,
   tags:     CloneMap,
-  tng_op:   RefCell<Option<Val<V>>>,
+  //tng_op:   RefCell<Option<Val<V>>>,
 }
 
-impl<V> Default for OpBase<V> {
+impl Default for OpBase {
   fn default() -> Self {
     OpBase{
       ref_:     NodeRef::default(),
       stack:    WalkStack::default(),
       tags:     TypeMap::custom(),
-      tng_op:   RefCell::new(None),
+      //tng_op:   RefCell::new(None),
     }
   }
 }
 
-impl<V> AnalysisTags for OpBase<V> {
+impl AnalysisTags for OpBase {
   fn liveness(&self) -> Option<LivenessAnalysis> {
     self.tags.get::<LivenessAnalysis>().map(|x| x.clone())
   }
@@ -726,17 +734,17 @@ impl NodeVector {
 }
 
 /*impl ANode for NodeVector {
-  fn _push(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
+  fn _push(&self, pass: Pass, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     // FIXME: priority.
     for node in self.nodes.iter() {
-      node._push(epoch, filter, apply);
+      node._push(pass, filter, apply);
     }
   }
 
-  fn _pop(&self, epoch: Epoch, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
+  fn _pop(&self, pass: Pass, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
     // FIXME: priority.
     for node in self.nodes.iter().rev() {
-      node._pop(epoch, filter, apply);
+      node._pop(pass, filter, apply);
     }
   }
 
@@ -1562,7 +1570,8 @@ pub struct OpExt<F, V> {
   //cleanup:  Option<Box<Fn(Txn, RefMut<F>)>>,
   apply:    Box<Fn(Txn, RefMut<F>, OVal<V>)>,
   tangent:  Option<Box<Fn() -> Val<V>>>,
-  adjoint:  Option<Box<Fn(Val<V>, &mut Sink)>>,
+  //adjoint:  Option<Box<Fn(Val<V>, &mut Sink)>>,
+  adjoint:  Option<Box<Fn(Pass, Val<V>, RefMut<F>, &mut Sink)>>,
   inplace:  Option<Box<Fn(Val<V>) -> Val<V>>>,
 }
 
@@ -1618,12 +1627,12 @@ impl<V> GPUWrapValExt<V> for Val<V> where V: 'static {
       ctrl: ctrl,
       val:  self._op()._value()._clone(),
     });
-    Val::from_nowrap(op)
+    Val::nowrap(op, self.var())
   }
 }
 
 pub struct FSrcOp<F, V> {
-  base: OpBase<V>,
+  base: OpBase,
   ext:  OpExt<F, V>,
   fun:  RefCell<F>,
   ctrl: Vec<Node>,
@@ -1665,14 +1674,14 @@ impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
   fn _pred_rev(&self, _pred_buf: &mut Vec<Node>) {
   }
 
-  fn _push(&self, _stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    if self.base.stack.push(epoch) {
+  fn _push(&self, _stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.push(pass) {
       apply(self);
     }
   }
 
-  fn _pop(&self, _stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    if self.base.stack.pop(epoch) {
+  fn _pop(&self, _stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.pop(pass) {
       apply(self);
     }
   }
@@ -1742,23 +1751,23 @@ impl<F, V> AOp<V> for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
     &self.val
   }
 
-  fn _make_tangent(&self) -> Val<V> {
+  fn _push_tangent(&self, pass: Pass, feed: &mut FeedFwd) -> Val<V> {
     match self.ext.tangent {
       None => unimplemented!(),
       Some(ref tangent) => (tangent)(),
     }
   }
 
-  fn tangent(&self) -> Val<V> {
+  /*fn tangent(&self) -> Val<V> {
     // TODO
     unimplemented!();
-  }
+  }*/
 
-  fn _pop_adjoint(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ this: Val<V>, sink: &mut Sink) {
-    if self.base.stack.pop(epoch) {
+  fn _pop_adjoint(&self, pass: Pass, this: Val<V>, sink: &mut Sink) {
+    if self.base.stack.pop(pass) {
       match self.ext.adjoint {
         None => panic!(),
-        Some(ref adjoint) => (adjoint)(this, sink),
+        Some(ref adjoint) => (adjoint)(pass, this, self.fun.borrow_mut(), sink),
       }
     }
   }
@@ -1777,7 +1786,7 @@ impl<F, V> AOp<V> for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
 }
 
 /*pub struct Pipe1Op<F, V, W> where W: OVal {
-  base: OpBase<W>,
+  base: OpBase,
   ext:  OpExt<W>,
   fun:  F,
   // TODO: should not contain an input `x` but instead a "slot" in which to
@@ -1794,7 +1803,7 @@ where V: OVal, W: OVal {
 }*/
 
 pub struct F1Op<F, V1, W> {
-  base: OpBase<W>,
+  base: OpBase,
   ext:  OpExt<F, W>,
   fun:  RefCell<F>,
   ctrl: Vec<Node>,
@@ -1840,20 +1849,20 @@ impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'st
     pred_buf.push(self.x_.to_node());
   }
 
-  fn _push(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    if self.base.stack.push(epoch) {
+  fn _push(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.push(pass) {
       if stop_txn.is_none() || stop_txn != self._txn() {
-        self.x_._node()._push(stop_txn, epoch, apply);
+        self.x_._node()._push(stop_txn, pass, apply);
       }
       apply(self);
     }
   }
 
-  fn _pop(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    if self.base.stack.pop(epoch) {
+  fn _pop(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.pop(pass) {
       apply(self);
       if stop_txn.is_none() || stop_txn != self._txn() {
-        self.x_._node()._pop(stop_txn, epoch, apply);
+        self.x_._node()._pop(stop_txn, pass, apply);
       }
     }
   }
@@ -1905,28 +1914,32 @@ impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 's
     &self.y
   }
 
-  fn _make_tangent(&self) -> Val<W> {
+  fn _push_tangent(&self, pass: Pass, feed: &mut FeedFwd) -> Val<W> {
     match self.ext.tangent {
       None => unimplemented!(),
       Some(ref tangent) => (tangent)(),
     }
   }
 
-  fn tangent(&self) -> Val<W> {
-    let mut tng_op = self.base.tng_op.borrow_mut();
+  /*fn tangent(&self) -> Val<W> {
+    /*let mut tng_op = self.base.tng_op.borrow_mut();
     if tng_op.is_none() {
-      *tng_op = Some(self._make_tangent());
+      *tng_op = Some(self._push_tangent());
     }
-    tng_op.as_ref().unwrap().clone()
-  }
+    tng_op.as_ref().unwrap().clone()*/
+    // TODO
+    unimplemented!();
+  }*/
 
-  fn _pop_adjoint(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ this: Val<W>, sink: &mut Sink) {
-    if self.base.stack.pop(epoch) {
+  fn _pop_adjoint(&self, pass: Pass, this: Val<W>, sink: &mut Sink) {
+    if self.base.stack.pop(pass) {
       match self.ext.adjoint {
         None => panic!(),
-        Some(ref adjoint) => (adjoint)(this, sink),
+        Some(ref adjoint) => {
+          (adjoint)(pass, this, self.fun.borrow_mut(), sink);
+          self.x_._op()._pop_adjoint(pass, self.x_.clone(), sink);
+        }
       }
-      self.x_._op()._pop_adjoint(epoch, self.x_.clone(), sink);
     }
   }
 
@@ -1975,7 +1988,7 @@ impl<F, V> AOp<V> for F1Op<F, V, V> where V: 'static, RWVal<V>: IOVal + 'static 
 }
 
 pub struct F2Op<F, V1, V2, W> {
-  base: OpBase<W>,
+  base: OpBase,
   ext:  OpExt<F, W>,
   fun:  RefCell<F>,
   ctrl: Vec<Node>,
@@ -2025,22 +2038,22 @@ impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, 
     pred_buf.push(self.x1_.to_node());
   }
 
-  fn _push(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    if self.base.stack.push(epoch) {
+  fn _push(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.push(pass) {
       if stop_txn.is_none() || stop_txn != self._txn() {
-        self.x1_._node()._push(stop_txn, epoch, apply);
-        self.x2_._node()._push(stop_txn, epoch, apply);
+        self.x1_._node()._push(stop_txn, pass, apply);
+        self.x2_._node()._push(stop_txn, pass, apply);
       }
       apply(self);
     }
   }
 
-  fn _pop(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    if self.base.stack.pop(epoch) {
+  fn _pop(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.pop(pass) {
       apply(self);
       if stop_txn.is_none() || stop_txn != self._txn() {
-        self.x2_._node()._pop(stop_txn, epoch, apply);
-        self.x1_._node()._pop(stop_txn, epoch, apply);
+        self.x2_._node()._pop(stop_txn, pass, apply);
+        self.x1_._node()._pop(stop_txn, pass, apply);
       }
     }
   }
@@ -2094,29 +2107,33 @@ impl<F, V1, V2, W> AOp<W> for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static,
     &self.y
   }
 
-  fn _make_tangent(&self) -> Val<W> {
+  fn _push_tangent(&self, pass: Pass, feed: &mut FeedFwd) -> Val<W> {
     match self.ext.tangent {
       None => unimplemented!(),
       Some(ref tangent) => (tangent)(),
     }
   }
 
-  fn tangent(&self) -> Val<W> {
-    let mut tng_op = self.base.tng_op.borrow_mut();
+  /*fn tangent(&self) -> Val<W> {
+    /*let mut tng_op = self.base.tng_op.borrow_mut();
     if tng_op.is_none() {
-      *tng_op = Some(self._make_tangent());
+      *tng_op = Some(self._push_tangent());
     }
-    tng_op.as_ref().unwrap().clone()
-  }
+    tng_op.as_ref().unwrap().clone()*/
+    // TODO
+    unimplemented!();
+  }*/
 
-  fn _pop_adjoint(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ this: Val<W>, sink: &mut Sink) {
-    if self.base.stack.pop(epoch) {
+  fn _pop_adjoint(&self, pass: Pass, this: Val<W>, sink: &mut Sink) {
+    if self.base.stack.pop(pass) {
       match self.ext.adjoint {
         None => panic!(),
-        Some(ref adjoint) => (adjoint)(this, sink),
+        Some(ref adjoint) => {
+          (adjoint)(pass, this, self.fun.borrow_mut(), sink);
+          self.x2_._op()._pop_adjoint(pass, self.x2_.clone(), sink);
+          self.x1_._op()._pop_adjoint(pass, self.x1_.clone(), sink);
+        }
       }
-      self.x2_._op()._pop_adjoint(epoch, self.x2_.clone(), sink);
-      self.x1_._op()._pop_adjoint(epoch, self.x1_.clone(), sink);
     }
   }
 
@@ -2134,7 +2151,7 @@ impl<F, V1, V2, W> AOp<W> for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static,
 }
 
 pub struct F3Op<F, V1, V2, V3, W> {
-  base: OpBase<W>,
+  base: OpBase,
   ext:  OpExt<F, W>,
   fun:  RefCell<F>,
   ctrl: Vec<Node>,
@@ -2188,24 +2205,24 @@ impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: '
     pred_buf.push(self.x1_.to_node());
   }
 
-  fn _push(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    if self.base.stack.push(epoch) {
+  fn _push(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.push(pass) {
       if stop_txn.is_none() || stop_txn != self._txn() {
-        self.x1_._node()._push(stop_txn, epoch, apply);
-        self.x2_._node()._push(stop_txn, epoch, apply);
-        self.x3_._node()._push(stop_txn, epoch, apply);
+        self.x1_._node()._push(stop_txn, pass, apply);
+        self.x2_._node()._push(stop_txn, pass, apply);
+        self.x3_._node()._push(stop_txn, pass, apply);
       }
       apply(self);
     }
   }
 
-  fn _pop(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    if self.base.stack.pop(epoch) {
+  fn _pop(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.pop(pass) {
       apply(self);
       if stop_txn.is_none() || stop_txn != self._txn() {
-        self.x3_._node()._pop(stop_txn, epoch, apply);
-        self.x2_._node()._pop(stop_txn, epoch, apply);
-        self.x1_._node()._pop(stop_txn, epoch, apply);
+        self.x3_._node()._pop(stop_txn, pass, apply);
+        self.x2_._node()._pop(stop_txn, pass, apply);
+        self.x1_._node()._pop(stop_txn, pass, apply);
       }
     }
   }
@@ -2261,31 +2278,35 @@ impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 
     &self.y
   }
 
-  fn _make_tangent(&self) -> Val<W> {
+  fn _push_tangent(&self, pass: Pass, feed: &mut FeedFwd) -> Val<W> {
     match self.ext.tangent {
       None => unimplemented!(),
       Some(ref tangent) => (tangent)(),
     }
   }
 
-  //fn tangent(&self) -> (Rc<ANode>, Rc<AOp<W>>) {
+  /*//fn tangent(&self) -> (Rc<ANode>, Rc<AOp<W>>) {
   fn tangent(&self) -> Val<W> {
-    let mut tng_op = self.base.tng_op.borrow_mut();
+    /*let mut tng_op = self.base.tng_op.borrow_mut();
     if tng_op.is_none() {
-      *tng_op = Some(self._make_tangent());
+      *tng_op = Some(self._push_tangent());
     }
-    tng_op.as_ref().unwrap().clone()
-  }
+    tng_op.as_ref().unwrap().clone()*/
+    // TODO
+    unimplemented!();
+  }*/
 
-  fn _pop_adjoint(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ this: Val<W>, sink: &mut Sink) {
-    if self.base.stack.pop(epoch) {
+  fn _pop_adjoint(&self, pass: Pass, this: Val<W>, sink: &mut Sink) {
+    if self.base.stack.pop(pass) {
       match self.ext.adjoint {
         None => panic!(),
-        Some(ref adjoint) => (adjoint)(this, sink),
+        Some(ref adjoint) => {
+          (adjoint)(pass, this, self.fun.borrow_mut(), sink);
+          self.x3_._op()._pop_adjoint(pass, self.x3_.clone(), sink);
+          self.x2_._op()._pop_adjoint(pass, self.x2_.clone(), sink);
+          self.x1_._op()._pop_adjoint(pass, self.x1_.clone(), sink);
+        }
       }
-      self.x3_._op()._pop_adjoint(epoch, self.x3_.clone(), sink);
-      self.x2_._op()._pop_adjoint(epoch, self.x2_.clone(), sink);
-      self.x1_._op()._pop_adjoint(epoch, self.x1_.clone(), sink);
     }
   }
 
@@ -2303,7 +2324,7 @@ impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 
 }
 
 pub struct FJoinOp<F, V, W> {
-  base: OpBase<W>,
+  base: OpBase,
   ext:  OpExt<F, W>,
   fun:  RefCell<F>,
   ctrl: Vec<Node>,
@@ -2353,23 +2374,23 @@ impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'st
     }
   }
 
-  fn _push(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    if self.base.stack.push(epoch) {
+  fn _push(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.push(pass) {
       if stop_txn.is_none() || stop_txn != self._txn() {
         for x_ in self.xs_.iter() {
-          x_._node()._push(stop_txn, epoch, apply);
+          x_._node()._push(stop_txn, pass, apply);
         }
       }
       apply(self);
     }
   }
 
-  fn _pop(&self, stop_txn: Option<Txn>, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
-    if self.base.stack.pop(epoch) {
+  fn _pop(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.pop(pass) {
       apply(self);
       if stop_txn.is_none() || stop_txn != self._txn() {
         for x_ in self.xs_.iter().rev() {
-          x_._node()._pop(stop_txn, epoch, apply);
+          x_._node()._pop(stop_txn, pass, apply);
         }
       }
     }
@@ -2426,29 +2447,33 @@ impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 's
     &self.y
   }
 
-  fn _make_tangent(&self) -> Val<W> {
+  fn _push_tangent(&self, pass: Pass, feed: &mut FeedFwd) -> Val<W> {
     match self.ext.tangent {
       None => unimplemented!(),
       Some(ref tangent) => (tangent)(),
     }
   }
 
-  fn tangent(&self) -> Val<W> {
-    let mut tng_op = self.base.tng_op.borrow_mut();
+  /*fn tangent(&self) -> Val<W> {
+    /*let mut tng_op = self.base.tng_op.borrow_mut();
     if tng_op.is_none() {
-      *tng_op = Some(self._make_tangent());
+      *tng_op = Some(self._push_tangent());
     }
-    tng_op.as_ref().unwrap().clone()
-  }
+    tng_op.as_ref().unwrap().clone()*/
+    // TODO
+    unimplemented!();
+  }*/
 
-  fn _pop_adjoint(&self, epoch: Epoch, /*filter: &Fn(&ANode) -> bool,*/ this: Val<W>, sink: &mut Sink) {
-    if self.base.stack.pop(epoch) {
+  fn _pop_adjoint(&self, pass: Pass, this: Val<W>, sink: &mut Sink) {
+    if self.base.stack.pop(pass) {
       match self.ext.adjoint {
         None => panic!(),
-        Some(ref adjoint) => (adjoint)(this, sink),
-      }
-      for x_ in self.xs_.iter().rev() {
-        x_._op()._pop_adjoint(epoch, x_.clone(), sink);
+        Some(ref adjoint) => {
+          (adjoint)(pass, this, self.fun.borrow_mut(), sink);
+          for x_ in self.xs_.iter().rev() {
+            x_._op()._pop_adjoint(pass, x_.clone(), sink);
+          }
+        }
       }
     }
   }
