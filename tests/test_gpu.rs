@@ -55,10 +55,10 @@ fn test_gpu_zeros_eval() {
       }
     }
     let mut arr = GPUDeviceArray1d::<f32>::zeros(1024, conn.clone());
-    arr.as_view_mut().copy_mem(h_arr.as_view(), conn.clone());
+    arr.as_view_mut().sync_copy_mem(h_arr.as_view(), conn.clone());
 
     let mut h_arr2 = MemArray1d::<f32>::zeros(1024);
-    arr.as_view().dump_mem(h_arr2.as_view_mut(), conn.clone());
+    arr.as_view().sync_dump_mem(h_arr2.as_view_mut(), conn.clone());
     {
       let mut h_arr2 = h_arr2.as_view();
       let x = h_arr2.flat_slice().unwrap();
@@ -77,11 +77,11 @@ fn test_gpu_zeros_eval() {
 
   {
     let ctx = implicit_ctx().gpu();
-    let stream = ctx.pool();
+    let mut stream = ctx.pool();
     //let x = x.value();
     let v = x.get(t);
     let mut h_arr = MemArray1d::<f32>::zeros(1024);
-    v.as_view().dump_mem(h_arr.as_view_mut(), stream.conn());
+    v.as_view().sync_dump_mem(h_arr.as_view_mut(), stream.conn());
     {
       let mut h_arr = h_arr.as_view();
       let x = h_arr.flat_slice().unwrap();

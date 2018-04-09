@@ -212,7 +212,7 @@ impl GPUDeviceCtx {
     self.pool.clone()
   }
 
-  pub fn conn(&self) -> GPUDeviceConn {
+  pub fn conn(&mut self) -> GPUDeviceConn {
     self.pool.conn()
   }
 }
@@ -288,7 +288,7 @@ impl MultiGPUDeviceCtx {
     })
   }
 
-  pub fn sync_broadcast_group<T>(&self, src: GPUDeviceArrayView1d<T>, mut dst: Vec<GPUDeviceArrayViewMut1d<T>>, root_dev: GPUDeviceId) where T: NcclDataType {
+  pub fn sync_broadcast_group<T>(&mut self, src: GPUDeviceArrayView1d<T>, mut dst: Vec<GPUDeviceArrayViewMut1d<T>>, root_dev: GPUDeviceId) where T: NcclDataType {
     {
       let conn = self.md_pools[root_dev.rank()].conn();
       dst[root_dev.rank()].copy(src, conn);
@@ -324,7 +324,7 @@ impl MultiGPUDeviceCtx {
     }
   }
 
-  pub fn sync_reduce_group<T>(&self, src: Vec<GPUDeviceArrayView1d<T>>, mut dst: GPUDeviceArrayViewMut1d<T>, op: NcclReduceOp, root_dev: GPUDeviceId) where T: NcclDataType {
+  pub fn sync_reduce_group<T>(&mut self, src: Vec<GPUDeviceArrayView1d<T>>, mut dst: GPUDeviceArrayViewMut1d<T>, op: NcclReduceOp, root_dev: GPUDeviceId) where T: NcclDataType {
     for rank in 0 .. self.num_gpus() {
       let conn = self.md_pools[rank].conn();
       conn.sync();
