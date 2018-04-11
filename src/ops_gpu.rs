@@ -45,14 +45,6 @@ pub fn sz2uint(sz: usize) -> u32 {
   sz as _
 }
 
-/*pub trait GPUDeviceMemIoReader<'a> {
-  fn read_dev_mem(&mut self, src: &'a Any) -> Option<()>;
-}
-
-pub trait GPUDeviceMemIoWriter<'a> {
-  fn write_dev_mem(&mut self, cap: WriteCap, dst: &'a mut Any) -> Option<()>;
-}*/
-
 impl<T> FlatIO<MemArray1d<T>> where T: Copy {
   pub fn len(&self) -> usize {
     self.buffer.size()

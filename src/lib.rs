@@ -39,7 +39,6 @@ extern crate rng;
 extern crate typemap;
 
 use analysis::{LivenessAnalysis};
-//use ops::{MemIoReader, MemIoWriter};
 use ops::{OnesSrcOp, OnesSrcOpMaybeExt, SumJoinOp, SumJoinOpMaybeExt, SumJoinOpExt};
 #[cfg(feature = "gpu")] use ops_gpu::{GPUMuxFun};
 
@@ -55,7 +54,6 @@ use std::collections::{HashMap, HashSet};
 //use std::collections::hash_map::{Entry};
 use std::ops::{Deref, DerefMut};
 use std::rc::{Rc};
-//use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::sync::{Arc};
 use std::sync::mpsc::{SyncSender, Receiver};
 
@@ -232,11 +230,6 @@ pub trait ANode {
   //fn _cleanup(&self, txn: Txn);
   fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar);
   fn _eval_recursive(&self, txn: Txn, rvar: RVar, xvar: RWVar);
-
-  /*fn deserialize_forward(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any));
-  fn deserialize_reverse(&self, txn: Txn, writer: &mut FnMut(WriteMode, &mut Any));
-  fn serialize_forward(&self, txn: Txn, reader: &mut FnMut(&mut Any));
-  fn serialize_reverse(&self, txn: Txn, reader: &mut FnMut(&mut Any));*/
 }
 
 pub trait AOp<V>: ANode {
@@ -556,14 +549,10 @@ impl<V> Val<V> where V: 'static {
     self.op._value().write(txn, self.xvar)
   }
 
-  //pub fn get(&self, txn: Txn) -> Ref<V> {
-  //pub fn get(&self, txn: Txn) -> RwMapRef<RWValBuf<V>, V, impl Fn(&RWValBuf<V>) -> &V> {
   pub fn get(&self, txn: Txn) -> RwLockReadGuard<V> {
     self.op._value().get(txn, self.rvar)
   }
 
-  //pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RefMut<V> {
-  //pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwMapRefMut<RWValBuf<V>, V, impl Fn(&mut RWValBuf<V>) -> &mut V> {
   pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwLockWriteGuard<V> {
     self.op._value().get_mut(txn, self.xvar, token)
   }
@@ -621,14 +610,10 @@ impl<V> OVal<V> where V: 'static {
     self.val.write(txn, self.xvar)
   }
 
-  //pub fn get(&self, txn: Txn) -> Ref<V> {
-  //pub fn get(&self, txn: Txn) -> RwMapRef<RWValBuf<V>, V, impl Fn(&RWValBuf<V>) -> &V> {
   pub fn get(&self, txn: Txn) -> RwLockReadGuard<V> {
     self.val.get(txn, self.rvar)
   }
 
-  //pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RefMut<V> {
-  //pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwMapRefMut<RWValBuf<V>, V, impl Fn(&mut RWValBuf<V>) -> &mut V> {
   pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwLockWriteGuard<V> {
     self.val.get_mut(txn, self.xvar, token)
   }
@@ -1005,135 +990,6 @@ impl<'a> WriteToken<'a> {
   }
 }
 
-/*pub enum RwBox<A> {
-  Local(Rc<RefCell<A>>),
-  Shared(Arc<RwLock<A>>),
-}
-
-impl<A> Clone for RwBox<A> {
-  fn clone(&self) -> Self {
-    match self {
-      &RwBox::Local(ref buf) => RwBox::Local(buf.clone()),
-      &RwBox::Shared(ref buf) => RwBox::Shared(buf.clone()),
-    }
-  }
-}
-
-impl<A> RwBox<A> {
-  pub fn borrow(&self) -> RwRef<A> {
-    match self {
-      &RwBox::Local(ref buf) => RwRef::Local(buf.borrow()),
-      &RwBox::Shared(ref buf) => RwRef::Shared(buf.read()),
-    }
-  }
-
-  pub fn borrow_mut(&self) -> RwRefMut<A> {
-    match self {
-      &RwBox::Local(ref buf) => RwRefMut::Local(buf.borrow_mut()),
-      &RwBox::Shared(ref buf) => RwRefMut::Shared(buf.write()),
-    }
-  }
-}
-
-pub enum RwRef<'a, A> where A: 'a {
-  Local(Ref<'a, A>),
-  Shared(RwLockReadGuard<'a, A>),
-}
-
-impl<'a, A> Deref for RwRef<'a, A> where A: 'a {
-  type Target = A;
-
-  fn deref(&self) -> &Self::Target {
-    match self {
-      &RwRef::Local(ref buf) => &*buf,
-      &RwRef::Shared(ref buf) => &*buf,
-    }
-  }
-}
-
-impl<'a, A> RwRef<'a, A> where A: 'a {
-  pub fn map<T, F>(self, f: F) -> RwMapRef<'a, A, T, F> where T: 'a, F: Fn(&A) -> &T {
-    RwMapRef{
-      ref_: self,
-      map:  f,
-    }
-  }
-}
-
-pub struct RwMapRef<'a, A, T, F> where A: 'a, T: 'a, F: Fn(&A) -> &T {
-  ref_: RwRef<'a, A>,
-  map:  F,
-}
-
-impl<'a, A, T, F> Deref for RwMapRef<'a, A, T, F> where A: 'a, T: 'a, F: Fn(&A) -> &T {
-  type Target = T;
-
-  fn deref(&self) -> &Self::Target {
-    (self.map)(&*self.ref_)
-  }
-}
-
-pub enum RwRefMut<'a, A> where A: 'a {
-  Local(RefMut<'a, A>),
-  Shared(RwLockWriteGuard<'a, A>),
-}
-
-impl<'a, A> Deref for RwRefMut<'a, A> where A: 'a {
-  type Target = A;
-
-  fn deref(&self) -> &Self::Target {
-    match self {
-      &RwRefMut::Local(ref buf) => &*buf,
-      &RwRefMut::Shared(ref buf) => &*buf,
-    }
-  }
-}
-
-impl<'a, A> DerefMut for RwRefMut<'a, A> where A: 'a {
-  fn deref_mut(&mut self) -> &mut Self::Target {
-    match self {
-      &mut RwRefMut::Local(ref mut buf) => &mut *buf,
-      &mut RwRefMut::Shared(ref mut buf) => &mut *buf,
-    }
-  }
-}
-
-impl<'a, A> RwRefMut<'a, A> where A: 'a {
-  pub fn try_downgrade(self) -> Option<RwRef<'a, A>> {
-    match self {
-      RwRefMut::Local(buf) => None,
-      RwRefMut::Shared(buf) => Some(RwRef::Shared(buf.downgrade())),
-    }
-  }
-
-  pub fn map<T, F>(self, f: F) -> RwMapRefMut<'a, A, T, F> where T: 'a, F: Fn(&mut A) -> &mut T {
-    RwMapRefMut{
-      ref_: self,
-      map:  f,
-    }
-  }
-}
-
-pub struct RwMapRefMut<'a, A, T, F> where A: 'a, T: 'a, F: Fn(&mut A) -> &mut T {
-  ref_: RwRefMut<'a, A>,
-  map:  F,
-}
-
-impl<'a, A, T, F> Deref for RwMapRefMut<'a, A, T, F> where A: 'a, T: 'a, F: Fn(&mut A) -> &mut T {
-  type Target = T;
-
-  fn deref(&self) -> &Self::Target {
-    // TODO: could use a immutable map func here.
-    unreachable!();
-  }
-}
-
-impl<'a, A, T, F> DerefMut for RwMapRefMut<'a, A, T, F> where A: 'a, T: 'a, F: Fn(&mut A) -> &mut T {
-  fn deref_mut(&mut self) -> &mut Self::Target {
-    (self.map)(&mut *self.ref_)
-  }
-}*/
-
 pub struct RWValBuf<T> {
   mode:         WriteMode,
   curr_txn:     Option<Txn>,
@@ -1176,40 +1032,26 @@ impl<T> ShareableRWVal<T> where T: 'static {
 pub struct RWVal<T> {
   //ref_:     ValRef,
   alloc:    Arc<Fn(Txn) -> T>,
-  //buf:      Rc<RefCell<RWValBuf<T>>>,
-  //buf:      RwBox<RWValBuf<T>>,
   buf:      Arc<RwLock<RWValBuf<T>>>,
   borrow:   (),
 }
 
 impl<T> IOVal for RWVal<T> where T: 'static {
-  //fn _deserialize(&self, txn: Txn, write: &mut FnMut(WriteCap, &mut Any)) {
   default fn _deserialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
-    // TODO
     unimplemented!();
-    /*if let Some((cap, token)) = self.write(txn) {
-      let mut buf = self.get_mut(txn, token);
-      write(cap, &mut *buf);
-    }*/
   }
 
-  //fn _serialize(&self, txn: Txn, read: &mut FnMut(&Any)) {
   default fn _serialize(&self, txn: Txn, xvar: RWVar, src: &mut Any) {
-    // TODO
     unimplemented!();
-    /*let buf = self.get(txn);
-    read(&*buf);*/
   }
 }
 
 impl<T> RWVal<T> where T: 'static {
   pub fn from(alloc: Arc<Fn(Txn) -> T>) -> Self {
-    //let buf = Rc::new(RefCell::new(RWValBuf::default()));
     let buf = Arc::new(RwLock::new(RWValBuf::default()));
     RWVal{
       //ref_:     ValRef::default(),
       alloc:    alloc,
-      //buf:      RwBox::Local(buf),
       buf:      buf,
       borrow:   (),
     }
@@ -1225,13 +1067,6 @@ impl<T> RWVal<T> where T: 'static {
   }*/
 
   pub fn share(&self) -> Option<ShareableRWVal<T>> {
-    /*match &self.buf {
-      &RwBox::Local(_) => None,
-      &RwBox::Shared(ref buf) => Some(ShareableRWVal{
-        alloc:  self.alloc.clone(),
-        buf:    buf.clone(),
-      }),
-    }*/
     Some(ShareableRWVal{
       alloc:  self.alloc.clone(),
       buf:    self.buf.clone(),
@@ -1394,10 +1229,7 @@ impl<T> RWVal<T> where T: 'static {
     Some((cap, WriteToken{xvar: xvar, first: first, borrow: &self.borrow}))
   }
 
-  //pub fn get(&self, txn: Txn, rvar: RVar) -> Ref<T> {
-  //pub fn get(&self, txn: Txn, rvar: RVar) -> RwMapRef<RWValBuf<T>, T, impl Fn(&RWValBuf<T>) -> &T> {
   pub fn get(&self, txn: Txn, rvar: RVar) -> RwLockReadGuard<T> {
-    //let buf = self.buf.upgradable_read();
     let buf = self.buf.read();
 
     let mut valid_txn = false;
@@ -1416,25 +1248,14 @@ impl<T> RWVal<T> where T: 'static {
       1 => {}
       _ => panic!("attempting an invalid read (too many live writes)"),
     }
-    /*let buf = if !buf.l_consumers.borrow().contains(&rvar) {
-      let mut buf = buf.upgrade();
-      buf.l_consumers.insert(rvar);
-      buf.downgrade()
-    } else {
-      buf.downgrade()
-    };*/
     buf.l_consumers.lock().insert(rvar);
 
     assert!(buf.data.is_some(),
         "attempting a read on empty data");
 
-    //Ref::map(buf, |buf| buf.data.as_ref().unwrap())
-    //buf.map(|buf| buf.data.as_ref().unwrap())
     RwLockReadGuard::map(buf, |buf| buf.data.as_ref().unwrap())
   }
 
-  //pub fn get_mut(&self, txn: Txn, /*rvar: RVar,*/ xvar: RWVar, token: WriteToken) -> RefMut<T> {
-  //pub fn get_mut(&self, txn: Txn, xvar: RWVar, token: WriteToken) -> RwMapRefMut<RWValBuf<T>, T, impl Fn(&mut RWValBuf<T>) -> &mut T> {
   pub fn get_mut(&self, txn: Txn, xvar: RWVar, token: WriteToken) -> RwLockWriteGuard<T> {
     let mut buf = self.buf.write();
     assert_eq!(xvar, token.xvar);
@@ -1459,8 +1280,6 @@ impl<T> RWVal<T> where T: 'static {
       buf.data = Some((self.alloc)(txn));
     }
 
-    //RefMut::map(buf, |buf| buf.data.as_mut().unwrap())
-    //buf.map(|buf| buf.data.as_mut().unwrap())
     RwLockWriteGuard::map(buf, |buf| buf.data.as_mut().unwrap())
   }
 
@@ -1475,102 +1294,6 @@ impl<T> RWVal<T> where T: 'static {
     }
   }*/
 }
-
-/*pub trait IoReadable<'a>: Sized + 'static {
-  fn read(&'a self, reader: &mut IoReader<'a>) {
-    reader.read(self);
-  }
-}
-
-pub trait IoReader<'a> {
-  fn read(&mut self, src: &'a Any);
-}
-
-impl<'a, R> IoReader<'a> for R where R: MemIoReader<'a> {
-  fn read(&mut self, src: &'a Any) {
-    let ty_id = src.get_type_id();
-    if self.read_mem(src).is_some() {
-      return;
-    }
-    /*if self.read_mem(src).is_some() {
-      return;
-    }*/
-    panic!("IoReader: `src` has an unhandled type: {:?}", ty_id);
-  }
-}
-
-pub trait IoWriter<'a> {
-  fn write(&mut self, cap: WriteCap, dst: &'a mut Any);
-}
-
-impl<'a, W> IoWriter<'a> for W where W: MemIoWriter<'a> {
-  fn write(&mut self, cap: WriteCap, mut dst: &'a mut Any) {
-    let ty_id = (*dst).get_type_id();
-    if self.write_mem(cap, &mut dst).is_some() {
-      return;
-    }
-    /*if self.write_mem(mode, &mut dst).is_some() {
-      return;
-    }*/
-    panic!("IoWriter: `dst` has an unhandled type: {:?}", ty_id);
-  }
-}
-
-pub struct FlatReader<'a, T> where T: 'a {
-  pub offset:   usize,
-  pub inner:    &'a mut T,
-}
-
-impl<'a, T> FlatReader<'a, T> {
-  pub fn new(inner: &'a mut T) -> Self {
-    FlatReader{
-      offset:   0,
-      inner:    inner,
-    }
-  }
-}
-
-impl<'a, T> FnOnce<(&'a Any,)> for FlatReader<'a, T> where FlatReader<'a, T>: IoReader<'a> {
-  type Output = ();
-
-  extern "rust-call" fn call_once(mut self, args: (&'a Any,)) -> () {
-    self.call_mut(args)
-  }
-}
-
-impl<'a, T> FnMut<(&'a Any,)> for FlatReader<'a, T> where FlatReader<'a, T>: IoReader<'a> {
-  extern "rust-call" fn call_mut(&mut self, args: (&'a Any,)) -> () {
-    self.read(args.0);
-  }
-}
-
-pub struct FlatWriter<'a, T> where T: 'a {
-  pub offset:   usize,
-  pub inner:    &'a mut T,
-}
-
-impl<'a, T> FlatWriter<'a, T> {
-  pub fn new(inner: &'a mut T) -> Self {
-    FlatWriter{
-      offset:   0,
-      inner:    inner,
-    }
-  }
-}
-
-impl<'a, T> FnOnce<(WriteCap, &'a mut Any)> for FlatWriter<'a, T> where FlatWriter<'a, T>: IoWriter<'a> {
-  type Output = ();
-
-  extern "rust-call" fn call_once(mut self, args: (WriteCap, &'a mut Any)) -> () {
-    self.call_mut(args)
-  }
-}
-
-impl<'a, T> FnMut<(WriteCap, &'a mut Any)> for FlatWriter<'a, T> where FlatWriter<'a, T>: IoWriter<'a> {
-  extern "rust-call" fn call_mut(&mut self, args: (WriteCap, &'a mut Any)) -> () {
-    self.write(args.0, args.1);
-  }
-}*/
 
 pub struct OpExt<F, V> {
   build:    Box<Fn(Vec<Rc<Any>>) -> Val<V>>,
@@ -1597,12 +1320,6 @@ pub struct OpExt<F, V> {
       adjoint:  self.adjoint.clone(),
       inplace:  self.inplace.clone(),
     }
-  }
-}*/
-
-/*impl<V> WrapValExt<V> for Rc<AOp<V>> where V: 'static {
-  fn inplace(&self) -> Option<Val<V>> {
-    self._inplace()
   }
 }*/
 
