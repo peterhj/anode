@@ -202,7 +202,7 @@ pub trait SumJoinOpExt<V> {
   fn build(xs_: Vec<Val<V>>) -> Val<V>;
 }
 
-pub trait SumExt<X, V> {
+/*pub trait SumExt<X, V> {
   fn sum(xs_: Vec<Rc<AOp<V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>>;
   fn add(self, x_: Rc<AOp<V>>) -> Rc<FJoinOp<SumJoinOp, V, V>>;
 }
@@ -220,31 +220,36 @@ pub trait MultOpExt<X, V1, A, V2, Y, W>
 pub trait MultAddOpExt<X, V1, A, V2, B, V3, Y, W>
 {
   fn mult_add(self, x: Rc<AOp<V1>>, shift: Rc<AOp<V3>>) -> Rc<F3Op<LinearMapOp, V1, V2, V3, W>>;
-}
+}*/
 
 pub trait LinearExt<A, X, Y> {
-  //fn mult(&self, x: Rc<AOp<X>>) -> Rc<F2Op<LinearMapOp, A, X, Y>>;
-  fn mult(&self, x: Val<X>) -> Val<Y>;
+  fn mult(self, x: Val<X>) -> Val<Y>;
+}
+
+pub trait AffineExt<A, X, Y, B> {
+  fn mult_add(self, x: Val<X>, b: Val<B>) -> Val<Y>;
 }
 
 pub trait LeftTransposeLinearExt<A, Y, X> {
-  //fn mult_left_transpose(&self, y: Rc<AOp<Y>>) -> Rc<F2Op<LeftTransposeLinearMapOp, A, Y, X>>;
-  fn mult_left_transpose(&self, y: Val<Y>) -> Val<X>;
+  fn left_transpose_mult(self, y: Val<Y>) -> Val<X>;
 }
 
 pub trait RightTransposeLinearExt<Y, X, A> {
-  //fn mult_right_transpose(&self, x: Rc<AOp<X>>) -> Rc<F2Op<RightTransposeLinearMapOp, Y, X, A>>;
-  fn mult_right_transpose(&self, x: Val<X>) -> Val<A>;
+  fn right_transpose_mult(self, x: Val<X>) -> Val<A>;
 }
 
-/*pub trait ConvLinearExt<A, X, Y> {
-  fn conv(&self, x: Rc<AOp<X>>) -> Rc<F2Op<ConvLinearMapOp, A, X, Y>>;
+pub trait ConvLinearExt<A, X, Y> {
+  fn conv(self, x: Val<X>) -> Val<Y>;
+}
+
+pub trait ConvAffineExt<A, X, Y, B> {
+  fn conv_add(self, x: Val<X>, b: Val<B>) -> Val<Y>;
 }
 
 pub trait LeftTransposeConvLinearExt<A, Y, X> {
-  fn conv_left_transpose(&self, y: Rc<AOp<Y>>) -> Rc<F2Op<LeftTransposeConvLinearMapOp, A, Y, X>>;
+  fn left_transpose_conv(self, y: Val<Y>) -> Val<X>;
 }
 
 pub trait RightTransposeConvLinearExt<Y, X, A> {
-  fn conv_right_transpose(&self, x: Rc<AOp<X>>) -> Rc<F2Op<RightTransposeConvLinearMapOp, Y, X, A>>;
-}*/
+  fn right_transpose_conv(self, x: Val<X>) -> Val<A>;
+}

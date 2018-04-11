@@ -1295,44 +1295,67 @@ where SumJoinOp: SumJoinOpExt<A, V>,
   }
 }*/
 
-impl<T> LeftTransposeLinearExt<GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>> for Val<GPUDeviceArray2d<T>> where T: Copy {
-  //fn mult_left_transpose(&self, y: Val<GPUDeviceArray1d<T>>) -> Rc<F2Op<LeftTransposeLinearMapOp, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>>> {
-  fn mult_left_transpose(&self, y: Val<GPUDeviceArray1d<T>>) -> Val<GPUDeviceArray1d<T>> {
+impl<T> LinearExt<GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>> for Val<GPUDeviceArray2d<T>>
+where T: PseudoField + ZeroBits + Copy + 'static,
+      GPUDeviceArrayViewMut1d<T>: GPUVectorOps<T>,
+{
+  fn mult(self, x: Val<GPUDeviceArray1d<T>>) -> Val<GPUDeviceArray1d<T>> {
+    LinearMapOp::build_device_val(self, x)
+  }
+}
+
+impl<T> LinearExt<GPUDeviceArray2d<T>, GPUDeviceOuterBatchArray1d<T>, GPUDeviceOuterBatchArray1d<T>> for Val<GPUDeviceArray2d<T>>
+where T: PseudoField + ZeroBits + Copy + 'static,
+      GPUDeviceArrayViewMut2d<T>: GPUMatrixOps<T>,
+{
+  fn mult(self, x: Val<GPUDeviceOuterBatchArray1d<T>>) -> Val<GPUDeviceOuterBatchArray1d<T>> {
+    LinearMapOp::build_device_obatch_val(self, x)
+  }
+}
+
+impl<T> LeftTransposeLinearExt<GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>> for Val<GPUDeviceArray2d<T>>
+where T: PseudoField + ZeroBits + Copy + 'static,
+      GPUDeviceArrayViewMut1d<T>: GPUVectorOps<T>,
+{
+  fn left_transpose_mult(self, y: Val<GPUDeviceArray1d<T>>) -> Val<GPUDeviceArray1d<T>> {
     // TODO
     unimplemented!();
   }
 }
 
-/*impl<This, T> LeftTransposeLinearExt<GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>> for Rc<This> where This: AOp<GPUDeviceArray2d<T>>, T: Copy {
-  fn mult_left_transpose(&self, y: Val<GPUDeviceArray1d<T>>) -> Rc<F2Op<LeftTransposeLinearMapOp, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>>> {
-    // TODO
-    unimplemented!();
+impl<T> LeftTransposeLinearExt<GPUDeviceArray2d<T>, GPUDeviceOuterBatchArray1d<T>, GPUDeviceOuterBatchArray1d<T>> for Val<GPUDeviceArray2d<T>>
+where T: PseudoField + ZeroBits + Copy + 'static,
+      GPUDeviceArrayViewMut2d<T>: GPUMatrixOps<T>,
+{
+  fn left_transpose_mult(self, y: Val<GPUDeviceOuterBatchArray1d<T>>) -> Val<GPUDeviceOuterBatchArray1d<T>> {
+    LinearMapOp::build_device_obatch_ltrans_val(self, y)
   }
-}*/
+}
 
-impl<T> RightTransposeLinearExt<GPUDeviceArray1d<T>, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>> for Val<GPUDeviceArray1d<T>> where T: Copy {
-  //fn mult_right_transpose(&self, a: Val<GPUDeviceArray1d<T>>) -> Rc<F2Op<RightTransposeLinearMapOp, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>>> {
-  fn mult_right_transpose(&self, a: Val<GPUDeviceArray1d<T>>) -> Val<GPUDeviceArray2d<T>> {
+impl<T> RightTransposeLinearExt<GPUDeviceArray1d<T>, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>> for Val<GPUDeviceArray1d<T>>
+where T: PseudoField + ZeroBits + Copy + 'static,
+      GPUDeviceArrayViewMut1d<T>: GPUVectorOps<T>,
+{
+  fn right_transpose_mult(self, x: Val<GPUDeviceArray1d<T>>) -> Val<GPUDeviceArray2d<T>> {
     // TODO
     unimplemented!();
   }
 }
 
-/*impl<This, T> RightTransposeLinearExt<GPUDeviceArray1d<T>, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>> for Rc<This> where This: AOp<GPUDeviceArray1d<T>>, T: Copy {
-  fn mult_right_transpose(&self, a: Val<GPUDeviceArray1d<T>>) -> Rc<F2Op<RightTransposeLinearMapOp, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>>> {
-    // TODO
-    unimplemented!();
+impl<T> RightTransposeLinearExt<GPUDeviceOuterBatchArray1d<T>, GPUDeviceOuterBatchArray1d<T>, GPUDeviceArray2d<T>> for Val<GPUDeviceOuterBatchArray1d<T>>
+where T: PseudoField + ZeroBits + Copy + 'static,
+      GPUDeviceArrayViewMut2d<T>: GPUMatrixOps<T>,
+{
+  fn right_transpose_mult(self, x: Val<GPUDeviceOuterBatchArray1d<T>>) -> Val<GPUDeviceArray2d<T>> {
+    LinearMapOp::build_device_obatch_rtrans_val(self, x)
   }
-}*/
+}
 
 impl LinearMapOp {
-  /*pub fn build_device_op<T, V1, V2, W>(input_: Rc<AOp<V1>>, map_: Rc<AOp<V2>>)
-      -> Rc<F2Op<Self, V1, V2, W>>*/
-  pub fn build_device_op<T>(map_: Val<GPUDeviceArray2d<T>>, input_: Val<GPUDeviceArray1d<T>>)
-      -> Rc<F2Op<Self, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>>>
+  pub fn build_device_val<T>(map_: Val<GPUDeviceArray2d<T>>, input_: Val<GPUDeviceArray1d<T>>)
+      -> Val<GPUDeviceArray1d<T>>
   // TODO: `ZeroBits` should not be necessary here.
   where T: PseudoField + ZeroBits + Copy + 'static,
-        //CublasHandle: CublasBlasExt<T>,
         GPUDeviceArrayViewMut1d<T>: GPUVectorOps<T>,
   {
     let ext = OpExt{
@@ -1345,7 +1368,6 @@ impl LinearMapOp {
       make_val: {
         let map_ = map_.clone();
         Box::new(move |state: RefMut<LinearMapOp>| {
-          //let map = map_.value();
           let map_ = map_.clone();
           RWVal::from(Arc::new(move |txn| {
             let ctx = implicit_ctx().gpu();
@@ -1364,18 +1386,15 @@ impl LinearMapOp {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
-            let alpha = T::one();
-            let beta = match cap {
-              WriteCap::Assign => T::zero(),
-              WriteCap::Accumulate => T::one(),
-            };
-            assert_eq!(input_.get(txn).size(), map_.get(txn).size()[1]);
-            assert_eq!(output.get_mut(txn, token).size(), map_.get(txn).size()[0]);
-            assert_eq!(1, map_.get(txn).as_view().stride()[0]);
-            let a = map_.get(txn).as_view();
-            let x = input_.get(txn).as_view();
-            let mut y = output.get_mut(txn, token).as_view_mut();
-            gpu_matrix_vector_mult(a, x, y, conn);
+            match cap {
+              WriteCap::Assign => {
+                let a = map_.get(txn).as_view();
+                let x = input_.get(txn).as_view();
+                let mut y = output.get_mut(txn, token).as_view_mut();
+                gpu_matrix_vector_mult(a, x, y, conn);
+              }
+              WriteCap::Accumulate => unimplemented!(),
+            }
           }
         })
       },
@@ -1401,8 +1420,8 @@ impl LinearMapOp {
           let a_ = map_.clone();
           //if let Some(adj_y_) = sink.get_adj::<GPUDeviceArray1d<T>>(y_.var()) {
           if let Some(adj_y_) = y_.adjoint(sink) {
-            let adj_a_ = adj_y_.mult_right_transpose(x_.clone());
-            let adj_x_ = a_.mult_left_transpose(adj_y_);
+            let adj_a_ = adj_y_.clone().right_transpose_mult(x_.clone());
+            let adj_x_ = a_.clone().left_transpose_mult(adj_y_);
             //sink.put_adj::<GPUDeviceArray2d<T>>(a_.var(), adj_a_);
             //sink.put_adj::<GPUDeviceArray1d<T>>(x_.var(), adj_x_);
             a_.put_adjoint(adj_a_, sink);
@@ -1412,31 +1431,234 @@ impl LinearMapOp {
       }),
       inplace: None,
     };
-    Rc::new(F2Op::new(LinearMapOp, ext, input_, map_))
+    Val::from(Rc::new(F2Op::new(LinearMapOp, ext, map_, input_)))
   }
 
-  /*pub fn build_device_obatch_op<T, V1, V2, W>(input_: Rc<AOp<V1>>, map_: Rc<AOp<V2>>)
-      -> Rc<F2Op<Self, V1, V2, W>>
-  where T: Copy,
-        V1: RWVal<T=GPUDeviceOuterBatchArray1d<T>> + 'static,
-        V2: RWVal<T=GPUDeviceArray2d<T>> + 'static,
-        W:  RWVal<T=GPUDeviceOuterBatchArray1d<T>> + 'static,
+  pub fn build_device_obatch_val<T>(w_: Val<GPUDeviceArray2d<T>>, x_: Val<GPUDeviceOuterBatchArray1d<T>>)
+      -> Val<GPUDeviceOuterBatchArray1d<T>>
+  // TODO: `ZeroBits` should not be necessary here.
+  where T: PseudoField + ZeroBits + Copy + 'static,
+        GPUDeviceArrayViewMut2d<T>: GPUMatrixOps<T>,
   {
-    // TODO
-    unimplemented!();
-  }*/
+    let ext = OpExt{
+      build: {
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      },
+      make_val: {
+        let w_ = w_.clone();
+        let x_ = x_.clone();
+        Box::new(move |state: RefMut<LinearMapOp>| {
+          let w_ = w_.clone();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let w_size = w_.get(txn).size();
+            let x_max_bsz = x_.get(txn).batch_capacity();
+            GPUDeviceOuterBatchArray1d::zeros(w_size[0], x_max_bsz, conn)
+          }))
+        })
+      },
+      apply: {
+        let w_ = w_.clone();
+        let x_ = x_.clone();
+        Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray1d<T>>| {
+          if let Some((cap, token)) = output.write(txn) {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            match cap {
+              WriteCap::Assign => {
+                let w = w_.get(txn).as_view();
+                let x = x_.get(txn).as_view();
+                let mut y = output.get_mut(txn, token).as_view_mut();
+                gpu_matrix_mult(w, x, y, conn);
+              }
+              WriteCap::Accumulate => unimplemented!(),
+            }
+          }
+        })
+      },
+      tangent: Some({
+        let w_ = w_.clone();
+        let x_ = x_.clone();
+        Box::new(move |_: Pass, _state: RefMut<Self>, _feedfwd: &mut FeedFwd| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      adjoint: Some({
+        let w_ = w_.clone();
+        let x_ = x_.clone();
+        Box::new(move |_: Pass, y_: Val<GPUDeviceOuterBatchArray1d<T>>, state: RefMut<Self>, sink: &mut Sink| {
+          let x_ = x_.clone();
+          let w_ = w_.clone();
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // FIXME
+            /*let adj_w_ = adj_y_.clone().mult_right_transpose(x_.clone());
+            let adj_x_ = w_.mult_left_transpose(adj_y_);
+            w_.put_adjoint(adj_w_, sink);
+            x_.put_adjoint(adj_x_, sink);*/
+            unimplemented!();
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F2Op::new(LinearMapOp, ext, w_, x_)))
+  }
 
-  /*pub fn build_device_batch_affine_op<T, V1, V2, V3, W>(input_: Rc<AOp<V1>>, map_: Rc<AOp<V2>>, bias_: Rc<AOp<V3>>)
-      -> Rc<F3Op<Self, V1, V2, V3, W>>
-  where T: Copy,
-        V1: RWVal<T=GPUDeviceOuterBatchArray1d<T>> + 'static,
-        V2: RWVal<T=GPUDeviceArray2d<T>> + 'static,
-        V3: RWVal<T=GPUDeviceArray1d<T>> + 'static,
-        W:  RWVal<T=GPUDeviceOuterBatchArray1d<T>> + 'static,
+  pub fn build_device_obatch_ltrans_val<T>(w_: Val<GPUDeviceArray2d<T>>, x_: Val<GPUDeviceOuterBatchArray1d<T>>)
+      -> Val<GPUDeviceOuterBatchArray1d<T>>
+  // TODO: `ZeroBits` should not be necessary here.
+  where T: PseudoField + ZeroBits + Copy + 'static,
+        GPUDeviceArrayViewMut2d<T>: GPUMatrixOps<T>,
   {
-    // TODO
-    unimplemented!();
-  }*/
+    let ext = OpExt{
+      build: {
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      },
+      make_val: {
+        let w_ = w_.clone();
+        let x_ = x_.clone();
+        Box::new(move |state: RefMut<LinearMapOp>| {
+          let w_ = w_.clone();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let w_size = w_.get(txn).size();
+            let x_max_bsz = x_.get(txn).batch_capacity();
+            GPUDeviceOuterBatchArray1d::zeros(w_size[1], x_max_bsz, conn)
+          }))
+        })
+      },
+      apply: {
+        let w_ = w_.clone();
+        let x_ = x_.clone();
+        Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray1d<T>>| {
+          if let Some((cap, token)) = output.write(txn) {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            match cap {
+              WriteCap::Assign => {
+                let w = w_.get(txn).as_view();
+                let x = x_.get(txn).as_view();
+                let mut y = output.get_mut(txn, token).as_view_mut();
+                gpu_left_transpose_matrix_mult(w, x, y, conn);
+              }
+              WriteCap::Accumulate => unimplemented!(),
+            }
+          }
+        })
+      },
+      tangent: Some({
+        let w_ = w_.clone();
+        let x_ = x_.clone();
+        Box::new(move |_: Pass, _state: RefMut<Self>, _feedfwd: &mut FeedFwd| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      adjoint: Some({
+        let w_ = w_.clone();
+        let x_ = x_.clone();
+        Box::new(move |_: Pass, y_: Val<GPUDeviceOuterBatchArray1d<T>>, state: RefMut<Self>, sink: &mut Sink| {
+          let x_ = x_.clone();
+          let w_ = w_.clone();
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // TODO
+            unimplemented!();
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F2Op::new(LinearMapOp, ext, w_, x_)))
+  }
+
+  pub fn build_device_obatch_rtrans_val<T>(w_: Val<GPUDeviceOuterBatchArray1d<T>>, x_: Val<GPUDeviceOuterBatchArray1d<T>>)
+      -> Val<GPUDeviceArray2d<T>>
+  // TODO: `ZeroBits` should not be necessary here.
+  where T: PseudoField + ZeroBits + Copy + 'static,
+        GPUDeviceArrayViewMut2d<T>: GPUMatrixOps<T>,
+  {
+    let ext = OpExt{
+      build: {
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      },
+      make_val: {
+        let w_ = w_.clone();
+        let x_ = x_.clone();
+        Box::new(move |state: RefMut<LinearMapOp>| {
+          let w_ = w_.clone();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let w_size = w_.get(txn).size();
+            let x_size = x_.get(txn).size();
+            GPUDeviceArray2d::zeros([w_size, x_size], conn)
+          }))
+        })
+      },
+      apply: {
+        let w_ = w_.clone();
+        let x_ = x_.clone();
+        Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceArray2d<T>>| {
+          if let Some((cap, token)) = output.write(txn) {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            match cap {
+              WriteCap::Assign => {
+                let w = w_.get(txn).as_view();
+                let x = x_.get(txn).as_view();
+                let mut y = output.get_mut(txn, token).as_view_mut();
+                gpu_right_transpose_matrix_mult(w, x, y, conn);
+              }
+              WriteCap::Accumulate => unimplemented!(),
+            }
+          }
+        })
+      },
+      tangent: Some({
+        let w_ = w_.clone();
+        let x_ = x_.clone();
+        Box::new(move |_: Pass, _state: RefMut<Self>, _feedfwd: &mut FeedFwd| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      adjoint: Some({
+        let w_ = w_.clone();
+        let x_ = x_.clone();
+        Box::new(move |_: Pass, y_: Val<GPUDeviceArray2d<T>>, state: RefMut<Self>, sink: &mut Sink| {
+          let x_ = x_.clone();
+          let w_ = w_.clone();
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // TODO
+            unimplemented!();
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F2Op::new(LinearMapOp, ext, w_, x_)))
+  }
 }
 
 /*impl<A, V> SumExt<A, V> for Rc<AOp<V>>
@@ -1457,38 +1679,3 @@ where SumJoinOp: SumJoinOpExt<A, V>,
       V: RWVal<T=A> + 'static,
       This: AOp<V> + 'static,
 {*/
-
-/*impl<T> MultOpExt<GPUDeviceArray1d<T>, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>> for Rc<AOp<GPUDeviceArray2d<T>>>
-where T: Copy + PseudoField + 'static,
-      /*V1: RWVal<T=GPUDeviceArray1d<T>> + 'static,
-      V2: RWVal<T=GPUDeviceArray2d<T>> + 'static,
-      W:  RWVal<T=GPUDeviceArray1d<T>> + 'static,*/
-      CublasHandle: CublasBlasExt<T>,
-{
-  fn mult(self, x: Rc<AOp<GPUDeviceArray1d<T>>>) -> Rc<F2Op<LinearMapOp, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>>> {
-    LinearMapOp::build_device_op(x, self)
-  }
-}
-
-/*impl<T, V1, V2, W> MultOpExt<GPUDeviceOuterBatchArray1d<T>, V1, GPUDeviceOuterBatchArray1d<T>, W> for Rc<AOp<V2>>
-where T: Copy,
-      V1: RWVal<T=GPUDeviceOuterBatchArray1d<T>> + 'static,
-      V2: RWVal<T=GPUDeviceArray2d<T>> + 'static,
-      W:  RWVal<T=GPUDeviceOuterBatchArray1d<T>> + 'static,
-{
-  fn mult(self, x: Rc<AOp<V1>>) -> Rc<AOp<W>> {
-    LinearMapOp::build_device_obatch_op(x, self)
-  }
-}*/
-
-impl<T> MultAddOpExt<GPUDeviceOuterBatchArray1d<T>, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceOuterBatchArray1d<T>> for Rc<AOp<GPUDeviceArray2d<T>>>
-where T: Copy,
-      /*V1: RWVal<T=GPUDeviceOuterBatchArray1d<T>> + 'static,
-      V2: RWVal<T=GPUDeviceArray2d<T>> + 'static,
-      V3: RWVal<T=GPUDeviceArray1d<T>> + 'static,
-      W:  RWVal<T=GPUDeviceOuterBatchArray1d<T>> + 'static,*/
-{
-  fn mult_add(self, x: Rc<AOp<GPUDeviceOuterBatchArray1d<T>>>, shift: Rc<AOp<GPUDeviceArray1d<T>>>) -> Rc<F3Op<LinearMapOp, GPUDeviceOuterBatchArray1d<T>, GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceOuterBatchArray1d<T>>> {
-    LinearMapOp::build_device_batch_affine_op(x, self, shift)
-  }
-}*/
