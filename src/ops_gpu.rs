@@ -31,6 +31,7 @@ use memarray::*;
 use std::cell::{RefMut};
 //use std::marker::{PhantomData};
 //use std::ops::{Range, RangeFrom, RangeTo, RangeFull};
+use std::ops::{Add, Mul};
 use std::sync::{Arc};
 
 #[inline]
@@ -1287,6 +1288,73 @@ where SumJoinOp: SumJoinOpExt<A, V>,
   }
 }*/
 
+// TODO: need more trait bounds.
+impl<V> ConstantOpsExt<f32, V> for Val<V> {
+  default fn set_constant(self, c: f32) -> Val<V> {
+    // TODO
+    unimplemented!();
+  }
+
+  default fn add_constant(self, c: f32) -> Val<V> {
+    // TODO
+    unimplemented!();
+  }
+
+  default fn mult_constant(self, c: f32) -> Val<V> {
+    // TODO
+    unimplemented!();
+  }
+}
+
+impl<T> Add<T> for Val<GPUDeviceArray1d<T>>
+where T: Copy,
+      Val<GPUDeviceArray1d<T>>: ConstantOpsExt<T, GPUDeviceArray1d<T>>,
+{
+  type Output = Val<GPUDeviceArray1d<T>>;
+
+  fn add(self, c: T) -> Val<GPUDeviceArray1d<T>> {
+    self.add_constant(c)
+  }
+}
+
+impl Add<Val<GPUDeviceArray1d<f32>>> for f32 {
+  type Output = Val<GPUDeviceArray1d<f32>>;
+
+  fn add(self, x_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+    x_.add_constant(self)
+  }
+}
+
+impl<T> Mul<T> for Val<GPUDeviceArray1d<T>>
+where T: Copy,
+      Val<GPUDeviceArray1d<T>>: ConstantOpsExt<T, GPUDeviceArray1d<T>>,
+{
+  type Output = Val<GPUDeviceArray1d<T>>;
+
+  fn mul(self, c: T) -> Val<GPUDeviceArray1d<T>> {
+    self.mult_constant(c)
+  }
+}
+
+impl Mul<Val<GPUDeviceArray1d<f32>>> for f32 {
+  type Output = Val<GPUDeviceArray1d<f32>>;
+
+  fn mul(self, x_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+    x_.mult_constant(self)
+  }
+}
+
+impl<T> Add<Val<GPUDeviceArray1d<T>>> for Val<GPUDeviceOuterBatchArray1d<T>>
+where T: Copy,
+{
+  type Output = Val<GPUDeviceOuterBatchArray1d<T>>;
+
+  fn add(self, y_: Val<GPUDeviceArray1d<T>>) -> Val<GPUDeviceOuterBatchArray1d<T>> {
+    // TODO
+    unimplemented!();
+  }
+}
+
 impl<T> LinearExt<GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>> for Val<GPUDeviceArray2d<T>>
 where T: PseudoField + ZeroBits + Copy + 'static,
       GPUDeviceArrayViewMut1d<T>: GPUVectorOps<T>,
@@ -1450,7 +1518,7 @@ impl LinearMapOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let w_size = w_.get(txn).size();
-            let x_max_bsz = x_.get(txn).batch_capacity();
+            let x_max_bsz = x_.get(txn).max_batch_size();
             GPUDeviceOuterBatchArray1d::zeros(w_size[0], x_max_bsz, conn)
           }))
         })
@@ -1528,7 +1596,7 @@ impl LinearMapOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let w_size = w_.get(txn).size();
-            let x_max_bsz = x_.get(txn).batch_capacity();
+            let x_max_bsz = x_.get(txn).max_batch_size();
             GPUDeviceOuterBatchArray1d::zeros(w_size[1], x_max_bsz, conn)
           }))
         })

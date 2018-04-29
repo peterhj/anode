@@ -17,7 +17,7 @@ limitations under the License.
 use ::*;
 
 use std::marker::{PhantomData};
-use std::ops::{DerefMut};
+use std::ops::{Add, Mul};
 use std::rc::{Rc};
 
 /*pub trait MemIoReader<'a> {
@@ -182,6 +182,12 @@ impl<V> OnesSrcOpMaybeExt<V> for OnesSrcOp {
   }
 }
 
+pub trait ConstantOpsExt<T, V> {
+  fn set_constant(self, c: T) -> Val<V>;
+  fn add_constant(self, c: T) -> Val<V>;
+  fn mult_constant(self, c: T) -> Val<V>;
+}
+
 pub trait SumJoinOpMaybeExt<V> {
   fn maybe_build(xs_: Vec<Val<V>>) -> Option<Val<V>>;
 }
@@ -202,25 +208,48 @@ pub trait SumJoinOpExt<V> {
   fn build(xs_: Vec<Val<V>>) -> Val<V>;
 }
 
-/*pub trait SumExt<X, V> {
-  fn sum(xs_: Vec<Rc<AOp<V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>>;
-  fn add(self, x_: Rc<AOp<V>>) -> Rc<FJoinOp<SumJoinOp, V, V>>;
+pub trait SumExt<V> {
+  fn sum(xs_: Vec<Val<V>>) -> Val<V>;
 }
 
-pub trait FlatMultOpExt<X, V1, A, V2, Y, W>
-{
-  fn flat_mult(self, x: Rc<AOp<V1>>) -> Rc<F2Op<FlatLinearMapFun, V1, V2, W>>;
+impl<V> Add<Val<V>> for Val<V> where Self: SumExt<V> {
+  type Output = Val<V>;
+
+  fn add(self, x_: Val<V>) -> Val<V> {
+    <Val<V> as SumExt<V>>::sum(vec![self, x_])
+  }
 }
 
-pub trait MultOpExt<X, V1, A, V2, Y, W>
-{
-  fn mult(self, x: Rc<AOp<V1>>) -> Rc<F2Op<LinearMapOp, V1, V2, W>>;
+pub trait FlatLinearExt<A, X, Y> {
+  fn flat_mult(self, x_: Val<X>) -> Val<Y>;
 }
 
-pub trait MultAddOpExt<X, V1, A, V2, B, V3, Y, W>
-{
-  fn mult_add(self, x: Rc<AOp<V1>>, shift: Rc<AOp<V3>>) -> Rc<F3Op<LinearMapOp, V1, V2, V3, W>>;
-}*/
+impl<V> Mul<Val<V>> for Val<V> where Self: FlatLinearExt<V, V, V> {
+  type Output = Val<V>;
+
+  fn mul(self, x_: Val<V>) -> Val<V> {
+    self.flat_mult(x_)
+  }
+}
+
+pub trait FlatAffineExt<A, X, Y, B> {
+  fn flat_mult(self, x_: Val<X>, b_: Val<B>) -> Val<Y>;
+}
+
+pub trait BroadcastAddExt<A, X, Y> {
+  // TODO: axes.
+  fn broadcast_add(self, axes: (), x_: Val<X>) -> Val<Y>;
+}
+
+pub trait BroadcastLinearExt<A, X, Y> {
+  // TODO: axes.
+  fn broadcast_mult(self, axes: (), x_: Val<X>) -> Val<Y>;
+}
+
+pub trait BroadcastAffineExt<A, X, Y, B> {
+  // TODO: axes.
+  fn broadcast_mult_add(self, axes: (), x_: Val<X>, b_: Val<B>) -> Val<Y>;
+}
 
 pub trait LinearExt<A, X, Y> {
   fn mult(self, x: Val<X>) -> Val<Y>;

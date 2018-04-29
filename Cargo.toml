@@ -20,7 +20,7 @@ walkdir = "*"
 [dependencies]
 rand = "*"
 time = "*"
-arithmetic = { path = "../libarithmetic" }
+arithmetic = { path = "../arithmetic" }
 arrayidx = { path = "../arrayidx" }
 #async_execution = { path = "../async_execution" }
 colorimage = { path = "../colorimage" }
@@ -32,6 +32,7 @@ float = { path = "../libfloat" }
 gpudevicemem = { path = "../gpudevicemem", optional = true }
 lazy_static = "*"
 memarray = { path = "../memarray" }
+memarray_linalg = { path = "../memarray_linalg", features = ["mkl"] }
 parking_lot = { version = "*", features = ["nightly"] }
 rng = "*"
 superdata = { path = "../superdata" }
