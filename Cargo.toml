@@ -17,13 +17,17 @@ bindgen = "^0.32"
 cc = "*"
 walkdir = "*"
 
+[dev-dependencies]
+colorimage = { path = "../colorimage" }
+stb_image = { path = "../rust-stb-image" }
+superdata = { path = "../superdata" }
+
 [dependencies]
 rand = "*"
 time = "*"
 arithmetic = { path = "../arithmetic" }
 arrayidx = { path = "../arrayidx" }
 #async_execution = { path = "../async_execution" }
-colorimage = { path = "../colorimage" }
 cuda = { path = "../libcuda", optional = true }
 cuda_blas = { path = "../cuda_blas", optional = true }
 cuda_coll = { path = "../cuda_coll", optional = true }
@@ -31,9 +35,7 @@ cuda_dnn = { path = "../cuda_dnn", optional = true }
 float = { path = "../libfloat" }
 gpudevicemem = { path = "../gpudevicemem", optional = true }
 lazy_static = "*"
-memarray = { path = "../memarray" }
-memarray_linalg = { path = "../memarray_linalg", features = ["mkl"] }
+memarray = { path = "../memarray", features = ["mkl"] }
 parking_lot = { version = "*", features = ["nightly"] }
 rng = "*"
-superdata = { path = "../superdata" }
 typemap = "*"
