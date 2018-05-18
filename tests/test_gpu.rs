@@ -1,14 +1,17 @@
 extern crate anode;
 extern crate gpudevicemem;
 extern crate memarray;
+extern crate rand;
 
 use anode::*;
 use anode::context::*;
 use anode::ops::*;
 use anode::ops_gpu::*;
+use anode::utils::*;
 use gpudevicemem::*;
 use gpudevicemem::array::*;
 use memarray::*;
+use rand::*;
 
 use std::rc::{Rc};
 use std::thread::{sleep};
@@ -94,6 +97,22 @@ fn test_gpu_zeros_eval() {
   println!("DEBUG: sleeping...");
   sleep(Duration::from_secs(2));
   println!("DEBUG: done sleeping");
+}
+
+#[test]
+fn test_gpu_zeros_fill_uniform() {
+  println!();
+  let x: Val<_> = touch(GPUDeviceArray1d::<f32>::uniform_fill(1024, -1.0, 1.0, &mut thread_rng()));
+  let t = txn();
+  x.eval(t);
+  {
+    let ctx = implicit_ctx().gpu();
+    let mut stream = ctx.pool();
+    let y = x.get(t);
+    let mut z = MemArray1d::<f32>::zeros(1024);
+    y.flat_view().unwrap().sync_dump_mem(z.as_view_mut(), stream.conn());
+    println!("DEBUG: {:?}", &z.as_view().flat_slice().unwrap()[.. 10]);
+  }
 }
 
 #[test]

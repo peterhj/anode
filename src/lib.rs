@@ -64,6 +64,7 @@ pub mod ffi;
 pub mod ops;
 #[cfg(feature = "gpu")] pub mod ops_gpu;
 #[cfg(feature = "mpi")] pub mod ops_mpi;
+pub mod utils;
 
 thread_local! {
   static UID_COUNTER: Cell<u64> = Cell::new(0);

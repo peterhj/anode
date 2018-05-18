@@ -60,12 +60,13 @@ impl<'a, Mem, T> MemIoWriter<'a> for FlatWriter<'a, Mem> where Mem: DerefMut<Tar
 
 pub struct PassFun;
 pub struct FreezeFun;
-//pub struct CopyFun;
+pub struct DuplicateOp;
 
 pub struct CastFun;
 pub struct DequantizeFun<T, Scale> { pub base: T, pub range: T, _marker: PhantomData<Scale> }
 
 pub struct SrcOp;
+pub struct TouchSrcOp;
 pub struct ZerosSrcOp;
 pub struct OnesSrcOp;
 // TODO: distribution parameters?
@@ -154,6 +155,14 @@ pub trait SrcOpExt<V, Init> {
 
 pub fn src<V, Init>(init: Init) -> Val<V> where SrcOp: SrcOpExt<V, Init> {
   <SrcOp as SrcOpExt<V, Init>>::build(init)
+}
+
+pub trait TouchSrcOpExt<V, Init> {
+  fn build(init: Init) -> Val<V>;
+}
+
+pub fn touch<V, Init>(init: Init) -> Val<V> where TouchSrcOp: TouchSrcOpExt<V, Init> {
+  <TouchSrcOp as TouchSrcOpExt<V, Init>>::build(init)
 }
 
 pub trait RandomBitsSrcOpExt<V, Init> {
