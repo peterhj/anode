@@ -40,7 +40,7 @@ extern crate typemap;
 
 use analysis::{LivenessAnalysis};
 use ops::{OnesSrcOp, OnesSrcOpMaybeExt, SumJoinOp, SumJoinOpMaybeExt, SumJoinOpExt};
-#[cfg(feature = "gpu")] use ops_gpu::{GPUMuxFun};
+#[cfg(feature = "gpu")] use ops_gpu::{GPUMuxOp};
 
 use arrayidx::{ArrayIndex};
 #[cfg(feature = "gpu")] use gpudevicemem::{GPUDeviceId};
@@ -203,8 +203,8 @@ pub trait Walk {
 }
 
 pub trait IOVal {
-  fn _deserialize(&self, txn: Txn, rvar: RVar, dst: &mut Any);
-  fn _serialize(&self, txn: Txn, xvar: RWVar, src: &mut Any);
+  fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any);
+  fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any);
 }
 
 pub trait AnalysisTags {
@@ -276,6 +276,10 @@ impl Drop for WrapGuard {
     });
   }
 }
+
+pub struct ChainWrap(pub Vec<Rc<Any>>);
+
+pub struct InplaceWrap;
 
 pub struct GPUMuxWrap {
   pub dev:  GPUDeviceId,
@@ -389,13 +393,13 @@ impl Node {
 }
 
 impl IONode for Node {
-  fn deserialize(&self, txn: Txn, dst: &mut Any) {
+  fn serialize(&self, txn: Txn, dst: &mut Any) {
     // FIXME
-    self.node._io()._deserialize(txn, self.rvar, dst);
+    self.node._io()._serialize(txn, self.rvar, dst);
   }
 
-  fn serialize(&self, txn: Txn, src: &mut Any) {
-    self.node._io()._serialize(txn, self.xvar, src);
+  fn deserialize(&self, txn: Txn, src: &mut Any) {
+    self.node._io()._deserialize(txn, self.xvar, src);
   }
 }
 
@@ -443,7 +447,9 @@ impl<V> Val<V> where V: 'static {
         val
       } else {
         let wrapper = stack[stack.len() - 1].clone();
-        if let Some(wrapper) = wrapper.downcast_ref::<GPUMuxWrap>() {
+        if let Some(_wrapper) = wrapper.downcast_ref::<InplaceWrap>() {
+          val.inplace().unwrap_or(val)
+        } else if let Some(wrapper) = wrapper.downcast_ref::<GPUMuxWrap>() {
           val.gpu_mux(wrapper.dev)
         } else {
           // TODO: warn on unsupported wrapper.
@@ -581,6 +587,16 @@ impl<V> Val<V> where V: 'static {
 
   pub fn put_adjoint(&self, adj: Val<V>, sink: &mut Sink) {
     sink.put_adj::<V>(self.var(), adj);
+  }
+}
+
+impl<V> IONode for Val<V> where V: 'static {
+  fn serialize(&self, txn: Txn, dst: &mut Any) {
+    self.op._io()._serialize(txn, self.rvar, dst);
+  }
+
+  fn deserialize(&self, txn: Txn, src: &mut Any) {
+    self.op._io()._deserialize(txn, self.xvar, src);
   }
 }
 
@@ -773,22 +789,22 @@ impl NodeVec {
 }
 
 impl IONode for NodeVec {
-  fn deserialize(&self, txn: Txn, dst: &mut Any) {
+  fn serialize(&self, txn: Txn, dst: &mut Any) {
     for node in self.nodes.iter() {
-      node.deserialize(txn, dst);
+      node.serialize(txn, dst);
     }
   }
 
-  fn serialize(&self, txn: Txn, src: &mut Any) {
+  fn deserialize(&self, txn: Txn, src: &mut Any) {
     for node in self.nodes.iter() {
-      node.serialize(txn, src);
+      node.deserialize(txn, src);
     }
   }
 }
 
 pub trait IONode {
-  fn deserialize(&self, txn: Txn, dst: &mut Any);
-  fn serialize(&self, txn: Txn, src: &mut Any);
+  fn serialize(&self, txn: Txn, dst: &mut Any);
+  fn deserialize(&self, txn: Txn, src: &mut Any);
 }
 
 pub struct FlatIO<Buf> {
@@ -1038,11 +1054,11 @@ pub struct RWVal<T> {
 }
 
 impl<T> IOVal for RWVal<T> where T: 'static {
-  default fn _deserialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
+  default fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
     unimplemented!();
   }
 
-  default fn _serialize(&self, txn: Txn, xvar: RWVar, src: &mut Any) {
+  default fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any) {
     unimplemented!();
   }
 }
@@ -1330,32 +1346,25 @@ impl<V> WrapValExt<V> for Val<V> where V: 'static {
   }
 }
 
-#[cfg(not(feature = "gpu"))]
+/*#[cfg(not(feature = "gpu"))]
 impl<V> GPUWrapValExt<V> for Val<V> where V: 'static {
   fn gpu_mux(&self, _dev: GPUDeviceId) -> Val<V> {
     // TODO: cant quite just impl a no-op, since it still uses the
     // `GPUDeviceId` type.
   }
-}
+}*/
 
 #[cfg(feature = "gpu")]
 impl<V> GPUWrapValExt<V> for Val<V> where V: 'static {
   fn gpu_mux(&self, dev: GPUDeviceId) -> Val<V> {
-    let wrap_ext: OpExt<GPUMuxFun<V>, V> = GPUMuxFun::<V>::build_ext();
-    let wrap_fun: GPUMuxFun<V> = GPUMuxFun{
+    let wrap_ext: OpExt<GPUMuxOp<V>, V> = GPUMuxOp::<V>::build_ext();
+    let wrap_state: GPUMuxOp<V> = GPUMuxOp{
       dev:  dev,
       val:  self.clone(),
     };
-    let mut ctrl = vec![];
-    self._op()._pred_fwd(&mut ctrl);
-    let op: Rc<FSrcOp<GPUMuxFun<V>, V>> = Rc::new(FSrcOp{
-      base: OpBase::default(),
-      ext:  wrap_ext,
-      fun:  RefCell::new(wrap_fun),
-      ctrl: ctrl,
-      val:  self._op()._value()._clone(),
-    });
-    Val::nowrap(op, self.var())
+    let mut wrap_op = FSrcOp::with_val(wrap_state, wrap_ext, self._op()._value()._clone());
+    self._op()._pred_fwd(&mut wrap_op.ctrl);
+    Val::nowrap(Rc::new(wrap_op), self.var())
   }
 }
 
@@ -1369,13 +1378,23 @@ pub struct FSrcOp<F, V> {
 
 impl<F, V> FSrcOp<F, V> {
   //pub fn new(fun: F, ext: OpExt<F, V>, val: RWVal<V>) -> Self {
-  pub fn new(fun: F, ext: OpExt<F, V>) -> Self {
-    let state = RefCell::new(fun);
+  pub fn new(state: F, ext: OpExt<F, V>) -> Self {
+    let state = RefCell::new(state);
     let val = (ext.make_val)(state.borrow_mut());
     FSrcOp{
       base: OpBase::default(),
       ext:  ext,
-      //fun:  RefCell::new(fun),
+      fun:  state,
+      ctrl: vec![],
+      val:  val,
+    }
+  }
+
+  pub fn with_val(state: F, ext: OpExt<F, V>, val: RWVal<V>) -> Self {
+    let state = RefCell::new(state);
+    FSrcOp{
+      base: OpBase::default(),
+      ext:  ext,
       fun:  state,
       ctrl: vec![],
       val:  val,

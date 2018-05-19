@@ -110,9 +110,34 @@ fn test_gpu_zeros_fill_uniform() {
     let mut stream = ctx.pool();
     let y = x.get(t);
     let mut z = MemArray1d::<f32>::zeros(1024);
+    println!("DEBUG: {:?}", &z.as_view().as_slice()[.. 10]);
     y.flat_view().unwrap().sync_dump_mem(z.as_view_mut(), stream.conn());
-    println!("DEBUG: {:?}", &z.as_view().flat_slice().unwrap()[.. 10]);
+    println!("DEBUG: {:?}", &z.as_view().as_slice()[.. 10]);
   }
+}
+
+#[test]
+fn test_gpu_io_deserialize() {
+  println!();
+  let x: Val<_> = src(GPUDeviceOuterBatchArray3d::<f32>::zeros_fill(([32, 32, 3], 64)));
+  let src = MemArray4d::<f32>::zeros([32, 32, 3, 64]);
+  let t = txn();
+  x.deserialize(t, &mut ArrayIO::new(src));
+  x.eval(t);
+}
+
+#[test]
+fn test_gpu_io_serialize() {
+  println!();
+  let x: Val<_> = touch(GPUDeviceOuterBatchArray3d::<f32>::uniform_fill(([32, 32, 3], 64), -1.0, 1.0, &mut thread_rng()));
+  let dst = MemArray4d::<f32>::zeros([32, 32, 3, 64]);
+  println!("DEBUG: {:?}", &dst.flat_view().unwrap().as_slice()[.. 10]);
+  let t = txn();
+  x.eval(t);
+  let mut dst = ArrayIO::new(dst);
+  x.serialize(t, &mut dst);
+  let dst = dst.take();
+  println!("DEBUG: {:?}", &dst.flat_view().unwrap().as_slice()[.. 10]);
 }
 
 #[test]

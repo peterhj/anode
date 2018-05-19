@@ -87,6 +87,7 @@ pub struct FlatMapInplaceFun<FlatMapF> { pub f: FlatMapF }
 pub struct FlatLinearMapFun;
 pub struct InnerProductFun;
 pub struct LinearMapOp;
+pub struct OuterLinearMapOp;
 pub struct LeftTransposeLinearMapOp;
 pub struct RightTransposeLinearMapOp;
 pub struct Conv1dLinearMapOp;
@@ -266,6 +267,10 @@ pub trait LinearExt<A, X, Y> {
 
 pub trait AffineExt<A, X, Y, B> {
   fn mult_add(self, x: Val<X>, b: Val<B>) -> Val<Y>;
+}
+
+pub trait OuterLinearExt<A, X, Y> {
+  fn outer_mult(self, x: Val<X>) -> Val<Y>;
 }
 
 pub trait LeftTransposeLinearExt<A, Y, X> {
