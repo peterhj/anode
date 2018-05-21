@@ -1,10 +1,12 @@
 extern crate anode;
 extern crate colorimage;
+extern crate memarray;
 extern crate rand;
 extern crate stb_image;
 extern crate superdata;
 
 use colorimage::*;
+use memarray::*;
 use stb_image::image::{Image};
 use superdata::*;
 use superdata::datasets::imagenet::*;
@@ -27,7 +29,7 @@ fn main() {
   let dataset = ImagenetTrainData::open(datacfg).unwrap();
 
   let mut count = 0;
-  let mut iter = dataset.one_pass().map_data(|(value, _)| {
+  let mut iter = dataset.one_pass().map_data(|(value, label)| {
     let mut image = ColorImage::new();
     let maybe_image = match decode_image(&value, &mut image) {
       Ok(_) => {
@@ -40,19 +42,24 @@ fn main() {
       }
     };
     count += 1;
-    maybe_image
+    (maybe_image, label)
   });
 
   let mut write_count = 0;
-  for (idx, maybe_image) in iter.enumerate() {
+  for (idx, (maybe_image, _)) in iter.enumerate() {
     if maybe_image.is_none() {
       continue;
     }
+
+    let image = maybe_image.unwrap();
+    let im_sz = [image.width() as _, image.height() as _, image.pixel_channels() as _];
+    let mut im_arr = MemArray3d::zeros(im_sz);
+    image.dump_planes(im_arr.flat_view_mut().unwrap().as_mut_slice());
+
     if thread_rng().gen_range(0, 1000) == 0 {
-      let image = maybe_image.unwrap();
       let out_image = Image::new(image.width() as _, image.height() as _, 3, image.to_vec());
       let png_data = out_image.write_png().unwrap();
-      let png_path = PathBuf::from(format!("tmp/test_{:04}.png", write_count));
+      let png_path = PathBuf::from(format!("tmp/test_{:04}_{:08}.png", write_count, idx));
       let mut png_file = File::create(&png_path).unwrap();
       png_file.write_all(&png_data).unwrap();
       println!("DEBUG: writing image: idx: {} out idx: {}", idx, write_count);

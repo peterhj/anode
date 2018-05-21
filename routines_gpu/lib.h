@@ -83,6 +83,15 @@ void anode_gpu_flat_mult_add_f32(
     const struct KernelConfig *cfg,
     struct CUstream_st *stream);*/
 
+// "flat_join.cu"
+void anode_gpu_M1_copy_map_M2_unit_step_map_R_product_reduce_flat_join_f32(
+    uint32_t len,
+    const float *x1,
+    const float *x2,
+    float *y,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+
 // "flat_map.cu"
 void anode_gpu_copy_flat_map_f32(
     uint32_t len,

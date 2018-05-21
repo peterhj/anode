@@ -64,6 +64,7 @@ pub mod ffi;
 pub mod ops;
 #[cfg(feature = "gpu")] pub mod ops_gpu;
 #[cfg(feature = "mpi")] pub mod ops_mpi;
+pub mod templates;
 pub mod utils;
 
 thread_local! {
@@ -778,6 +779,7 @@ pub struct NodeRefMap<T> {
   node_map: HashMap<NodeRef, T>,
 }
 
+#[derive(Default)]
 pub struct NodeVec {
   nodes:    Vec<Node>,
 }
@@ -785,6 +787,14 @@ pub struct NodeVec {
 impl NodeVec {
   pub fn from(nodes: Vec<Node>) -> Self {
     NodeVec{nodes: nodes}
+  }
+
+  pub fn push(&mut self, node: Node) {
+    self.nodes.push(node);
+  }
+
+  pub fn push_val<A: 'static>(&mut self, val: Val<A>) {
+    self.nodes.push(val.to_node());
   }
 }
 
@@ -820,6 +830,10 @@ impl<Buf> FlatIO<Buf> {
     }
   }
 
+  pub fn reset(&mut self) {
+    self.offset = 0;
+  }
+
   pub fn take(self) -> Buf {
     self.buffer
   }
@@ -849,6 +863,27 @@ impl<Arr> ArrayIO<Arr> where Arr: Array {
   eloffset: usize,
 }*/
 
+#[derive(Default)]
+pub struct LazyConst<T> where T: Copy {
+  inner:    Cell<Option<T>>,
+}
+
+impl<T> LazyConst<T> where T: Copy {
+  pub fn get(&self) -> T {
+    match self.inner.get() {
+      None => panic!("LazyConst was never initialized with set_once"),
+      Some(value) => value,
+    }
+  }
+
+  pub fn set_once<F>(&self, f: F) -> T where F: FnOnce() -> T {
+    if self.inner.get().is_none() {
+      self.inner.set(Some(f()));
+    }
+    self.get()
+  }
+}
+
 pub struct TCell<T> where T: Copy {
   inner:    RefCell<TCellInner<T>>,
 }
@@ -866,16 +901,12 @@ impl<T> TCell<T> where T: Copy {
     self.inner.borrow_mut().get(txn)
   }
 
-  pub fn propose<F>(&self, txn: Txn, f: F) -> T where F: Fn(T) -> T {
-    self.inner.borrow_mut().propose(txn, f)
-  }
-
-  pub fn commit(&self, txn: Txn) {
-    self.inner.borrow_mut().commit(txn);
-  }
-
   pub fn rollback(&self, txn: Txn) {
     self.inner.borrow_mut().rollback(txn);
+  }
+
+  pub fn propose<F>(&self, txn: Txn, f: F) -> T where F: Fn(T) -> T {
+    self.inner.borrow_mut().propose(txn, f)
   }
 }
 
@@ -901,7 +932,7 @@ impl<T> TCellInner<T> where T: Copy {
 
   pub fn get(&mut self, txn: Txn) -> T {
     if self.proposal.is_some() {
-      self.commit(txn);
+      self.conditional_commit(txn);
     }
     assert!(self.proposal.is_none(),
         "cannot read from TCell which has an uncommitted proposal");
@@ -931,10 +962,10 @@ impl<T> TCellInner<T> where T: Copy {
       }
     };
     if new_write_txn {
-      self.force_commit();
-      assert!(self.proposal.is_none(),
-          "cannot write to TCell which has a non-rollbackable proposal");
+      self.commit();
     }
+    assert!(self.proposal.is_none(),
+        "commit mysteriously failed");
     let prev_value = match self.state.0 {
       None => self.init,
       Some(curr_txn) => if curr_txn <= txn {
@@ -964,7 +995,7 @@ impl<T> TCellInner<T> where T: Copy {
     }
   }
 
-  pub fn commit(&mut self, txn: Txn) {
+  pub fn conditional_commit(&mut self, txn: Txn) {
     if let Some((prop_txn, prop_value)) = self.proposal {
       if prop_txn == txn {
         self.state = (Some(prop_txn), prop_value);
@@ -973,7 +1004,7 @@ impl<T> TCellInner<T> where T: Copy {
     }
   }
 
-  pub fn force_commit(&mut self) {
+  pub fn commit(&mut self) {
     if let Some((prop_txn, prop_value)) = self.proposal {
       self.state = (Some(prop_txn), prop_value);
       self.proposal = None;

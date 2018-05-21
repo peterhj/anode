@@ -16,9 +16,11 @@ limitations under the License.
 
 use arrayidx::*;
 #[cfg(feature = "gpu")] use cuda_coll::*;
-#[cfg(feature = "gpu")] use gpudevicemem::{*, array::*};
+#[cfg(feature = "gpu")] use gpudevicemem::{*, array::*, utils::*};
 use memarray::*;
 use parking_lot::{Mutex};
+use rand::{thread_rng};
+use rand::rngs::{ThreadRng};
 
 use std::cell::{RefCell};
 use std::collections::{VecDeque};
@@ -39,12 +41,12 @@ thread_local! {
   //static STREAM:    RefCell<VecDeque<Rc<ExecutionCtx + 'static>>> = RefCell::new(VecDeque::new());
 }
 
-pub fn default_ctx() -> Rc<ExecutionCtx + 'static> {
+pub fn default_ctx() -> impl ExecutionCtx {
   let mut ctx = DEFAULT_CTX.lock();
   if ctx.is_none() {
     *ctx = Some(DefaultCtx::default());
   }
-  Rc::new((*ctx.as_ref().unwrap()).clone())
+  (*ctx.as_ref().unwrap()).clone()
 }
 
 pub fn implicit_ctx() -> Rc<ExecutionCtx + 'static> {
@@ -52,7 +54,7 @@ pub fn implicit_ctx() -> Rc<ExecutionCtx + 'static> {
     let mut stack = stack.borrow_mut();
     if stack.is_empty() {
       // If there is no context, create a `DefaultCtx`.
-      stack.push(default_ctx());
+      stack.push(Rc::new(default_ctx()));
     }
     let ctx = stack.last().unwrap().clone();
     /*STREAM.with(|stream| {
@@ -74,15 +76,28 @@ pub fn implicit_ctx() -> Rc<ExecutionCtx + 'static> {
   })
 }
 
+pub fn push_ctx<Ctx: ExecutionCtx + 'static>(ctx: Ctx) -> CtxGuard {
+  IMPLICIT.with(|stack| {
+    let mut stack = stack.borrow_mut();
+    stack.push(Rc::new(ctx));
+  });
+  CtxGuard
+}
+
 pub trait ExecutionCtx {
   fn synchronize(&self) { unimplemented!(); }
 
-  fn maybe_thread_pool(&self) -> Option<Rc<ThreadPoolCtx>> { None }
-  #[cfg(feature = "gpu")] fn maybe_gpu(&self) -> Option<Rc<GPUDeviceCtx>> { None }
-  #[cfg(feature = "gpu")] fn maybe_multi_gpu(&self) -> Option<Rc<MultiGPUDeviceCtx>> { None }
-  #[cfg(feature = "mpi")] fn maybe_mpi(&self) -> Option<Rc<MPIProcessCtx>> { None }
+  fn slow_rng(&self) -> ThreadRng {
+    // FIXME
+    thread_rng()
+  }
 
-  fn thread_pool(&self) -> Rc<ThreadPoolCtx> {
+  fn maybe_thread_pool(&self) -> Option<ThreadPoolCtx> { None }
+  #[cfg(feature = "gpu")] fn maybe_gpu(&self) -> Option<GPUDeviceCtx> { None }
+  #[cfg(feature = "gpu")] fn maybe_multi_gpu(&self) -> Option<MultiGPUDeviceCtx> { None }
+  #[cfg(feature = "mpi")] fn maybe_mpi(&self) -> Option<MPIProcessCtx> { None }
+
+  fn thread_pool(&self) -> ThreadPoolCtx {
     match self.maybe_thread_pool() {
       None => panic!("no thread pool ctx"),
       Some(ctx) => ctx,
@@ -90,7 +105,7 @@ pub trait ExecutionCtx {
   }
 
   #[cfg(feature = "gpu")]
-  fn gpu(&self) -> Rc<GPUDeviceCtx> {
+  fn gpu(&self) -> GPUDeviceCtx {
     match self.maybe_gpu() {
       None => panic!("no GPU device ctx"),
       Some(ctx) => ctx,
@@ -98,7 +113,7 @@ pub trait ExecutionCtx {
   }
 
   #[cfg(feature = "gpu")]
-  fn multi_gpu(&self) -> Rc<MultiGPUDeviceCtx> {
+  fn multi_gpu(&self) -> MultiGPUDeviceCtx {
     match self.maybe_multi_gpu() {
       None => panic!("no multi-GPU device ctx"),
       Some(ctx) => ctx,
@@ -106,20 +121,12 @@ pub trait ExecutionCtx {
   }
 
   #[cfg(feature = "mpi")]
-  fn multi_mpi(&self) -> Rc<MPIProcessCtx> {
+  fn multi_mpi(&self) -> MPIProcessCtx {
     match self.maybe_mpi_rank() {
       None => panic!("no MPI process ctx"),
       Some(ctx) => ctx,
     }
   }
-}
-
-pub fn push_ctx(ctx: Rc<ExecutionCtx + 'static>) -> CtxGuard {
-  IMPLICIT.with(|stack| {
-    let mut stack = stack.borrow_mut();
-    stack.push(ctx);
-  });
-  CtxGuard
 }
 
 pub struct CtxGuard;
@@ -181,18 +188,18 @@ pub struct GPUDeviceCtx {
 
 #[cfg(feature = "gpu")]
 impl ExecutionCtx for GPUDeviceCtx {
-  fn maybe_gpu(&self) -> Option<Rc<GPUDeviceCtx>> {
-    Some(Rc::new(GPUDeviceCtx{
+  fn maybe_gpu(&self) -> Option<GPUDeviceCtx> {
+    Some(GPUDeviceCtx{
       pool:         self.pool.clone(),
       nccl_state:   self.nccl_state.clone(),
-    }))
+    })
   }
 
-  fn maybe_multi_gpu(&self) -> Option<Rc<MultiGPUDeviceCtx>> {
-    Some(Rc::new(MultiGPUDeviceCtx{
+  fn maybe_multi_gpu(&self) -> Option<MultiGPUDeviceCtx> {
+    Some(MultiGPUDeviceCtx{
       md_pools:     vec![self.pool.clone()],
       nccl_states:  vec![self.nccl_state.clone()],
-    }))
+    })
   }
 }
 
@@ -226,15 +233,15 @@ pub struct MultiGPUDeviceCtx {
 
 #[cfg(feature = "gpu")]
 impl ExecutionCtx for MultiGPUDeviceCtx {
-  fn maybe_gpu(&self) -> Option<Rc<GPUDeviceCtx>> {
+  fn maybe_gpu(&self) -> Option<GPUDeviceCtx> {
     Some(self.gpu(GPUDeviceId(0)))
   }
 
-  fn maybe_multi_gpu(&self) -> Option<Rc<MultiGPUDeviceCtx>> {
-    Some(Rc::new(MultiGPUDeviceCtx{
+  fn maybe_multi_gpu(&self) -> Option<MultiGPUDeviceCtx> {
+    Some(MultiGPUDeviceCtx{
       md_pools:     self.md_pools.clone(),
       nccl_states:  self.nccl_states.clone(),
-    }))
+    })
   }
 }
 
@@ -244,11 +251,12 @@ impl Default for MultiGPUDeviceCtx {
     let mut md_pools = vec![];
     let mut nccl_states  = vec![];
     let count = GPUDeviceId::count();
-    let comm_id = NcclUniqueId::create().unwrap();
     for rank in 0 .. count {
       let pool = GPUDeviceStreamPool::new(GPUDeviceId(rank as _));
       md_pools.push(pool);
     }
+    enable_gpu_peer_access(&mut md_pools);
+    let comm_id = NcclUniqueId::create().unwrap();
     NCCL_GROUP_MUTEX.raw_lock();
     unsafe { NcclComm::group_start() };
     for rank in 0 .. count {
@@ -279,16 +287,17 @@ impl MultiGPUDeviceCtx {
     self.md_pools.len()
   }
 
-  pub fn gpu(&self, device: GPUDeviceId) -> Rc<GPUDeviceCtx> {
+  pub fn gpu(&self, device: GPUDeviceId) -> GPUDeviceCtx {
     assert!(device.rank() < self.md_pools.len(),
         "MultiGPUDeviceCtx: trying to activate an invalid device");
-    Rc::new(GPUDeviceCtx{
+    GPUDeviceCtx{
       pool:         self.md_pools[device.rank()].clone(),
       nccl_state:   self.nccl_states[device.rank()].clone(),
-    })
+    }
   }
 
-  pub fn sync_broadcast_group<T>(&mut self, src: GPUDeviceArrayView1d<T>, mut dst: Vec<GPUDeviceArrayViewMut1d<T>>, root_dev: GPUDeviceId) where T: NcclDataType {
+  pub fn sync_broadcast_group<T>(&mut self, src: GPUDeviceArrayView1d<T>, mut dst: Vec<GPUDeviceArrayViewMut1d<T>>) where T: NcclDataType {
+    let root_dev = src.device();
     {
       let conn = self.md_pools[root_dev.rank()].conn();
       dst[root_dev.rank()].copy(src, conn);
@@ -304,6 +313,7 @@ impl MultiGPUDeviceCtx {
       let mut stream = conn.cuda_stream();
       let mut nccl_state = self.nccl_states[rank].as_ref().unwrap().lock();
       // FIXME: size checks.
+      assert_eq!(dst[rank].size(), dst[0].size());
       if dst[rank].size().is_packed(&dst[rank].stride()) {
         let res = unsafe { nccl_state.comm.broadcast(
             dst[rank].as_mut_dptr(),
@@ -324,7 +334,8 @@ impl MultiGPUDeviceCtx {
     }
   }
 
-  pub fn sync_reduce_group<T>(&mut self, src: Vec<GPUDeviceArrayView1d<T>>, mut dst: GPUDeviceArrayViewMut1d<T>, op: NcclReduceOp, root_dev: GPUDeviceId) where T: NcclDataType {
+  pub fn sync_reduce_group<T>(&mut self, src: Vec<GPUDeviceArrayView1d<T>>, mut dst: GPUDeviceArrayViewMut1d<T>, op: NcclReduceOp) where T: NcclDataType {
+    let root_dev = dst.device();
     for rank in 0 .. self.num_gpus() {
       let conn = self.md_pools[rank].conn();
       conn.sync();
@@ -336,6 +347,8 @@ impl MultiGPUDeviceCtx {
       let mut stream = conn.cuda_stream();
       let mut nccl_state = self.nccl_states[rank].as_ref().unwrap().lock();
       // FIXME: size checks.
+      assert_eq!(src[rank].size(), src[0].size());
+      assert_eq!(src[rank].size(), dst.size());
       if src[rank].size().is_packed(&src[rank].stride()) {
         let res = unsafe { nccl_state.comm.reduce(
             src[rank].as_dptr(),
@@ -343,6 +356,41 @@ impl MultiGPUDeviceCtx {
             src[rank].size(),
             op,
             root_dev.0,
+            stream.as_mut_ptr(),
+        ) };
+        assert!(res.is_ok());
+      } else {
+        unimplemented!();
+      }
+    }
+    unsafe { NcclComm::group_end() };
+    unsafe { NCCL_GROUP_MUTEX.raw_unlock() };
+    for rank in 0 .. self.num_gpus() {
+      let conn = self.md_pools[rank].conn();
+      conn.sync();
+    }
+  }
+
+  pub fn sync_allreduce_group<T>(&mut self, src: Vec<GPUDeviceArrayView1d<T>>, mut dst: Vec<GPUDeviceArrayViewMut1d<T>>, op: NcclReduceOp) where T: NcclDataType {
+    for rank in 0 .. self.num_gpus() {
+      let conn = self.md_pools[rank].conn();
+      conn.sync();
+    }
+    NCCL_GROUP_MUTEX.raw_lock();
+    unsafe { NcclComm::group_start() };
+    for rank in 0 .. self.num_gpus() {
+      let conn = self.md_pools[rank].conn();
+      let mut stream = conn.cuda_stream();
+      let mut nccl_state = self.nccl_states[rank].as_ref().unwrap().lock();
+      // FIXME: size checks.
+      assert_eq!(src[rank].size(), src[0].size());
+      assert_eq!(src[rank].size(), dst[rank].size());
+      if src[rank].size().is_packed(&src[rank].stride()) {
+        let res = unsafe { nccl_state.comm.all_reduce(
+            src[rank].as_dptr(),
+            dst[rank].as_mut_dptr(),
+            src[rank].size(),
+            op,
             stream.as_mut_ptr(),
         ) };
         assert!(res.is_ok());

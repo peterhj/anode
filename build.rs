@@ -46,6 +46,7 @@ fn main() {
       .flag("-Xcompiler").flag("-Werror")
       .include("routines_gpu")
       .include("/usr/local/cuda/include")
+      .file("routines_gpu/flat_join.cu")
       .file("routines_gpu/flat_map.cu")
       .compile("libanode_routines_gpu.a");
 
@@ -62,6 +63,7 @@ fn main() {
       .whitelist_function("anode_gpu_positive_reciprocal_flat_map_f32")
       .whitelist_function("anode_gpu_tanh_flat_map_f32")
       .whitelist_function("anode_gpu_rcosh2_flat_map_f32")
+      .whitelist_function("anode_gpu_M1_copy_map_M2_unit_step_map_R_product_reduce_flat_join_f32")
       .generate()
       .expect("bindgen failed to generate cuda kernel bindings")
       .write_to_file(out_dir.join("routines_gpu_bind.rs"))

@@ -58,9 +58,12 @@ impl<'a, Mem, T> MemIoWriter<'a> for FlatWriter<'a, Mem> where Mem: DerefMut<Tar
   }
 }*/
 
-pub struct PassFun;
-pub struct FreezeFun;
+pub struct PassOp;
+pub struct FixOp;
 pub struct DuplicateOp;
+
+pub struct SerializeOp;
+pub struct DeserializeOp;
 
 pub struct CastFun;
 pub struct DequantizeFun<T, Scale> { pub base: T, pub range: T, _marker: PhantomData<Scale> }
@@ -82,8 +85,9 @@ pub struct SumJoinOp;
 pub struct SumJoinAccumulateOp;
 pub struct FlatSumJoinOp;
 pub struct BatchSumJoinOp;
-pub struct FlatMapFun<FlatMapF> { pub f: FlatMapF }
-pub struct FlatMapInplaceFun<FlatMapF> { pub f: FlatMapF }
+pub struct FlatMapOp<FlatMapF> { pub f: FlatMapF }
+pub struct FlatMapInplaceOp<FlatMapF> { pub f: FlatMapF }
+pub struct FlatJoinOp<FlatJoin> { pub f: FlatJoin }
 pub struct FlatLinearMapFun;
 pub struct InnerProductFun;
 pub struct LinearMapOp;
@@ -104,6 +108,7 @@ pub struct SoftmaxNLLFusedOp;
 pub struct SoftmaxCrossEntropyFusedOp;
 pub struct SoftmaxEntropyFusedOp;
 
+#[derive(Clone)] pub struct IdentityFlatMapF;
 #[derive(Clone)] pub struct ModulusFlatMapF;
 #[derive(Clone)] pub struct SquareFlatMapF;
 #[derive(Clone)] pub struct PositiveClipFlatMapF;
@@ -113,6 +118,11 @@ pub struct SoftmaxEntropyFusedOp;
 #[derive(Clone)] pub struct NormalCdfFlatMapF;
 #[derive(Clone)] pub struct TanhFlatMapF;
 #[derive(Clone)] pub struct RCosh2FlatMapF;
+
+#[derive(Clone)] pub struct SumReduce;
+#[derive(Clone)] pub struct ProductReduce;
+
+#[derive(Clone)] pub struct Map2FlatJoin<Map1, Map2, Reduce> { pub map1: Map1, pub map2: Map2, pub reduce: Reduce }
 
 pub struct Conv2dShape {
   pub axes:     [usize; 2],
@@ -137,17 +147,26 @@ pub struct Pool2dShape {
 #[derive(Clone)] pub struct VarianceReduceF;
 
 pub trait PassExt<V> {
-  fn pass(&self) -> Rc<F1Op<PassFun, V, V>>;
+  fn pass(&self) -> Val<V>;
 }
 
-pub trait FreezeExt<V> {
-  fn freeze(&self) -> Rc<F1Op<FreezeFun, V, V>>;
+pub trait FixExt<V> {
+  fn fix(&self) -> Val<V>;
+}
+
+pub trait SerializeExt<V> {
+  fn serialize(&self) -> Val<V>;
+}
+
+pub trait DeserializeExt<V> {
+  fn deserialize(&self, src: Val<V>) -> Node;
 }
 
 pub struct LinearScale;
 
 pub trait DequantizeExt<V, W, T, Scale=LinearScale> {
-  fn dequantize(&self, base: T, range: T) -> Rc<F1Op<DequantizeFun<T, Scale>, V, W>>;
+  //fn dequantize(&self, base: T, range: T) -> Rc<F1Op<DequantizeFun<T, Scale>, V, W>>;
+  fn dequantize(&self, base: T, range: T) -> Val<W>;
 }
 
 pub trait SrcOpExt<V, Init> {
@@ -228,6 +247,14 @@ impl<V> Add<Val<V>> for Val<V> where Self: SumExt<V> {
   fn add(self, x_: Val<V>) -> Val<V> {
     <Val<V> as SumExt<V>>::sum(vec![self, x_])
   }
+}
+
+pub trait RectFlatMapExt<V> {
+  fn rect(self) -> Val<V>;
+}
+
+pub trait TanhFlatMapExt<V> {
+  fn tanh(self) -> Val<V>;
 }
 
 pub trait FlatLinearExt<A, X, Y> {

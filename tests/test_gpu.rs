@@ -39,9 +39,18 @@ fn test_gpu_random_src_eval() {
   let x: Val<_> = random_bits(Rc::new(|conn: GPUDeviceConn| {
     GPUDeviceArray1d::<u32>::zeros(1024, conn)
   }));
-  x.eval(txn());
-  x.eval(txn());
-  x.eval(txn());
+  let t = txn();
+  x.eval(t);
+  x.reset();
+  x.eval(t);
+  let t = txn();
+  x.eval(t);
+  x.release();
+  x.eval(t);
+  let t = txn();
+  x.eval(t);
+  x.reset();
+  x.eval(t);
 }
 
 #[test]
@@ -129,7 +138,7 @@ fn test_gpu_io_deserialize() {
 #[test]
 fn test_gpu_io_serialize() {
   println!();
-  let x: Val<_> = touch(GPUDeviceOuterBatchArray3d::<f32>::uniform_fill(([32, 32, 3], 64), -1.0, 1.0, &mut thread_rng()));
+  let x = touch(GPUDeviceOuterBatchArray3d::<f32>::uniform_fill(([32, 32, 3], 64), -1.0, 1.0, &mut thread_rng()));
   let dst = MemArray4d::<f32>::zeros([32, 32, 3, 64]);
   println!("DEBUG: {:?}", &dst.flat_view().unwrap().as_slice()[.. 10]);
   let t = txn();
