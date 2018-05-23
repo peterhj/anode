@@ -65,8 +65,8 @@ pub struct DuplicateOp;
 pub struct SerializeOp;
 pub struct DeserializeOp;
 
-pub struct CastFun;
-pub struct DequantizeFun<T, Scale> { pub base: T, pub range: T, _marker: PhantomData<Scale> }
+pub struct CastOp;
+pub struct LinearDequantizeOp<T> { pub lo: T, pub hi: T }
 
 pub struct SrcOp;
 pub struct TouchSrcOp;
@@ -79,7 +79,7 @@ pub struct NormalSrcOp;
 
 pub struct FlatViewOp;
 pub struct ReshapeViewOp;
-pub struct MapFun<MapF> { pub f: MapF, }
+pub struct MapOp<MapF> { pub f: MapF, }
 pub struct TransposeOp;
 pub struct SumJoinOp;
 pub struct SumJoinAccumulateOp;
@@ -88,25 +88,32 @@ pub struct BatchSumJoinOp;
 pub struct FlatMapOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatMapInplaceOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatJoinOp<FlatJoin> { pub f: FlatJoin }
-pub struct FlatLinearMapFun;
-pub struct InnerProductFun;
-pub struct LinearMapOp;
-pub struct OuterLinearMapOp;
-pub struct LeftTransposeLinearMapOp;
-pub struct RightTransposeLinearMapOp;
-pub struct Conv1dLinearMapOp;
-pub struct Conv2dLinearMapOp;
-pub struct Conv3dLinearMapOp;
-pub struct TransposeConv1dLinearMapOp;
-pub struct TransposeConv2dLinearMapOp;
-pub struct TransposeConv3dLinearMapOp;
+pub struct FlatLinearOp;
+pub struct LinearOp;
+pub struct AffineOp;
+pub struct LeftTransposeLinearOp;
+pub struct RightTransposeLinearOp;
+pub struct OuterLinearOp;
+pub struct Conv1dLinearOp;
+pub struct Conv2dLinearOp;
+pub struct Conv3dLinearOp;
+pub struct Conv1dAffineOp;
+pub struct Conv2dAffineOp;
+pub struct Conv3dAffineOp;
+pub struct LeftTransposeConv1dLinearOp;
+pub struct LeftTransposeConv2dLinearOp;
+pub struct LeftTransposeConv3dLinearOp;
+pub struct OuterConv1dLinearOp;
+pub struct OuterConv2dLinearOp;
+pub struct OuterConv3dLinearOp;
 pub struct Resample2dOp<ResampleF> { pub f: ResampleF }
-pub struct ReduceFun<ReduceF> { pub f: ReduceF, /*pub axes: _*/ }
-pub struct BatchNormFun { /*pub axes: _*/ }
+pub struct ReduceOp<ReduceF> { pub f: ReduceF, /*pub axes: _*/ }
 
 pub struct SoftmaxNLLFusedOp;
 pub struct SoftmaxCrossEntropyFusedOp;
 pub struct SoftmaxEntropyFusedOp;
+
+pub struct SpacePadOp;
 
 #[derive(Clone)] pub struct IdentityFlatMapF;
 #[derive(Clone)] pub struct ModulusFlatMapF;
@@ -152,6 +159,10 @@ pub trait PassExt<V> {
 
 pub trait FixExt<V> {
   fn fix(&self) -> Val<V>;
+}
+
+pub trait FixOpExt<V> {
+  fn build(x_: Val<V>) -> Val<V>;
 }
 
 pub trait SerializeExt<V> {
@@ -296,16 +307,16 @@ pub trait AffineExt<A, X, Y, B> {
   fn mult_add(self, x: Val<X>, b: Val<B>) -> Val<Y>;
 }
 
-pub trait OuterLinearExt<A, X, Y> {
-  fn outer_mult(self, x: Val<X>) -> Val<Y>;
-}
-
 pub trait LeftTransposeLinearExt<A, Y, X> {
   fn left_transpose_mult(self, y: Val<Y>) -> Val<X>;
 }
 
 pub trait RightTransposeLinearExt<Y, X, A> {
   fn right_transpose_mult(self, x: Val<X>) -> Val<A>;
+}
+
+pub trait OuterLinearExt<Y, X, A> {
+  fn outer_mult(self, x: Val<X>) -> Val<A>;
 }
 
 pub trait ConvLinearExt<A, X, Y> {
@@ -320,6 +331,46 @@ pub trait LeftTransposeConvLinearExt<A, Y, X> {
   fn left_transpose_conv(self, y: Val<Y>) -> Val<X>;
 }
 
-pub trait RightTransposeConvLinearExt<Y, X, A> {
-  fn right_transpose_conv(self, x: Val<X>) -> Val<A>;
+pub trait OuterConvLinearExt<Y, X, A> {
+  fn outer_conv(self, x: Val<X>) -> Val<A>;
+}
+
+pub trait BatchNormalizeExt<X, M> {
+  fn batch_normalize(self) -> (Val<X>, Val<M>, Val<M>);
+}
+
+impl<A: 'static> FixOpExt<A> for FixOp {
+  fn build(x_: Val<A>) -> Val<A> {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<Self>| {
+          x_._op()._value()._clone()
+        })
+      },
+      apply: {
+        Box::new(move |_: Txn, _state: RefMut<_>, _output: OVal<A>| {
+          // The output should be a simple clone of the input,
+          // so don't want to actually touch it.
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, this: Val<A>, _state: RefMut<Self>, sink: &mut Sink| {
+          if let Some(_) = this.adjoint(sink) {
+            // Do nothing.
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F1Op::new(FixOp, ext, x_)))
+  }
 }

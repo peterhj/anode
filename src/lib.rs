@@ -61,6 +61,7 @@ pub mod analysis;
 pub mod config;
 pub mod context;
 pub mod ffi;
+#[cfg(feature = "gpu")] pub mod io_gpu;
 pub mod ops;
 #[cfg(feature = "gpu")] pub mod ops_gpu;
 #[cfg(feature = "mpi")] pub mod ops_mpi;
@@ -92,14 +93,14 @@ pub struct Pass(u64);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct RVar(u64);
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct RWVar(RVar);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeRef(u64);
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct ValRef(u64);
+/*#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ValRef(u64);*/
 
 pub fn txn() -> Txn {
   Txn::default()
@@ -133,11 +134,11 @@ impl Default for NodeRef {
   }
 }
 
-impl Default for ValRef {
+/*impl Default for ValRef {
   fn default() -> Self {
     ValRef(gen_thread_local_uid())
   }
-}
+}*/
 
 pub struct WalkStackEntry {
   pass:         Pass,
@@ -361,6 +362,25 @@ pub fn gpu_mux<V>(roots: Vec<Val<V>>) -> Vec<Val<V>> {
   unimplemented!();
 }
 
+pub struct Torus1d<V> {
+  idxs: Vec<usize>,
+  data: Vec<V>,
+}
+
+pub type Ring<V> = Torus1d<V>;
+
+pub struct Torus2d<V> {
+  idxs: Vec<[usize; 2]>,
+  data: Vec<V>,
+}
+
+pub type Torus<V> = Torus2d<V>;
+
+pub struct Torus3d<V> {
+  idxs: Vec<[usize; 3]>,
+  data: Vec<V>,
+}
+
 pub struct Node {
   node: Rc<ANode>,
   xvar: RWVar,
@@ -563,6 +583,10 @@ impl<V> Val<V> where V: 'static {
 
   pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwLockWriteGuard<V> {
     self.op._value().get_mut(txn, self.xvar, token)
+  }
+
+  pub fn set<F: FnOnce(RwLockWriteGuard<V>)>(&self, txn: Txn, f: F) {
+    self.op._value().set(txn, self.xvar, f);
   }
 
   pub fn _make_value(&self) -> RWVal<V> {
@@ -1331,7 +1355,7 @@ impl<T> RWVal<T> where T: 'static {
     RwLockWriteGuard::map(buf, |buf| buf.data.as_mut().unwrap())
   }
 
-  /*pub fn set<F>(&self, txn: Txn, xvar: RWVar, f: F) where F: FnOnce(RefMut<T>) {
+  pub fn set<F>(&self, txn: Txn, xvar: RWVar, f: F) where F: FnOnce(RwLockWriteGuard<T>) {
     if let Some((cap, token)) = self.write(txn, xvar) {
       match cap {
         WriteCap::Assign => {
@@ -1340,15 +1364,15 @@ impl<T> RWVal<T> where T: 'static {
         _ => unimplemented!(),
       }
     }
-  }*/
+  }
 }
 
 pub struct OpExt<F, V> {
-  build:    Box<Fn(Vec<Rc<Any>>) -> Val<V>>,
   make_val: Box<Fn(RefMut<F>) -> RWVal<V>>,
   //prepare:  Option<Box<Fn(Txn, RefMut<F>)>>,
   //cleanup:  Option<Box<Fn(Txn, RefMut<F>)>>,
   apply:    Box<Fn(Txn, RefMut<F>, OVal<V>)>,
+  build:    Option<Box<Fn(Vec<Rc<Any>>) -> Val<V>>>,
   //tangent:  Option<Box<Fn() -> Val<V>>>,
   tangent:  Option<Box<Fn(Pass, RefMut<F>, &mut FeedFwd) -> Val<V>>>,
   //adjoint:  Option<Box<Fn(Val<V>, &mut Sink)>>,
@@ -1402,20 +1426,20 @@ impl<V> GPUWrapValExt<V> for Val<V> where V: 'static {
 pub struct FSrcOp<F, V> {
   base: OpBase,
   ext:  OpExt<F, V>,
-  fun:  RefCell<F>,
+  cfg:  RefCell<F>,
   ctrl: Vec<Node>,
   val:  RWVal<V>,
 }
 
 impl<F, V> FSrcOp<F, V> {
-  //pub fn new(fun: F, ext: OpExt<F, V>, val: RWVal<V>) -> Self {
+  //pub fn new(cfg: F, ext: OpExt<F, V>, val: RWVal<V>) -> Self {
   pub fn new(state: F, ext: OpExt<F, V>) -> Self {
     let state = RefCell::new(state);
     let val = (ext.make_val)(state.borrow_mut());
     FSrcOp{
       base: OpBase::default(),
       ext:  ext,
-      fun:  state,
+      cfg:  state,
       ctrl: vec![],
       val:  val,
     }
@@ -1426,7 +1450,7 @@ impl<F, V> FSrcOp<F, V> {
     FSrcOp{
       base: OpBase::default(),
       ext:  ext,
-      fun:  state,
+      cfg:  state,
       ctrl: vec![],
       val:  val,
     }
@@ -1474,14 +1498,14 @@ impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
 
   /*fn _prepare(&self, txn: Txn) {
     if let Some(ref prepare) = self.ext.prepare {
-      (prepare)(txn, self.fun.borrow_mut());
+      (prepare)(txn, self.cfg.borrow_mut());
     }
   }*/
 
   /*fn _cleanup(&self, txn: Txn) {
     // TODO
     if let Some(ref cleanup) = self.ext.cleanup {
-      (cleanup)(txn, self.fun.borrow_mut());
+      (cleanup)(txn, self.cfg.borrow_mut());
     }
   }*/
 
@@ -1522,7 +1546,7 @@ impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
 impl<F, V> AOp<V> for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
   fn _make_value(&self) -> RWVal<V> {
     //(self.ext.make_val)()
-    (self.ext.make_val)(self.fun.borrow_mut())
+    (self.ext.make_val)(self.cfg.borrow_mut())
   }
 
   fn _value(&self) -> &RWVal<V> {
@@ -1532,41 +1556,28 @@ impl<F, V> AOp<V> for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
   fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<V> {
     match self.ext.tangent {
       None => unimplemented!(),
-      Some(ref tangent) => (tangent)(pass, self.fun.borrow_mut(), feedfwd),
+      Some(ref tangent) => (tangent)(pass, self.cfg.borrow_mut(), feedfwd),
     }
   }
-
-  /*fn tangent(&self) -> Val<V> {
-    // TODO
-    unimplemented!();
-  }*/
 
   fn _pop_adjoint(&self, pass: Pass, this: Val<V>, sink: &mut Sink) {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
         None => {}
-        Some(ref adjoint) => (adjoint)(pass, this, self.fun.borrow_mut(), sink),
+        Some(ref adjoint) => (adjoint)(pass, this, self.cfg.borrow_mut(), sink),
       }
     }
   }
 
-  /*//fn adjoint(&self, sink: &mut Sink) -> (Rc<ANode>, Rc<AOp<V>>) {
-  fn adjoint(&self, sink: &mut Sink) -> Val<V> {
-    match sink.get_adj(self.var()) {
-      None => panic!(),
-      Some(adj) => adj,
-    }
-  }*/
-
   fn _apply_output(&self, txn: Txn, val: OVal<V>) {
-    (self.ext.apply)(txn, self.fun.borrow_mut(), val);
+    (self.ext.apply)(txn, self.cfg.borrow_mut(), val);
   }
 }
 
 /*pub struct Pipe1Op<F, V, W> where W: OVal {
   base: OpBase,
   ext:  OpExt<W>,
-  fun:  F,
+  cfg:  F,
   // TODO: should not contain an input `x` but instead a "slot" in which to
   // pipe an input of the same type.
   x_:   Rc<AOp<V>>,
@@ -1583,22 +1594,22 @@ where V: OVal, W: OVal {
 pub struct F1Op<F, V1, W> {
   base: OpBase,
   ext:  OpExt<F, W>,
-  fun:  RefCell<F>,
+  cfg:  RefCell<F>,
   ctrl: Vec<Node>,
   x_:   Val<V1>,
   y:    RWVal<W>,
 }
 
 impl<F, V1, W> F1Op<F, V1, W> {
-  //pub fn new(fun: F, ext: OpExt<F, W>, x_: Val<V1>, y: RWVal<W>) -> Self {
-  pub fn new(fun: F, ext: OpExt<F, W>, x_: Val<V1>) -> Self {
-    let state = RefCell::new(fun);
+  //pub fn new(cfg: F, ext: OpExt<F, W>, x_: Val<V1>, y: RWVal<W>) -> Self {
+  pub fn new(cfg: F, ext: OpExt<F, W>, x_: Val<V1>) -> Self {
+    let state = RefCell::new(cfg);
     let y = (ext.make_val)(state.borrow_mut());
     F1Op{
       base: OpBase::default(),
       ext:  ext,
-      //fun:  RefCell::new(fun),
-      fun:  state,
+      //cfg:  RefCell::new(cfg),
+      cfg:  state,
       ctrl: vec![],
       x_:   x_,
       y:    y,
@@ -1656,14 +1667,14 @@ impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'st
   /*fn _prepare(&self, txn: Txn) {
     self.x_._node().eval(txn);
     if let Some(ref prepare) = self.ext.prepare {
-      (prepare)(txn, self.fun.borrow_mut());
+      (prepare)(txn, self.cfg.borrow_mut());
     }
   }*/
 
   /*fn _cleanup(&self, txn: Txn) {
     // TODO
     if let Some(ref cleanup) = self.ext.cleanup {
-      (cleanup)(txn, self.fun.borrow_mut());
+      (cleanup)(txn, self.cfg.borrow_mut());
     }
   }*/
 
@@ -1685,7 +1696,7 @@ impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'st
 impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'static {
   fn _make_value(&self) -> RWVal<W> {
     //(self.ext.make_val)()
-    (self.ext.make_val)(self.fun.borrow_mut())
+    (self.ext.make_val)(self.cfg.borrow_mut())
   }
 
   fn _value(&self) -> &RWVal<W> {
@@ -1695,7 +1706,7 @@ impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 's
   fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<W> {
     match self.ext.tangent {
       None => unimplemented!(),
-      Some(ref tangent) => (tangent)(pass, self.fun.borrow_mut(), feedfwd),
+      Some(ref tangent) => (tangent)(pass, self.cfg.borrow_mut(), feedfwd),
     }
   }
 
@@ -1726,7 +1737,7 @@ impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 's
       match self.ext.adjoint {
         None => {}
         Some(ref adjoint) => {
-          (adjoint)(pass, this, self.fun.borrow_mut(), sink);
+          (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
           self.x_._pop_adjoint(pass, sink);
         }
       }
@@ -1758,7 +1769,7 @@ impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 's
   }
 
   fn _apply_output(&self, txn: Txn, val: OVal<W>) {
-    (self.ext.apply)(txn, self.fun.borrow_mut(), val);
+    (self.ext.apply)(txn, self.cfg.borrow_mut(), val);
   }
 }
 
@@ -1780,7 +1791,7 @@ impl<F, V> AOp<V> for F1Op<F, V, V> where V: 'static, RWVal<V>: IOVal + 'static 
 pub struct F2Op<F, V1, V2, W> {
   base: OpBase,
   ext:  OpExt<F, W>,
-  fun:  RefCell<F>,
+  cfg:  RefCell<F>,
   ctrl: Vec<Node>,
   x1_:  Val<V1>,
   x2_:  Val<V2>,
@@ -1788,15 +1799,15 @@ pub struct F2Op<F, V1, V2, W> {
 }
 
 impl<F, V1, V2, W> F2Op<F, V1, V2, W> {
-  //pub fn new(fun: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>, y: RWVal<W>) -> Self {
-  pub fn new(fun: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>) -> Self {
-    let state = RefCell::new(fun);
+  //pub fn new(cfg: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>, y: RWVal<W>) -> Self {
+  pub fn new(cfg: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>) -> Self {
+    let state = RefCell::new(cfg);
     let y = (ext.make_val)(state.borrow_mut());
     F2Op{
       base: OpBase::default(),
       ext:  ext,
-      //fun:  RefCell::new(fun),
-      fun:  state,
+      //cfg:  RefCell::new(cfg),
+      cfg:  state,
       ctrl: vec![],
       x1_:  x1_,
       x2_:  x2_,
@@ -1860,14 +1871,14 @@ impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, 
     self.x1_._node().eval(txn);
     self.x2_._node().eval(txn);
     if let Some(ref prepare) = self.ext.prepare {
-      (prepare)(txn, self.fun.borrow_mut());
+      (prepare)(txn, self.cfg.borrow_mut());
     }
   }*/
 
   /*fn _cleanup(&self, txn: Txn) {
     // TODO
     if let Some(ref cleanup) = self.ext.cleanup {
-      (cleanup)(txn, self.fun.borrow_mut());
+      (cleanup)(txn, self.cfg.borrow_mut());
     }
   }*/
 
@@ -1890,7 +1901,7 @@ impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, 
 impl<F, V1, V2, W> AOp<W> for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, RWVal<W>: IOVal + 'static {
   fn _make_value(&self) -> RWVal<W> {
     //(self.ext.make_val)()
-    (self.ext.make_val)(self.fun.borrow_mut())
+    (self.ext.make_val)(self.cfg.borrow_mut())
   }
 
   fn _value(&self) -> &RWVal<W> {
@@ -1900,7 +1911,7 @@ impl<F, V1, V2, W> AOp<W> for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static,
   fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<W> {
     match self.ext.tangent {
       None => unimplemented!(),
-      Some(ref tangent) => (tangent)(pass, self.fun.borrow_mut(), feedfwd),
+      Some(ref tangent) => (tangent)(pass, self.cfg.borrow_mut(), feedfwd),
     }
   }
 
@@ -1919,7 +1930,7 @@ impl<F, V1, V2, W> AOp<W> for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static,
       match self.ext.adjoint {
         None => {}
         Some(ref adjoint) => {
-          (adjoint)(pass, this, self.fun.borrow_mut(), sink);
+          (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
           self.x2_._pop_adjoint(pass, sink);
           self.x1_._pop_adjoint(pass, sink);
         }
@@ -1936,14 +1947,14 @@ impl<F, V1, V2, W> AOp<W> for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static,
   }*/
 
   fn _apply_output(&self, txn: Txn, val: OVal<W>) {
-    (self.ext.apply)(txn, self.fun.borrow_mut(), val);
+    (self.ext.apply)(txn, self.cfg.borrow_mut(), val);
   }
 }
 
 pub struct F3Op<F, V1, V2, V3, W> {
   base: OpBase,
   ext:  OpExt<F, W>,
-  fun:  RefCell<F>,
+  cfg:  RefCell<F>,
   ctrl: Vec<Node>,
   x1_:  Val<V1>,
   x2_:  Val<V2>,
@@ -1952,15 +1963,15 @@ pub struct F3Op<F, V1, V2, V3, W> {
 }
 
 impl<F, V1, V2, V3, W> F3Op<F, V1, V2, V3, W> {
-  //pub fn new(fun: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>, x3_: Val<V3>, y: RWVal<W>) -> Self {
-  pub fn new(fun: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>, x3_: Val<V3>) -> Self {
-    let state = RefCell::new(fun);
+  //pub fn new(cfg: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>, x3_: Val<V3>, y: RWVal<W>) -> Self {
+  pub fn new(cfg: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>, x3_: Val<V3>) -> Self {
+    let state = RefCell::new(cfg);
     let y = (ext.make_val)(state.borrow_mut());
     F3Op{
       base: OpBase::default(),
       ext:  ext,
-      //fun:  RefCell::new(fun),
-      fun:  state,
+      //cfg:  RefCell::new(cfg),
+      cfg:  state,
       ctrl: vec![],
       x1_:  x1_,
       x2_:  x2_,
@@ -2030,14 +2041,14 @@ impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: '
     self.x2_._node().eval(txn);
     self.x3_._node().eval(txn);
     if let Some(ref prepare) = self.ext.prepare {
-      (prepare)(txn, self.fun.borrow_mut());
+      (prepare)(txn, self.cfg.borrow_mut());
     }
   }*/
 
   /*fn _cleanup(&self, txn: Txn) {
     // TODO
     if let Some(ref cleanup) = self.ext.cleanup {
-      (cleanup)(txn, self.fun.borrow_mut());
+      (cleanup)(txn, self.cfg.borrow_mut());
     }
   }*/
 
@@ -2061,7 +2072,7 @@ impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: '
 impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 'static, V3: 'static, RWVal<W>: IOVal + 'static {
   fn _make_value(&self) -> RWVal<W> {
     //(self.ext.make_val)()
-    (self.ext.make_val)(self.fun.borrow_mut())
+    (self.ext.make_val)(self.cfg.borrow_mut())
   }
 
   fn _value(&self) -> &RWVal<W> {
@@ -2071,7 +2082,7 @@ impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 
   fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<W> {
     match self.ext.tangent {
       None => unimplemented!(),
-      Some(ref tangent) => (tangent)(pass, self.fun.borrow_mut(), feedfwd),
+      Some(ref tangent) => (tangent)(pass, self.cfg.borrow_mut(), feedfwd),
     }
   }
 
@@ -2091,7 +2102,7 @@ impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 
       match self.ext.adjoint {
         None => {}
         Some(ref adjoint) => {
-          (adjoint)(pass, this, self.fun.borrow_mut(), sink);
+          (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
           self.x3_._pop_adjoint(pass, sink);
           self.x2_._pop_adjoint(pass, sink);
           self.x1_._pop_adjoint(pass, sink);
@@ -2109,29 +2120,29 @@ impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 
   }*/
 
   fn _apply_output(&self, txn: Txn, val: OVal<W>) {
-    (self.ext.apply)(txn, self.fun.borrow_mut(), val);
+    (self.ext.apply)(txn, self.cfg.borrow_mut(), val);
   }
 }
 
 pub struct FJoinOp<F, V, W> {
   base: OpBase,
   ext:  OpExt<F, W>,
-  fun:  RefCell<F>,
+  cfg:  RefCell<F>,
   ctrl: Vec<Node>,
   xs_:  Vec<Val<V>>,
   y:    RWVal<W>,
 }
 
 impl<F, V, W> FJoinOp<F, V, W> {
-  //pub fn new(fun: F, ext: OpExt<F, W>, xs_: Vec<Val<V>>, y: RWVal<W>) -> Self {
-  pub fn new(fun: F, ext: OpExt<F, W>, xs_: Vec<Val<V>>) -> Self {
-    let state = RefCell::new(fun);
+  //pub fn new(cfg: F, ext: OpExt<F, W>, xs_: Vec<Val<V>>, y: RWVal<W>) -> Self {
+  pub fn new(cfg: F, ext: OpExt<F, W>, xs_: Vec<Val<V>>) -> Self {
+    let state = RefCell::new(cfg);
     let y = (ext.make_val)(state.borrow_mut());
     FJoinOp{
       base: OpBase::default(),
       ext:  ext,
-      //fun:  RefCell::new(fun),
-      fun:  state,
+      //cfg:  RefCell::new(cfg),
+      cfg:  state,
       ctrl: vec![],
       xs_:  xs_,
       y:    y,
@@ -2199,14 +2210,14 @@ impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'st
       x._node().eval(txn);
     }
     if let Some(ref prepare) = self.ext.prepare {
-      (prepare)(txn, self.fun.borrow_mut());
+      (prepare)(txn, self.cfg.borrow_mut());
     }
   }*/
 
   /*fn _cleanup(&self, txn: Txn) {
     // TODO
     if let Some(ref cleanup) = self.ext.cleanup {
-      (cleanup)(txn, self.fun.borrow_mut());
+      (cleanup)(txn, self.cfg.borrow_mut());
     }
   }*/
 
@@ -2230,7 +2241,7 @@ impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'st
 impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'static {
   fn _make_value(&self) -> RWVal<W> {
     //(self.ext.make_val)()
-    (self.ext.make_val)(self.fun.borrow_mut())
+    (self.ext.make_val)(self.cfg.borrow_mut())
   }
 
   fn _value(&self) -> &RWVal<W> {
@@ -2244,7 +2255,7 @@ impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 's
       }
       match self.ext.tangent {
         None => unimplemented!(),
-        Some(ref tangent) => (tangent)(pass, self.fun.borrow_mut(), feedfwd),
+        Some(ref tangent) => (tangent)(pass, self.cfg.borrow_mut(), feedfwd),
       }
     } else {
       // TODO
@@ -2267,7 +2278,7 @@ impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 's
       match self.ext.adjoint {
         None => {}
         Some(ref adjoint) => {
-          (adjoint)(pass, this, self.fun.borrow_mut(), sink);
+          (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
           for x_ in self.xs_.iter().rev() {
             x_._pop_adjoint(pass, sink);
           }
@@ -2289,7 +2300,7 @@ impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 's
   }
 
   fn _apply_output(&self, txn: Txn, val: OVal<W>) {
-    (self.ext.apply)(txn, self.fun.borrow_mut(), val);
+    (self.ext.apply)(txn, self.cfg.borrow_mut(), val);
   }
 }
 
