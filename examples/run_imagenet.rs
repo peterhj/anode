@@ -29,7 +29,7 @@ fn main() {
   let dataset = ImagenetTrainData::open(datacfg).unwrap();
 
   let mut count = 0;
-  let mut iter = dataset.one_pass().map_data(|(value, label)| {
+  let iter = dataset.one_pass().map_data(|(value, label)| {
     let mut image = ColorImage::new();
     let maybe_image = match decode_image(&value, &mut image) {
       Ok(_) => {
@@ -52,12 +52,18 @@ fn main() {
     }
 
     let image = maybe_image.unwrap();
-    let im_sz = [image.width() as _, image.height() as _, image.pixel_channels() as _];
+    let im_sz = [image.width() as _, image.height() as _, image.channels() as _];
     let mut im_arr = MemArray3d::zeros(im_sz);
     image.dump_planes(im_arr.flat_view_mut().unwrap().as_mut_slice());
 
     if thread_rng().gen_range(0, 1000) == 0 {
-      let out_image = Image::new(image.width() as _, image.height() as _, 3, image.to_vec());
+      let image_sz = image.width() as usize * image.height() as usize * 3;
+      let mut image_buf = Vec::with_capacity(image_sz);
+      for _ in 0 .. image_sz {
+        image_buf.push(0);
+      }
+      image.dump_pixels(&mut image_buf);
+      let out_image = Image::new(image.width() as _, image.height() as _, 3, image_buf);
       let png_data = out_image.write_png().unwrap();
       let png_path = PathBuf::from(format!("tmp/test_{:04}_{:08}.png", write_count, idx));
       let mut png_file = File::create(&png_path).unwrap();

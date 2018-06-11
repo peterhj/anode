@@ -121,11 +121,13 @@ pub trait ExecutionCtx {
   }
 
   #[cfg(feature = "mpi")]
-  fn multi_mpi(&self) -> MPIProcessCtx {
-    match self.maybe_mpi_rank() {
+  fn mpi_rank(&self) -> MPIProcessCtx {
+    // FIXME
+    unimplemented!();
+    /*match self.maybe_mpi_rank() {
       None => panic!("no MPI process ctx"),
       Some(ctx) => ctx,
-    }
+    }*/
   }
 }
 
@@ -435,18 +437,18 @@ impl SharedMuxGPUDeviceCtxBuilder {
 
 #[cfg(feature = "mpi")]
 pub struct MPIProcessCtx {
-  rank: i32,
-  size: i32,
+  //rank: i32,
+  //size: i32,
 }
 
 #[cfg(feature = "mpi")]
 impl Default for MPIProcessCtx {
   fn default() -> Self {
-    let rank = MPIComm::world().rank().unwrap();
-    let size = MPIComm::world().size().unwrap();
+    //let rank = MPIComm::world().rank().unwrap();
+    //let size = MPIComm::world().size().unwrap();
     MPIProcessCtx{
-      rank: rank,
-      size: size,
+      //rank: rank,
+      //size: size,
     }
   }
 }
@@ -457,7 +459,8 @@ pub struct MPIProcessGroup {
 
 #[cfg(feature = "mpi")]
 impl MPIProcessGroup {
-  pub fn init() -> Vec<CString> {
+  // FIXME
+  /*pub fn init() -> Vec<CString> {
     let args: Vec<_> = env::args_os().collect();
     let mut raw_argv = Vec::with_capacity(args.len());
     for arg in args.drain() {
@@ -489,7 +492,7 @@ impl MPIProcessGroup {
     assert_eq!(status, MPI_SUCCESS);
     let status = unsafe { MPI_Finalize() };
     assert_eq!(status, MPI_SUCCESS);
-  }
+  }*/
 }
 
 pub struct CollectionCtx {

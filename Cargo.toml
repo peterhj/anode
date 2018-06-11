@@ -23,9 +23,6 @@ stb_image = { path = "../rust-stb-image" }
 superdata = { path = "../superdata" }
 
 [dependencies]
-#rand = "*"
-rand = { path = "../rand" }
-time = "*"
 arithmetic = { path = "../arithmetic" }
 arrayidx = { path = "../arrayidx" }
 #async_execution = { path = "../async_execution" }
@@ -39,7 +36,11 @@ lazy_static = "*"
 memarray = { path = "../memarray", features = ["mkl"] }
 parking_lot = { version = "*", features = ["nightly"] }
 #rng = "*"
+#rand = { path = "../rand" }
+rand = "^0.5"
 rng = { path = "../rng" }
+sharedmem = { path = "../sharedmem" }
+time = "*"
 typemap = "*"
 
 #[replace]

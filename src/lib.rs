@@ -362,21 +362,35 @@ pub fn gpu_mux<V>(roots: Vec<Val<V>>) -> Vec<Val<V>> {
   unimplemented!();
 }
 
-pub struct Torus1d<V> {
+pub struct Torus1d<V=()> {
   idxs: Vec<usize>,
   data: Vec<V>,
 }
 
-pub type Ring<V> = Torus1d<V>;
+pub type Ring<V=()> = Torus1d<V>;
 
-pub struct Torus2d<V> {
+impl Torus1d {
+  pub fn to(r: usize) -> Self {
+    // TODO
+    unimplemented!();
+  }
+}
+
+pub struct Torus2d<V=()> {
   idxs: Vec<[usize; 2]>,
   data: Vec<V>,
 }
 
-pub type Torus<V> = Torus2d<V>;
+pub type Torus<V=()> = Torus2d<V>;
 
-pub struct Torus3d<V> {
+impl Torus2d {
+  pub fn to(r0: usize, r1: usize) -> Self {
+    // TODO
+    unimplemented!();
+  }
+}
+
+pub struct Torus3d<V=()> {
   idxs: Vec<[usize; 3]>,
   data: Vec<V>,
 }
@@ -385,6 +399,7 @@ pub struct Node {
   node: Rc<ANode>,
   xvar: RWVar,
   rvar: RVar,
+  name: Option<String>,
 }
 
 impl Node {
@@ -429,6 +444,7 @@ pub struct Val<V> {
   op:   Rc<AOp<V>>,
   xvar: RWVar,
   rvar: RVar,
+  name: Option<String>,
 }
 
 impl<V> Clone for Val<V> {
@@ -439,6 +455,7 @@ impl<V> Clone for Val<V> {
       op:   self.op.clone(),
       xvar: self.xvar,
       rvar: rvar,
+      name: self.name.clone(),
     }
   }
 }
@@ -451,6 +468,7 @@ impl<V> Val<V> where V: 'static {
       op:   op,
       xvar: xvar,
       rvar: rvar,
+      name: None,
     }
   }
 
@@ -461,6 +479,7 @@ impl<V> Val<V> where V: 'static {
       op:   op,
       xvar: RWVar(rvar),
       rvar: rvar,
+      name: None,
     };
     let val = WRAP_VAL_STACK.with(|stack| {
       let stack = stack.borrow();
@@ -487,6 +506,7 @@ impl<V> Val<V> where V: 'static {
       xvar: self.xvar,
       // NOTE: Should the node corresponding to a val share the same varkeys?
       rvar: self.rvar,
+      name: self.name.clone(),
     }
   }
 
@@ -504,6 +524,7 @@ impl<V> Val<V> where V: 'static {
       op:   self.op.clone(),
       xvar: self.xvar,
       rvar: self.rvar,
+      name: self.name.clone(),
     }
   }
 
@@ -515,6 +536,7 @@ impl<V> Val<V> where V: 'static {
       op:   self.op.clone(),
       xvar: RWVar(rvar),
       rvar: rvar,
+      name: self.name.clone(),
     }
   }
 
@@ -526,6 +548,18 @@ impl<V> Val<V> where V: 'static {
       op:   self.op.clone(),
       xvar: RWVar(rvar),
       rvar: rvar,
+      name: self.name.clone(),
+    }
+  }
+
+  pub fn named(&self, name: &str) -> Val<V> {
+    let rvar = RVar::default();
+    Val{
+      node: self.node.clone(),
+      op:   self.op.clone(),
+      xvar: self.xvar,
+      rvar: rvar,
+      name: Some(name.to_owned()),
     }
   }
 
@@ -908,13 +942,14 @@ impl<T> LazyConst<T> where T: Copy {
   }
 }
 
+#[derive(Clone)]
 pub struct TCell<T> where T: Copy {
-  inner:    RefCell<TCellInner<T>>,
+  inner:    Rc<RefCell<TCellInner<T>>>,
 }
 
 impl<T> TCell<T> where T: Copy {
   pub fn new(init_value: T) -> Self {
-    TCell{inner: RefCell::new(TCellInner::new(init_value))}
+    TCell{inner: Rc::new(RefCell::new(TCellInner::new(init_value)))}
   }
 
   pub fn persist(&self, txn: Txn) {

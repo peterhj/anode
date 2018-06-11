@@ -20,44 +20,6 @@ use std::marker::{PhantomData};
 use std::ops::{Add, Mul};
 use std::rc::{Rc};
 
-/*pub trait MemIoReader<'a> {
-  fn read_mem(&mut self, src: &'a Any) -> Option<()>;
-}
-
-pub trait MemIoWriter<'a> {
-  fn write_mem(&mut self, cap: WriteCap, dst: &mut &'a mut Any) -> Option<()>;
-}
-
-impl<'a, Mem, T> MemIoReader<'a> for FlatReader<'a, Mem> where Mem: DerefMut<Target=[T]>, T: Copy + 'static {
-  fn read_mem(&mut self, src: &'a Any) -> Option<()> {
-    if let Some(_) = src.downcast_ref::<()>() {
-      Some(())
-    } else if let Some(ref src) = src.downcast_ref::<Vec<T>>() {
-      let src_len = src.len();
-      self.inner[self.offset .. self.offset + src_len].copy_from_slice(src);
-      self.offset += src_len;
-      Some(())
-    } else {
-      None
-    }
-  }
-}
-
-impl<'a, Mem, T> MemIoWriter<'a> for FlatWriter<'a, Mem> where Mem: DerefMut<Target=[T]>, T: Copy + 'static {
-  fn write_mem(&mut self, cap: WriteCap, dst: &mut &'a mut Any) -> Option<()> {
-    if let Some(_) = dst.downcast_ref::<()>() {
-      Some(())
-    } else if let Some(ref mut dst) = (*dst).downcast_mut::<Vec<T>>() {
-      let dst_len = dst.len();
-      dst.copy_from_slice(&self.inner[self.offset .. self.offset + dst_len]);
-      self.offset += dst_len;
-      Some(())
-    } else {
-      None
-    }
-  }
-}*/
-
 pub struct PassOp;
 pub struct FixOp;
 pub struct DuplicateOp;
@@ -68,6 +30,8 @@ pub struct DeserializeOp;
 pub struct CastOp;
 pub struct LinearDequantizeOp<T> { pub lo: T, pub hi: T }
 
+pub struct SwitchOp;
+
 pub struct SrcOp;
 pub struct TouchSrcOp;
 pub struct ZerosSrcOp;
@@ -77,14 +41,15 @@ pub struct RandomBitsSrcOp;
 pub struct UniformSrcOp;
 pub struct NormalSrcOp;
 
-pub struct FlatViewOp;
-pub struct ReshapeViewOp;
+pub struct FlattenOp;
+pub struct ReshapeOp;
 pub struct MapOp<MapF> { pub f: MapF, }
 pub struct TransposeOp;
 pub struct SumJoinOp;
 pub struct SumJoinAccumulateOp;
-pub struct FlatSumJoinOp;
-pub struct BatchSumJoinOp;
+pub struct FlatSumOp;
+pub struct ReduceSumOp;
+pub struct BatchSumOp;
 pub struct FlatMapOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatMapInplaceOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatJoinOp<FlatJoin> { pub f: FlatJoin }
@@ -95,10 +60,10 @@ pub struct LeftTransposeLinearOp;
 pub struct RightTransposeLinearOp;
 pub struct OuterLinearOp;
 pub struct Conv1dLinearOp;
-pub struct Conv2dLinearOp;
-pub struct Conv3dLinearOp;
 pub struct Conv1dAffineOp;
-pub struct Conv2dAffineOp;
+pub struct Conv2dLinearOp { pub conv_shape: Conv2dShape }
+pub struct Conv2dAffineOp { pub conv_shape: Conv2dShape }
+pub struct Conv3dLinearOp;
 pub struct Conv3dAffineOp;
 pub struct LeftTransposeConv1dLinearOp;
 pub struct LeftTransposeConv2dLinearOp;
@@ -131,24 +96,124 @@ pub struct SpacePadOp;
 
 #[derive(Clone)] pub struct Map2FlatJoin<Map1, Map2, Reduce> { pub map1: Map1, pub map2: Map2, pub reduce: Reduce }
 
+#[derive(Clone, Copy)]
 pub struct Conv2dShape {
-  pub axes:     [usize; 2],
-  pub kernel:   [usize; 2],
-  pub stride:   [usize; 2],
-  pub pad:      [usize; 2],
+  pub src_space_axes:   [isize; 2],
+  pub src_feature_axis: isize,
+  pub src_batch_axis:   isize,
+  pub dst_space_axes:   [isize; 2],
+  pub dst_feature_axis: isize,
+  pub dst_batch_axis:   isize,
+  pub ker_space_axes:   [isize; 2],
+  pub ker_output_axis:  isize,
+  pub ker_size:         [usize; 2],
+  pub dilation:         [usize; 2],
+  pub stride:           [usize; 2],
+  pub zero_pad:         [usize; 2],
+}
+
+impl Conv2dShape {
+  pub fn default_nchw() -> Self {
+    Self::default_space_major()
+  }
+
+  pub fn default_space_major() -> Self {
+    Conv2dShape{
+      src_space_axes:   [0, 1],
+      src_feature_axis: 2,
+      src_batch_axis:   3,
+      dst_space_axes:   [0, 1],
+      dst_feature_axis: 2,
+      dst_batch_axis:   3,
+      ker_space_axes:   [0, 1],
+      ker_output_axis:  3,
+      ker_size:         [0, 0],
+      dilation:         [1, 1],
+      stride:           [1, 1],
+      zero_pad:         [0, 0],
+    }
+  }
+
+  pub fn default_nhwc() -> Self {
+    Self::default_feature_major()
+  }
+
+  pub fn default_feature_major() -> Self {
+    Conv2dShape{
+      src_space_axes:   [1, 2],
+      src_feature_axis: 0,
+      src_batch_axis:   3,
+      dst_space_axes:   [1, 2],
+      dst_feature_axis: 0,
+      dst_batch_axis:   3,
+      ker_space_axes:   [0, 1],
+      ker_output_axis:  3,
+      ker_size:         [0, 0],
+      dilation:         [1, 1],
+      stride:           [1, 1],
+      zero_pad:         [0, 0],
+    }
+  }
+
+  pub fn default_chwn() -> Self {
+    Self::default_batch_major()
+  }
+
+  pub fn default_batch_major() -> Self {
+    Conv2dShape{
+      src_space_axes:   [1, 2],
+      src_feature_axis: 3,
+      src_batch_axis:   0,
+      dst_space_axes:   [1, 2],
+      dst_feature_axis: 3,
+      dst_batch_axis:   0,
+      ker_space_axes:   [0, 1],
+      ker_output_axis:  3,
+      ker_size:         [0, 0],
+      dilation:         [1, 1],
+      stride:           [1, 1],
+      zero_pad:         [0, 0],
+    }
+  }
+
+  pub fn calculate_output_size(&self, w_size: [usize; 4], x_size: [usize; 3]) -> [usize; 3] {
+    assert!(self.ker_size[0] >= 1);
+    assert!(self.ker_size[1] >= 1);
+    assert!(self.dilation[0] >= 1);
+    assert!(self.dilation[1] >= 1);
+    assert!(self.stride[0] >= 1);
+    assert!(self.stride[1] >= 1);
+    let src_w = x_size[self.src_space_axes[0] as usize];
+    let src_h = x_size[self.src_space_axes[1] as usize];
+    let dst_w = 1 + (src_w + 2 * self.zero_pad[0] - (((self.ker_size[0] - 1) * self.dilation[0]) + 1)) / self.stride[0];
+    let dst_h = 1 + (src_h + 2 * self.zero_pad[1] - (((self.ker_size[1] - 1) * self.dilation[1]) + 1)) / self.stride[1];
+    let dst_c = w_size[self.ker_output_axis as usize];
+    let mut dst_size = [0, 0, 0];
+    dst_size[self.dst_space_axes[0] as usize] = dst_w;
+    dst_size[self.dst_space_axes[1] as usize] = dst_h;
+    dst_size[self.dst_feature_axis as usize] = dst_c;
+    dst_size
+  }
+}
+
+#[derive(Clone, Copy)]
+pub struct Pool2dShape {
+  pub src_space_axes:   [isize; 2],
+  pub src_feature_axis: isize,
+  pub src_batch_axis:   isize,
+  pub dst_space_axes:   [isize; 2],
+  pub dst_feature_axis: isize,
+  pub dst_batch_axis:   isize,
+  pub filter:           [usize; 2],
+  pub dilation:         [usize; 2],
+  pub stride:           [usize; 2],
+  pub zero_pad:         [usize; 2],
 }
 
 pub struct MaxPoolResample2dF;
 pub struct AvgPoolResample2dF;
 pub struct BilinearResample2dF;
 pub struct BicubicResample2dF;
-
-pub struct Pool2dShape {
-  pub axes:     [usize; 2],
-  pub window:   [usize; 2],
-  pub stride:   [usize; 2],
-  pub pad:      [usize; 2],
-}
 
 #[derive(Clone)] pub struct MeanReduceF;
 #[derive(Clone)] pub struct VarianceReduceF;
@@ -178,6 +243,14 @@ pub struct LinearScale;
 pub trait DequantizeExt<V, W, T, Scale=LinearScale> {
   //fn dequantize(&self, base: T, range: T) -> Rc<F1Op<DequantizeFun<T, Scale>, V, W>>;
   fn dequantize(&self, base: T, range: T) -> Val<W>;
+}
+
+pub trait SwitchOpExt<V> {
+  fn build(flag: TCell<bool>, off_: Val<V>, on_: Val<V>) -> Val<V>;
+}
+
+pub fn switch<V>(flag: TCell<bool>, off_: Val<V>, on_: Val<V>) -> Val<V> where SwitchOp: SwitchOpExt<V> {
+  <SwitchOp as SwitchOpExt<V>>::build(flag, off_, on_)
 }
 
 pub trait SrcOpExt<V, Init> {
@@ -222,6 +295,10 @@ impl<V> OnesSrcOpMaybeExt<V> for OnesSrcOp {
   }
 }
 
+pub trait FlattenExt<V, W> {
+  fn flatten(self) -> Val<W>;
+}
+
 pub trait ConstantOpsExt<T, V> {
   fn set_constant(self, c: T) -> Val<V>;
   fn add_constant(self, c: T) -> Val<V>;
@@ -250,6 +327,10 @@ pub trait SumJoinOpExt<V> {
 
 pub trait SumExt<V> {
   fn sum(xs_: Vec<Val<V>>) -> Val<V>;
+}
+
+pub trait ReduceSumExt<V, W> {
+  fn reduce_sum(self, axis: isize) -> Val<W>;
 }
 
 impl<V> Add<Val<V>> for Val<V> where Self: SumExt<V> {
@@ -320,11 +401,13 @@ pub trait OuterLinearExt<Y, X, A> {
 }
 
 pub trait ConvLinearExt<A, X, Y> {
-  fn conv(self, x: Val<X>) -> Val<Y>;
+  type ConvShape;
+
+  fn conv(self, conv_shape: Self::ConvShape, x: Val<X>) -> Val<Y>;
 }
 
-pub trait ConvAffineExt<A, X, Y, B> {
-  fn conv_add(self, x: Val<X>, b: Val<B>) -> Val<Y>;
+pub trait ConvAffineExt<A, X, Y, B>: ConvLinearExt<A, X, Y> {
+  fn conv_add(self, conv_shape: Self::ConvShape, x: Val<X>, b: Val<B>) -> Val<Y>;
 }
 
 pub trait LeftTransposeConvLinearExt<A, Y, X> {

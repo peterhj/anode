@@ -26,9 +26,9 @@ use cuda_dnn::*;
 use gpudevicemem::*;
 use gpudevicemem::array::*;
 use gpudevicemem::array::linalg::*;
-use gpudevicemem::array::linalg::conv::*;
+use gpudevicemem::array::tensor::conv::*;
 use memarray::*;
-use rand::{Rng};
+use rand::prelude::{Rng};
 
 use std::cell::{RefMut};
 //use std::marker::{PhantomData};
@@ -550,6 +550,17 @@ where T: ZeroBits + Copy + 'static,
   }
 }
 
+impl<T: Copy> FlattenExt<GPUDeviceOuterBatchArray3d<T>, GPUDeviceOuterBatchArray1d<T>> for Val<GPUDeviceOuterBatchArray3d<T>> {
+  fn flatten(self) -> Val<GPUDeviceOuterBatchArray1d<T>> {
+    // TODO
+    unimplemented!();
+  }
+}
+
+impl FlattenOp {
+  // TODO
+}
+
 impl SumJoinOp {
   pub fn build_device_op<T, A>(inputs_: Vec<Val<A>>)
       -> Rc<FJoinOp<Self, A, A>>
@@ -715,6 +726,10 @@ impl SumJoinOp {
   }
 }
 
+impl ReduceSumOp {
+  // TODO
+}
+
 /*impl<T, V> SumJoinOpExt<GPUDeviceArray1d<T>> for SumJoinOp
 where T: Copy + PseudoField + 'static,
       V: RWVal<T=GPUDeviceArray1d<T>> + 'static,
@@ -829,15 +844,13 @@ where T: Copy,
 
 impl RectFlatMapExt<GPUDeviceOuterBatchArray1d<f32>> for Val<GPUDeviceOuterBatchArray1d<f32>> {
   fn rect(self) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
-    // TODO
     FlatMapOp::<PositiveClipFlatMapF>::build_gpu_obatch_val(PositiveClipFlatMapF, self)
   }
 }
 
 impl RectFlatMapExt<GPUDeviceOuterBatchArray3d<f32>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
   fn rect(self) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
-    // TODO
-    unimplemented!();
+    FlatMapOp::<PositiveClipFlatMapF>::build_gpu_obatch_val(PositiveClipFlatMapF, self)
   }
 }
 
@@ -1641,9 +1654,8 @@ impl AffineOp {
                 guard._wait(x.async_state());
                 guard._wait(b.async_state());
                 guard._wait(y.async_state());
-                y.matrix_mult(w, x, conn);
-                // FIXME: broadcast add b to y.
-                unimplemented!();
+                y.matrix_mult(w, x, conn.clone());
+                y.broadcast_add_vector_inplace(b, 0, conn.clone());
               }
               WriteCap::Accumulate => unimplemented!(),
             }
@@ -1672,9 +1684,9 @@ impl AffineOp {
         Box::new(move |_: Pass, y_: Val<GPUDeviceOuterBatchArray1d<T>>, state: RefMut<_>, sink: &mut Sink| {
           if let Some(adj_y_) = y_.adjoint(sink) {
             let adj_w_ = adj_y_.clone().outer_mult(x_.clone());
-            let adj_x_ = w_.clone().left_transpose_mult(adj_y_);
+            let adj_x_ = w_.clone().left_transpose_mult(adj_y_.clone());
             // FIXME: calculate adj of b via a reduction.
-            let adj_b_ = { unimplemented!() };
+            let adj_b_ = { /*adj_y_.reduce_sum(1)*/ unimplemented!() };
             w_.put_adjoint(adj_w_, sink);
             x_.put_adjoint(adj_x_, sink);
             b_.put_adjoint(adj_b_, sink);
@@ -1687,12 +1699,34 @@ impl AffineOp {
   }
 }
 
+impl<T> ConvLinearExt<GPUDeviceArray4d<T>, GPUDeviceOuterBatchArray3d<T>, GPUDeviceOuterBatchArray3d<T>> for Val<GPUDeviceArray4d<T>>
+where T: GPUDataTyped + CudnnDataTypeExt + PseudoField + ZeroBits + Copy + 'static,
+      GPUDeviceArrayViewMut4d<T>: GPUTensorOps<T> + GPUBatchConvOps<T, T, T>,
+{
+  type ConvShape = Conv2dShape;
+
+  fn conv(self, conv_shape: Conv2dShape, x: Val<GPUDeviceOuterBatchArray3d<T>>) -> Val<GPUDeviceOuterBatchArray3d<T>> {
+    // TODO
+    unimplemented!();
+    //Conv2dLinearOp::build_device_obatch_val(conv_shape, self, x)
+  }
+}
+
+impl<T> ConvAffineExt<GPUDeviceArray4d<T>, GPUDeviceOuterBatchArray3d<T>, GPUDeviceOuterBatchArray3d<T>, GPUDeviceArray1d<T>> for Val<GPUDeviceArray4d<T>>
+where T: GPUDataTyped + CudnnDataTypeExt + PseudoField + ZeroBits + Copy + 'static,
+      GPUDeviceArrayViewMut4d<T>: GPUTensorOps<T> + GPUBatchConvOps<T, T, T>,
+{
+  fn conv_add(self, conv_shape: Conv2dShape, x: Val<GPUDeviceOuterBatchArray3d<T>>, b: Val<GPUDeviceArray1d<T>>) -> Val<GPUDeviceOuterBatchArray3d<T>> {
+    Conv2dAffineOp::build_device_obatch_val(conv_shape, self, x, b)
+  }
+}
+
 impl Conv2dAffineOp {
-  pub fn build_device_obatch_val<T>(w_: Val<GPUDeviceArray4d<T>>, x_: Val<GPUDeviceOuterBatchArray3d<T>>, b_: Val<GPUDeviceArray1d<T>>)
+  pub fn build_device_obatch_val<T>(conv_shape: Conv2dShape, w_: Val<GPUDeviceArray4d<T>>, x_: Val<GPUDeviceOuterBatchArray3d<T>>, b_: Val<GPUDeviceArray1d<T>>)
       -> Val<GPUDeviceOuterBatchArray3d<T>>
   // TODO: `ZeroBits` should not be necessary here.
   where T: GPUDataTyped + CudnnDataTypeExt + PseudoField + ZeroBits + Copy + 'static,
-        GPUDeviceArrayViewMut4d<T>: GPUBatchConvOps<T, T, T>,
+        GPUDeviceArrayViewMut4d<T>: GPUTensorOps<T> + GPUBatchConvOps<T, T, T>,
   {
     let ext = OpExt{
       make_val: {
@@ -1708,7 +1742,8 @@ impl Conv2dAffineOp {
             let w_size = w_.get(txn).size();
             let x_size = x_.get(txn).size();
             let x_max_bsz = x_.get(txn).max_batch_size();
-            GPUDeviceOuterBatchArray3d::zeros([x_size[0], x_size[1], w_size[3]], x_max_bsz, conn)
+            let y_size = conv_shape.calculate_output_size(w_size, x_size);
+            GPUDeviceOuterBatchArray3d::zeros(y_size, x_max_bsz, conn)
           }))
         })
       },
@@ -1734,25 +1769,30 @@ impl Conv2dAffineOp {
                 guard._wait(x.async_state());
                 guard._wait(b.async_state());
                 guard._wait(y.async_state());
-                // FIXME
-                let shape = XConvFullShape::Conv2d(Conv2dFullShape{
-                  ker_axes: (),
-                  ker_size: [3, 3],
-                  stride:   [1, 1],
-                  zero_pad: [1, 1],
-                  dilation: [1, 1],
-                  src_axes: (),
+                let xconv_shape = XConvFullShape::Conv2d(Conv2dFullShape{
+                  ker_space_axes:   conv_shape.ker_space_axes,
+                  ker_output_axis:  conv_shape.ker_output_axis,
+                  src_space_axes:   conv_shape.src_space_axes,
+                  src_feature_axis: conv_shape.src_feature_axis,
+                  src_batch_axis:   conv_shape.src_batch_axis,
                   src_size: x.size(),
-                  dst_axes: (),
+                  dst_space_axes:   conv_shape.dst_space_axes,
+                  dst_feature_axis: conv_shape.dst_feature_axis,
+                  dst_batch_axis:   conv_shape.dst_batch_axis,
                   dst_size: y.size(),
+                  filter:   conv_shape.ker_size,
+                  dilation: conv_shape.dilation,
+                  stride:   conv_shape.stride,
+                  zero_pad: conv_shape.zero_pad,
                   groups:   1,
                   cross:    true,
                 });
-                let (cfg, mut state) = match query_gpu_conv_fwd_algo(conn.device(), None, None, shape, conn.clone()) {
+                let (cfg, mut state) = match query_gpu_conv_fwd_algo(conn.device(), None, None, xconv_shape, conn.clone()) {
                   None => panic!("invalid conv2d config"),
                   Some((cfg, state)) => (cfg, state),
                 };
                 let mut workspace = GPUDeviceArray1d::zeros_with_alloc(conn.burst_arena(), cfg.workspace_size(), conn.clone());
+                guard._wait(workspace.async_state());
                 y.batch_conv2d(
                     &cfg,
                     &mut state,
@@ -1761,8 +1801,7 @@ impl Conv2dAffineOp {
                     workspace.as_view_mut(),
                     conn.clone(),
                 );
-                // FIXME: broadcast add b to x.
-                //unimplemented!();
+                y.broadcast_add_1d_inplace(b, conv_shape.dst_feature_axis, conn.clone());
               }
               WriteCap::Accumulate => unimplemented!(),
             }
@@ -1804,7 +1843,7 @@ impl Conv2dAffineOp {
       }),
       inplace: None,
     };
-    Val::from(Rc::new(F3Op::new(AffineOp, ext, w_, x_, b_)))
+    Val::from(Rc::new(F3Op::new(Conv2dAffineOp{conv_shape}, ext, w_, x_, b_)))
   }
 }
 

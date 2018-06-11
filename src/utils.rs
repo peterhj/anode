@@ -73,6 +73,16 @@ impl ZerosFill<[usize; 4]> for GPUDeviceArray4d<f32> {
   }
 }
 
+impl ZerosFill<usize> for GPUDeviceOuterBatchScalar<u32> {
+  type RValue = Rc<Fn(GPUDeviceConn) -> Self>;
+
+  fn zeros_fill(size: usize) -> Self::RValue {
+    Rc::new(move |conn: GPUDeviceConn| {
+      GPUDeviceOuterBatchScalar::<u32>::zeros((), size, conn.clone())
+    })
+  }
+}
+
 impl ZerosFill<(usize, usize)> for GPUDeviceOuterBatchArray1d<f32> {
   type RValue = Rc<Fn(GPUDeviceConn) -> Self>;
 
