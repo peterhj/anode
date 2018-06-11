@@ -20,7 +20,7 @@ use ffi::routines_gpu::*;
 use ops::*;
 
 use arithmetic::*;
-use arrayidx::*;
+//use arrayidx::*;
 //use cuda_blas::*;
 use cuda_dnn::*;
 use gpudevicemem::*;
@@ -80,6 +80,7 @@ impl<A> GPUMuxOp<A> where A: 'static {
     let ext = OpExt{
       make_val: {
         Box::new(move |state: RefMut<Self>| {
+          println!("DEBUG: GPUMuxOp: ext: make_val");
           let ctx = implicit_ctx().multi_gpu().gpu(state.dev);
           let guard = push_ctx(ctx);
           state.val._make_value()
@@ -87,6 +88,7 @@ impl<A> GPUMuxOp<A> where A: 'static {
       },
       apply: {
         Box::new(move |txn: Txn, state: RefMut<Self>, _output: OVal<A>| {
+          println!("DEBUG: GPUMuxOp: ext: apply");
           let ctx = implicit_ctx().multi_gpu().gpu(state.dev);
           let guard = push_ctx(ctx);
           state.val._apply(txn);
@@ -116,10 +118,10 @@ impl<A> GPUMuxOp<A> where A: 'static {
   }
 }
 
-impl<A> SrcOpExt<A, Rc<Fn(GPUDeviceConn) -> A>> for SrcOp
+impl<A> SrcOpExt<A, Rc<Fn(Txn, GPUDeviceConn) -> A>> for SrcOp
 where A: GPUDeviceAsync + 'static,
 {
-  fn build(init_val: Rc<Fn(GPUDeviceConn) -> A>) -> Val<A> {
+  fn build(init_val: Rc<Fn(Txn, GPUDeviceConn) -> A>) -> Val<A> {
     let ext = OpExt{
       make_val: {
         //Box::new(move || {
@@ -135,7 +137,7 @@ where A: GPUDeviceAsync + 'static,
             // FIXME: this part really requires auto-wait and auto-registration.
             let mut section = section.clone();
             let mut guard = section.enter(conn.clone());
-            let y = init_val(conn);
+            let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
           }))
@@ -172,10 +174,10 @@ where A: GPUDeviceAsync + 'static,
   }
 }
 
-impl<A> TouchSrcOpExt<A, Rc<Fn(GPUDeviceConn) -> A>> for TouchSrcOp
+impl<A> TouchSrcOpExt<A, Rc<Fn(Txn, GPUDeviceConn) -> A>> for TouchSrcOp
 where A: GPUDeviceAsync + 'static,
 {
-  fn build(init_val: Rc<Fn(GPUDeviceConn) -> A>) -> Val<A> {
+  fn build(init_val: Rc<Fn(Txn, GPUDeviceConn) -> A>) -> Val<A> {
     let ext = OpExt{
       make_val: {
         //Box::new(move || {
@@ -191,7 +193,7 @@ where A: GPUDeviceAsync + 'static,
             // FIXME: this part really requires auto-wait and auto-registration.
             let mut section = section.clone();
             let mut guard = section.enter(conn.clone());
-            let y = init_val(conn);
+            let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
           }))
@@ -236,7 +238,7 @@ where T: Copy,
           + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>>
           + GPUDeviceAsync
           + 'static,
-      F: (Fn(GPUDeviceConn) -> A) + 'static,
+      F: (Fn(Txn, GPUDeviceConn) -> A) + 'static,
 {
   fn build(init_val: Rc<F>) -> Val<A> {
     let ext = OpExt{
@@ -254,7 +256,7 @@ where T: Copy,
             // FIXME: this part really requires auto-wait and auto-registration.
             let mut section = section.clone();
             let mut guard = section.enter(conn.clone());
-            let y = init_val(conn);
+            let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
           }))
@@ -317,19 +319,129 @@ where T: Copy,
   }
 }
 
-impl<T, F> ZerosSrcOpExt<GPUDeviceArray1d<T>, Rc<F>> for ZerosSrcOp
-where T: ZeroBits + Copy + 'static,
-      F: (Fn(GPUDeviceConn) -> GPUDeviceArray1d<T>) + 'static,
+impl<T> ZerosSrcOpLikeExt<GPUDeviceScalar<T>> for ZerosSrcOp
+where ZerosSrcOp: ZerosSrcOpExt<GPUDeviceScalar<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceScalar<T>>>,
+      T: ZeroBits + Copy + 'static,
 {
-  fn build(init_val: Rc<F>) -> Val<GPUDeviceArray1d<T>> {
-    <Self as ZerosSrcOpExt<GPUDeviceArray1d<T>, Rc<Fn(GPUDeviceConn) -> GPUDeviceArray1d<T>>>>::build(init_val)
+  fn build_like(_: Val<GPUDeviceScalar<T>>) -> Val<GPUDeviceScalar<T>> {
+    <ZerosSrcOp as ZerosSrcOpExt<GPUDeviceScalar<T>, _>>::build(
+        Rc::new(move |txn, conn| {
+          let y = GPUDeviceScalar::zeros((), conn);
+          y
+        })
+    )
   }
 }
 
-impl<T> ZerosSrcOpExt<GPUDeviceArray1d<T>, Rc<Fn(GPUDeviceConn) -> GPUDeviceArray1d<T>>> for ZerosSrcOp
+impl<T, F> ZerosSrcOpExt<GPUDeviceScalar<T>, Rc<F>> for ZerosSrcOp
+where T: ZeroBits + Copy + 'static,
+      F: (Fn(Txn, GPUDeviceConn) -> GPUDeviceScalar<T>) + 'static,
+{
+  fn build(init_val: Rc<F>) -> Val<GPUDeviceScalar<T>> {
+    <Self as ZerosSrcOpExt<GPUDeviceScalar<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceScalar<T>>>>::build(init_val)
+  }
+}
+
+impl<T> ZerosSrcOpExt<GPUDeviceScalar<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceScalar<T>>> for ZerosSrcOp
 where T: ZeroBits + Copy + 'static,
 {
-  fn build(init_val: Rc<Fn(GPUDeviceConn) -> GPUDeviceArray1d<T>>) -> Val<GPUDeviceArray1d<T>> {
+  fn build(init_val: Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceScalar<T>>) -> Val<GPUDeviceScalar<T>> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceScalar>: init...");
+          let section = GPULazyAsyncSection::default();
+          let init_val = init_val.clone();
+          RWVal::from(Arc::new(move |txn: Txn| {
+            println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceScalar>: make_val: allocating...");
+            implicit_ctx()._debug_print();
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            // FIXME: this part really requires auto-wait and auto-registration.
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let y = init_val(txn, conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceScalar<T>>| {
+          if let Some((cap, token)) = output.write(txn) {
+            println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceScalar>: apply: writing...");
+            implicit_ctx()._debug_print();
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            match cap {
+              WriteCap::Assign => {
+                let mut y = output.get_mut(txn, token);
+                guard._wait(y.async_state());
+                y.as_view_mut().set_zeros(conn);
+              }
+              _ => unimplemented!(),
+            }
+          }
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: None,
+      /*tangent: Some({
+        Box::new(move || {
+          // TODO
+          unimplemented!();
+        })
+      }),*/
+      adjoint: Some({
+        Box::new(move |_: Pass, this: Val<GPUDeviceScalar<T>>, state: RefMut<_>, sink: &mut Sink| {
+          // Do nothing.
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(FSrcOp::new(ZerosSrcOp, ext)))
+  }
+}
+
+impl<T> ZerosSrcOpLikeExt<GPUDeviceArray1d<T>> for ZerosSrcOp
+where ZerosSrcOp: ZerosSrcOpExt<GPUDeviceArray1d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceArray1d<T>>>,
+      T: ZeroBits + Copy + 'static,
+{
+  fn build_like(x_: Val<GPUDeviceArray1d<T>>) -> Val<GPUDeviceArray1d<T>> {
+    let x_ = x_.clone();
+    <ZerosSrcOp as ZerosSrcOpExt<GPUDeviceArray1d<T>, _>>::build(
+        Rc::new(move |txn, conn| {
+          let y = GPUDeviceArray1d::zeros(x_.get(txn).size(), conn);
+          y
+        })
+    )
+  }
+}
+
+impl<T, F> ZerosSrcOpExt<GPUDeviceArray1d<T>, Rc<F>> for ZerosSrcOp
+where T: ZeroBits + Copy + 'static,
+      F: (Fn(Txn, GPUDeviceConn) -> GPUDeviceArray1d<T>) + 'static,
+{
+  fn build(init_val: Rc<F>) -> Val<GPUDeviceArray1d<T>> {
+    <Self as ZerosSrcOpExt<GPUDeviceArray1d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceArray1d<T>>>>::build(init_val)
+  }
+}
+
+impl<T> ZerosSrcOpExt<GPUDeviceArray1d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceArray1d<T>>> for ZerosSrcOp
+where T: ZeroBits + Copy + 'static,
+{
+  fn build(init_val: Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceArray1d<T>>) -> Val<GPUDeviceArray1d<T>> {
     let ext = OpExt{
       make_val: {
         //Box::new(move || {
@@ -339,13 +451,14 @@ where T: ZeroBits + Copy + 'static,
           let init_val = init_val.clone();
           RWVal::from(Arc::new(move |txn: Txn| {
             println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: make_val: allocating...");
+            implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
             // FIXME: this part really requires auto-wait and auto-registration.
             let mut section = section.clone();
             let mut guard = section.enter(conn.clone());
-            let y = init_val(conn);
+            let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
           }))
@@ -356,6 +469,7 @@ where T: ZeroBits + Copy + 'static,
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<T>>| {
           if let Some((cap, token)) = output.write(txn) {
             println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: apply: writing...");
+            implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -396,19 +510,34 @@ where T: ZeroBits + Copy + 'static,
   }
 }
 
-impl<T, F> ZerosSrcOpExt<GPUDeviceArray2d<T>, Rc<F>> for ZerosSrcOp
-where T: ZeroBits + Copy + 'static,
-      F: (Fn(GPUDeviceConn) -> GPUDeviceArray2d<T>) + 'static,
+impl<T> ZerosSrcOpLikeExt<GPUDeviceArray2d<T>> for ZerosSrcOp
+where ZerosSrcOp: ZerosSrcOpExt<GPUDeviceArray2d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceArray2d<T>>>,
+      T: ZeroBits + Copy + 'static,
 {
-  fn build(init_val: Rc<F>) -> Val<GPUDeviceArray2d<T>> {
-    <Self as ZerosSrcOpExt<GPUDeviceArray2d<T>, Rc<Fn(GPUDeviceConn) -> GPUDeviceArray2d<T>>>>::build(init_val)
+  fn build_like(x_: Val<GPUDeviceArray2d<T>>) -> Val<GPUDeviceArray2d<T>> {
+    let x_ = x_.clone();
+    <ZerosSrcOp as ZerosSrcOpExt<GPUDeviceArray2d<T>, _>>::build(
+        Rc::new(move |txn, conn| {
+          let y = GPUDeviceArray2d::zeros(x_.get(txn).size(), conn);
+          y
+        })
+    )
   }
 }
 
-impl<T> ZerosSrcOpExt<GPUDeviceArray2d<T>, Rc<Fn(GPUDeviceConn) -> GPUDeviceArray2d<T>>> for ZerosSrcOp
+impl<T, F> ZerosSrcOpExt<GPUDeviceArray2d<T>, Rc<F>> for ZerosSrcOp
+where T: ZeroBits + Copy + 'static,
+      F: (Fn(Txn, GPUDeviceConn) -> GPUDeviceArray2d<T>) + 'static,
+{
+  fn build(init_val: Rc<F>) -> Val<GPUDeviceArray2d<T>> {
+    <Self as ZerosSrcOpExt<GPUDeviceArray2d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceArray2d<T>>>>::build(init_val)
+  }
+}
+
+impl<T> ZerosSrcOpExt<GPUDeviceArray2d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceArray2d<T>>> for ZerosSrcOp
 where T: ZeroBits + Copy + 'static,
 {
-  fn build(init_val: Rc<Fn(GPUDeviceConn) -> GPUDeviceArray2d<T>>) -> Val<GPUDeviceArray2d<T>> {
+  fn build(init_val: Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceArray2d<T>>) -> Val<GPUDeviceArray2d<T>> {
     let ext = OpExt{
       make_val: {
         //Box::new(move || {
@@ -421,7 +550,7 @@ where T: ZeroBits + Copy + 'static,
             let conn = pool.conn();
             let mut section = section.clone();
             let mut guard = section.enter(conn.clone());
-            let y = init_val(conn);
+            let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
           }))
@@ -473,19 +602,34 @@ where T: ZeroBits + Copy + 'static,
   }
 }
 
-impl<T, F> ZerosSrcOpExt<GPUDeviceArray4d<T>, Rc<F>> for ZerosSrcOp
-where T: ZeroBits + Copy + 'static,
-      F: (Fn(GPUDeviceConn) -> GPUDeviceArray4d<T>) + 'static,
+impl<T> ZerosSrcOpLikeExt<GPUDeviceArray4d<T>> for ZerosSrcOp
+where ZerosSrcOp: ZerosSrcOpExt<GPUDeviceArray4d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceArray4d<T>>>,
+      T: ZeroBits + Copy + 'static,
 {
-  fn build(init_val: Rc<F>) -> Val<GPUDeviceArray4d<T>> {
-    <Self as ZerosSrcOpExt<GPUDeviceArray4d<T>, Rc<Fn(GPUDeviceConn) -> GPUDeviceArray4d<T>>>>::build(init_val)
+  fn build_like(x_: Val<GPUDeviceArray4d<T>>) -> Val<GPUDeviceArray4d<T>> {
+    let x_ = x_.clone();
+    <ZerosSrcOp as ZerosSrcOpExt<GPUDeviceArray4d<T>, _>>::build(
+        Rc::new(move |txn, conn| {
+          let y = GPUDeviceArray4d::zeros(x_.get(txn).size(), conn);
+          y
+        })
+    )
   }
 }
 
-impl<T> ZerosSrcOpExt<GPUDeviceArray4d<T>, Rc<Fn(GPUDeviceConn) -> GPUDeviceArray4d<T>>> for ZerosSrcOp
+impl<T, F> ZerosSrcOpExt<GPUDeviceArray4d<T>, Rc<F>> for ZerosSrcOp
+where T: ZeroBits + Copy + 'static,
+      F: (Fn(Txn, GPUDeviceConn) -> GPUDeviceArray4d<T>) + 'static,
+{
+  fn build(init_val: Rc<F>) -> Val<GPUDeviceArray4d<T>> {
+    <Self as ZerosSrcOpExt<GPUDeviceArray4d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceArray4d<T>>>>::build(init_val)
+  }
+}
+
+impl<T> ZerosSrcOpExt<GPUDeviceArray4d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceArray4d<T>>> for ZerosSrcOp
 where T: ZeroBits + Copy + 'static,
 {
-  fn build(init_val: Rc<Fn(GPUDeviceConn) -> GPUDeviceArray4d<T>>) -> Val<GPUDeviceArray4d<T>> {
+  fn build(init_val: Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceArray4d<T>>) -> Val<GPUDeviceArray4d<T>> {
     let ext = OpExt{
       make_val: {
         //Box::new(move || {
@@ -498,7 +642,7 @@ where T: ZeroBits + Copy + 'static,
             let conn = pool.conn();
             let mut section = section.clone();
             let mut guard = section.enter(conn.clone());
-            let y = init_val(conn);
+            let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
           }))
@@ -547,6 +691,298 @@ where T: ZeroBits + Copy + 'static,
       inplace: None,
     };
     Val::from(Rc::new(FSrcOp::new(ZerosSrcOp, ext)))
+  }
+}
+
+impl<T> ZerosSrcOpLikeExt<GPUDeviceOuterBatchArray1d<T>> for ZerosSrcOp
+where ZerosSrcOp: ZerosSrcOpExt<GPUDeviceOuterBatchArray1d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray1d<T>>>,
+      T: ZeroBits + Copy + 'static,
+{
+  fn build_like(x_: Val<GPUDeviceOuterBatchArray1d<T>>) -> Val<GPUDeviceOuterBatchArray1d<T>> {
+    let x_ = x_.clone();
+    <ZerosSrcOp as ZerosSrcOpExt<GPUDeviceOuterBatchArray1d<T>, _>>::build(
+        Rc::new(move |txn, conn| {
+          let x = x_.get(txn);
+          let y = GPUDeviceOuterBatchArray1d::zeros(x.size(), x.max_batch_size(), conn);
+          y
+        })
+    )
+  }
+}
+
+impl<T, F> ZerosSrcOpExt<GPUDeviceOuterBatchArray1d<T>, Rc<F>> for ZerosSrcOp
+where T: ZeroBits + Copy + 'static,
+      F: (Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray1d<T>) + 'static,
+{
+  fn build(init_val: Rc<F>) -> Val<GPUDeviceOuterBatchArray1d<T>> {
+    <Self as ZerosSrcOpExt<GPUDeviceOuterBatchArray1d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray1d<T>>>>::build(init_val)
+  }
+}
+
+impl<T> ZerosSrcOpExt<GPUDeviceOuterBatchArray1d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray1d<T>>> for ZerosSrcOp
+where T: ZeroBits + Copy + 'static,
+{
+  fn build(init_val: Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray1d<T>>) -> Val<GPUDeviceOuterBatchArray1d<T>> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let init_val = init_val.clone();
+          RWVal::from(Arc::new(move |txn: Txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let y = init_val(txn, conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray1d<T>>| {
+          if let Some((cap, token)) = output.write(txn) {
+            implicit_ctx()._debug_print();
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            match cap {
+              WriteCap::Assign => {
+                // TODO: zero out the whole thing.
+                println!("DEBUG: ZeroSrcOp: zeroing...");
+                let mut y = output.get_mut(txn, token);
+                guard._wait(y.async_state());
+                y.as_view_mut().set_zeros(conn);
+              }
+              WriteCap::Accumulate => {}
+            }
+          }
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: None,
+      /*tangent: Some({
+        Box::new(move || {
+          // TODO
+          unimplemented!();
+        })
+      }),*/
+      adjoint: Some({
+        Box::new(move |_: Pass, this: Val<GPUDeviceOuterBatchArray1d<T>>, state: RefMut<_>, sink: &mut Sink| {
+          // Do nothing.
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(FSrcOp::new(ZerosSrcOp, ext)))
+  }
+}
+
+impl<T> ZerosSrcOpLikeExt<GPUDeviceOuterBatchArray3d<T>> for ZerosSrcOp
+where ZerosSrcOp: ZerosSrcOpExt<GPUDeviceOuterBatchArray3d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray3d<T>>>,
+      T: ZeroBits + Copy + 'static,
+{
+  fn build_like(x_: Val<GPUDeviceOuterBatchArray3d<T>>) -> Val<GPUDeviceOuterBatchArray3d<T>> {
+    let x_ = x_.clone();
+    <ZerosSrcOp as ZerosSrcOpExt<GPUDeviceOuterBatchArray3d<T>, _>>::build(
+        Rc::new(move |txn, conn| {
+          let x = x_.get(txn);
+          let y = GPUDeviceOuterBatchArray3d::zeros(x.size(), x.max_batch_size(), conn);
+          y
+        })
+    )
+  }
+}
+
+impl<T, F> ZerosSrcOpExt<GPUDeviceOuterBatchArray3d<T>, Rc<F>> for ZerosSrcOp
+where T: ZeroBits + Copy + 'static,
+      F: (Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray3d<T>) + 'static,
+{
+  fn build(init_val: Rc<F>) -> Val<GPUDeviceOuterBatchArray3d<T>> {
+    <Self as ZerosSrcOpExt<GPUDeviceOuterBatchArray3d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray3d<T>>>>::build(init_val)
+  }
+}
+
+impl<T> ZerosSrcOpExt<GPUDeviceOuterBatchArray3d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray3d<T>>> for ZerosSrcOp
+where T: ZeroBits + Copy + 'static,
+{
+  fn build(init_val: Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray3d<T>>) -> Val<GPUDeviceOuterBatchArray3d<T>> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let init_val = init_val.clone();
+          RWVal::from(Arc::new(move |txn: Txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let y = init_val(txn, conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray3d<T>>| {
+          if let Some((cap, token)) = output.write(txn) {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            match cap {
+              WriteCap::Assign => {
+                // TODO: zero out the whole thing.
+                println!("DEBUG: ZeroSrcOp: zeroing...");
+                let mut y = output.get_mut(txn, token);
+                guard._wait(y.async_state());
+                y.as_view_mut().set_zeros(conn);
+              }
+              WriteCap::Accumulate => {}
+            }
+          }
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: None,
+      /*tangent: Some({
+        Box::new(move || {
+          // TODO
+          unimplemented!();
+        })
+      }),*/
+      adjoint: Some({
+        Box::new(move |_: Pass, this: Val<GPUDeviceOuterBatchArray3d<T>>, state: RefMut<_>, sink: &mut Sink| {
+          // Do nothing.
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(FSrcOp::new(ZerosSrcOp, ext)))
+  }
+}
+
+impl<T> OnesSrcOpMaybeExt<GPUDeviceScalar<T>> for OnesSrcOp
+where T: ZeroBits + PseudoField + Copy + 'static,
+      OnesSrcOp: OnesSrcOpLikeExt<GPUDeviceScalar<T>>,
+{
+  fn maybe_build_like(x_: Val<GPUDeviceScalar<T>>) -> Option<Val<GPUDeviceScalar<T>>> {
+    Some(<Self as OnesSrcOpLikeExt<GPUDeviceScalar<T>>>::build_like(x_))
+  }
+}
+
+impl<T> OnesSrcOpLikeExt<GPUDeviceScalar<T>> for OnesSrcOp
+where T: ZeroBits + PseudoField + Copy + 'static,
+      OnesSrcOp: OnesSrcOpExt<GPUDeviceScalar<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceScalar<T>>>,
+{
+  fn build_like(x_: Val<GPUDeviceScalar<T>>) -> Val<GPUDeviceScalar<T>> {
+    let x_ = x_.clone();
+    <OnesSrcOp as OnesSrcOpExt<GPUDeviceScalar<T>, _>>::build(
+        Rc::new(move |txn, conn| {
+          let y = GPUDeviceScalar::zeros((), conn);
+          y
+        })
+    )
+  }
+}
+
+impl<T, F> OnesSrcOpExt<GPUDeviceScalar<T>, Rc<F>> for OnesSrcOp
+where T: PseudoField + Copy + 'static,
+      F: (Fn(Txn, GPUDeviceConn) -> GPUDeviceScalar<T>) + 'static,
+{
+  fn build(init_val: Rc<F>) -> Val<GPUDeviceScalar<T>> {
+    <Self as OnesSrcOpExt<GPUDeviceScalar<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceScalar<T>>>>::build(init_val)
+  }
+}
+
+impl<T> OnesSrcOpExt<GPUDeviceScalar<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceScalar<T>>> for OnesSrcOp
+where T: PseudoField + Copy + 'static,
+{
+  fn build(init_val: Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceScalar<T>>) -> Val<GPUDeviceScalar<T>> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          println!("DEBUG: OnesSrcOpExt<|| GPUDeviceScalar>: init...");
+          let section = GPULazyAsyncSection::default();
+          let init_val = init_val.clone();
+          RWVal::from(Arc::new(move |txn: Txn| {
+            println!("DEBUG: OnesSrcOpExt<|| GPUDeviceScalar>: make_val: allocating...");
+            implicit_ctx()._debug_print();
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            // FIXME: this part really requires auto-wait and auto-registration.
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let y = init_val(txn, conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceScalar<T>>| {
+          if let Some((cap, token)) = output.write(txn) {
+            println!("DEBUG: OnesSrcOpExt<|| GPUDeviceScalar>: apply: writing...");
+            implicit_ctx()._debug_print();
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            match cap {
+              WriteCap::Assign => {
+                let mut y = output.get_mut(txn, token);
+                guard._wait(y.async_state());
+                y.as_view_mut().set_constant(T::one(), conn);
+              }
+              _ => unimplemented!(),
+            }
+          }
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: None,
+      /*tangent: Some({
+        Box::new(move || {
+          // TODO
+          unimplemented!();
+        })
+      }),*/
+      adjoint: Some({
+        Box::new(move |_: Pass, this: Val<GPUDeviceScalar<T>>, state: RefMut<_>, sink: &mut Sink| {
+          // Do nothing.
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(FSrcOp::new(OnesSrcOp, ext)))
   }
 }
 
@@ -842,14 +1278,14 @@ where T: Copy,
   }
 }
 
-impl RectFlatMapExt<GPUDeviceOuterBatchArray1d<f32>> for Val<GPUDeviceOuterBatchArray1d<f32>> {
-  fn rect(self) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
+impl PositiveClipFlatMapExt<GPUDeviceOuterBatchArray1d<f32>> for Val<GPUDeviceOuterBatchArray1d<f32>> {
+  fn positive_clip(self) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
     FlatMapOp::<PositiveClipFlatMapF>::build_gpu_obatch_val(PositiveClipFlatMapF, self)
   }
 }
 
-impl RectFlatMapExt<GPUDeviceOuterBatchArray3d<f32>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
-  fn rect(self) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+impl PositiveClipFlatMapExt<GPUDeviceOuterBatchArray3d<f32>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
+  fn positive_clip(self) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
     FlatMapOp::<PositiveClipFlatMapF>::build_gpu_obatch_val(PositiveClipFlatMapF, self)
   }
 }
@@ -1068,7 +1504,9 @@ impl<F> FlatMapOp<F> where F: Clone + 'static {
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray<Idx, T>>| {
           let x_ = x_.clone();
           if let Some((cap, token)) = output.write(txn) {
-            let mut pool = implicit_ctx().gpu().pool();
+            implicit_ctx()._debug_print();
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
             let mut guard = section.enter(conn.clone());
@@ -1685,11 +2123,12 @@ impl AffineOp {
           if let Some(adj_y_) = y_.adjoint(sink) {
             let adj_w_ = adj_y_.clone().outer_mult(x_.clone());
             let adj_x_ = w_.clone().left_transpose_mult(adj_y_.clone());
-            // FIXME: calculate adj of b via a reduction.
-            let adj_b_ = { /*adj_y_.reduce_sum(1)*/ unimplemented!() };
             w_.put_adjoint(adj_w_, sink);
             x_.put_adjoint(adj_x_, sink);
-            b_.put_adjoint(adj_b_, sink);
+            // FIXME: calculate adj of b via a reduction.
+            /*let adj_b_ = adj_y_.reduce_sum(1);
+            b_.put_adjoint(adj_b_, sink);*/
+            unimplemented!();
           }
         })
       }),

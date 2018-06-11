@@ -21,7 +21,7 @@ use typemap::{Key};
 use std::cell::{RefCell};
 use std::collections::{HashSet};
 use std::iter::{FromIterator};
-use std::rc::{Rc, Weak};
+use std::rc::{Rc};
 
 #[derive(Clone)]
 pub struct LivenessAnalysis {

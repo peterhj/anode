@@ -23,9 +23,10 @@ use rand::{thread_rng};
 use rand::rngs::{ThreadRng};
 
 use std::cell::{RefCell};
-use std::collections::{VecDeque};
-#[cfg(feature = "mpi")] use std::env;
-#[cfg(feature = "mpi")] use std::ffi::{CString};
+//use std::collections::{VecDeque};
+//#[cfg(feature = "mpi")] use std::env;
+//#[cfg(feature = "mpi")] use std::ffi::{CString};
+use std::intrinsics::{type_name};
 use std::ptr::{null_mut};
 use std::rc::{Rc};
 use std::sync::{Arc};
@@ -85,6 +86,10 @@ pub fn push_ctx<Ctx: ExecutionCtx + 'static>(ctx: Ctx) -> CtxGuard {
 }
 
 pub trait ExecutionCtx {
+  fn _debug_print(&self) {
+    println!("DEBUG: ExecutionCtx: debug: {}", unsafe { type_name::<Self>() });
+  }
+
   fn synchronize(&self) { unimplemented!(); }
 
   fn slow_rng(&self) -> ThreadRng {
@@ -190,6 +195,10 @@ pub struct GPUDeviceCtx {
 
 #[cfg(feature = "gpu")]
 impl ExecutionCtx for GPUDeviceCtx {
+  /*fn _debug_print(&self) {
+    println!("DEBUG: GPUDeviceCtx");
+  }*/
+
   fn maybe_gpu(&self) -> Option<GPUDeviceCtx> {
     Some(GPUDeviceCtx{
       pool:         self.pool.clone(),
@@ -235,6 +244,10 @@ pub struct MultiGPUDeviceCtx {
 
 #[cfg(feature = "gpu")]
 impl ExecutionCtx for MultiGPUDeviceCtx {
+  /*fn _debug_print(&self) {
+    println!("DEBUG: MultiGPUDeviceCtx");
+  }*/
+
   fn maybe_gpu(&self) -> Option<GPUDeviceCtx> {
     Some(self.gpu(GPUDeviceId(0)))
   }
@@ -336,7 +349,7 @@ impl MultiGPUDeviceCtx {
     }
   }
 
-  pub fn sync_reduce_group<T>(&mut self, src: Vec<GPUDeviceArrayView1d<T>>, mut dst: GPUDeviceArrayViewMut1d<T>, op: NcclReduceOp) where T: NcclDataType {
+  pub fn sync_reduce_group<T>(&mut self, src: Vec<GPUDeviceArrayView1d<T>>, dst: GPUDeviceArrayViewMut1d<T>, op: NcclReduceOp) where T: NcclDataType {
     let root_dev = dst.device();
     for rank in 0 .. self.num_gpus() {
       let conn = self.md_pools[rank].conn();
@@ -373,7 +386,7 @@ impl MultiGPUDeviceCtx {
     }
   }
 
-  pub fn sync_allreduce_group<T>(&mut self, src: Vec<GPUDeviceArrayView1d<T>>, mut dst: Vec<GPUDeviceArrayViewMut1d<T>>, op: NcclReduceOp) where T: NcclDataType {
+  pub fn sync_allreduce_group<T>(&mut self, src: Vec<GPUDeviceArrayView1d<T>>, dst: Vec<GPUDeviceArrayViewMut1d<T>>, op: NcclReduceOp) where T: NcclDataType {
     for rank in 0 .. self.num_gpus() {
       let conn = self.md_pools[rank].conn();
       conn.sync();

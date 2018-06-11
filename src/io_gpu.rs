@@ -16,24 +16,24 @@ limitations under the License.
 
 use ::*;
 use context::*;
-use ffi::routines_gpu::*;
-use ops::*;
+//use ffi::routines_gpu::*;
+//use ops::*;
 
-use arithmetic::*;
-use arrayidx::*;
+//use arithmetic::*;
+//use arrayidx::*;
 //use cuda_blas::*;
-use cuda_dnn::*;
+//use cuda_dnn::*;
 use gpudevicemem::*;
 use gpudevicemem::array::*;
-use gpudevicemem::array::linalg::*;
+//use gpudevicemem::array::linalg::*;
 use memarray::*;
-use rand::{Rng};
+//use rand::{Rng};
 
-use std::cell::{RefMut};
+//use std::cell::{RefMut};
 //use std::marker::{PhantomData};
 //use std::ops::{Range, RangeFrom, RangeTo, RangeFull};
-use std::ops::{Add, Mul};
-use std::sync::{Arc};
+//use std::ops::{Add, Mul};
+//use std::sync::{Arc};
 
 impl<T> FlatIO<MemArray1d<T>> where T: Copy {
   pub fn len(&self) -> usize {

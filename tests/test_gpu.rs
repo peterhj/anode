@@ -17,17 +17,17 @@ use std::rc::{Rc};
 use std::thread::{sleep};
 use std::time::{Duration};
 
-#[test]
+/*#[test]
 fn test_stream() {
   println!();
   let stream = GPUDeviceStreamPool::new(GPUDeviceId(0));
-}
+}*/
 
 #[test]
 #[should_panic]
 fn test_gpu_src_eval_fail() {
   println!();
-  let x: Val<_> = src(Rc::new(|conn: GPUDeviceConn| {
+  let x: Val<_> = src(Rc::new(|_, conn: GPUDeviceConn| {
     GPUDeviceArray1d::<f32>::zeros(1024, conn)
   }));
   x.eval(txn());
@@ -36,7 +36,7 @@ fn test_gpu_src_eval_fail() {
 #[test]
 fn test_gpu_random_src_eval() {
   println!();
-  let x: Val<_> = random_bits(Rc::new(|conn: GPUDeviceConn| {
+  let x: Val<_> = random_bits(Rc::new(|_, conn: GPUDeviceConn| {
     GPUDeviceArray1d::<u32>::zeros(1024, conn)
   }));
   let t = txn();
@@ -57,7 +57,7 @@ fn test_gpu_random_src_eval() {
 fn test_gpu_zeros_eval() {
   println!();
 
-  let x: Val<_> = zeros(Rc::new(|conn: GPUDeviceConn| {
+  let x: Val<_> = zeros(Rc::new(|_, conn: GPUDeviceConn| {
     let mut h_arr = MemArray1d::<f32>::zeros(1024);
     {
       let mut h_arr = h_arr.as_view_mut();
@@ -103,9 +103,9 @@ fn test_gpu_zeros_eval() {
     }
   }
 
-  println!("DEBUG: sleeping...");
+  /*println!("DEBUG: sleeping...");
   sleep(Duration::from_secs(2));
-  println!("DEBUG: done sleeping");
+  println!("DEBUG: done sleeping");*/
 }
 
 #[test]
@@ -153,7 +153,7 @@ fn test_gpu_io_serialize() {
 #[should_panic]
 fn test_gpu_mux_fail() {
   println!();
-  let x = zeros(Rc::new(|conn: GPUDeviceConn| {
+  let x = zeros(Rc::new(|_, conn: GPUDeviceConn| {
     println!("DEBUG: test: allocating...");
     GPUDeviceArray1d::<f32>::zeros(1024, conn)
   }));
@@ -166,7 +166,7 @@ fn test_gpu_mux_fail() {
 #[test]
 fn test_gpu_mux() {
   println!();
-  let x = zeros(Rc::new(|conn: GPUDeviceConn| {
+  let x = zeros(Rc::new(|_, conn: GPUDeviceConn| {
     println!("DEBUG: test: allocating...");
     GPUDeviceArray1d::<f32>::zeros(1024, conn)
   }));
@@ -174,4 +174,89 @@ fn test_gpu_mux() {
   let y: Val<_> = x.gpu_mux(GPUDeviceId(0));
   println!("DEBUG: test: eval...");
   y.eval(txn());
+}
+
+#[test]
+fn test_gpu_mux_2() {
+  println!();
+  let x1 = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+    println!("DEBUG: test: allocating...");
+    GPUDeviceOuterBatchArray1d::<f32>::zeros(1024, 1, conn)
+  }));
+  let x2 = x1.positive_clip();
+  let y = x2.gpu_mux(GPUDeviceId(0));
+  println!("DEBUG: test: eval...");
+  let t = txn();
+  y.eval(t);
+}
+
+#[test]
+fn test_gpu_switch() {
+  println!();
+  let flag = TCell::new(false);
+  let x1 = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+    println!("DEBUG: test: allocating...");
+    GPUDeviceArray1d::<f32>::zeros(1024, conn)
+  }));
+  let x2 = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+    println!("DEBUG: test: allocating...");
+    GPUDeviceArray1d::<f32>::zeros(1024, conn)
+  }));
+  let y = switch(flag.clone(), x1, x2);
+  let t = txn();
+  flag.propose(t, |_| false);
+  y.eval(t);
+  let t = txn();
+  flag.propose(t, |_| true);
+  y.eval(t);
+  // TODO
+}
+
+#[test]
+fn test_gpu_adj() {
+  println!();
+  let x = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceScalar::<f32>::zeros((), conn)
+  }));
+  let mut sink = Sink::from(x.clone());
+  let dx = x.adjoint(&mut sink);
+}
+
+#[test]
+fn test_gpu_switch_adj() {
+  println!();
+  let flag = TCell::default();
+  let x1 = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceScalar::<f32>::zeros((), conn)
+  }));
+  let x2 = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceScalar::<f32>::zeros((), conn)
+  }));
+  let y = switch(flag.clone(), x1.clone(), x2.clone());
+  println!("DEBUG: building adjoint");
+  let mut sink = Sink::from(y.clone());
+  let dy = y.adjoint(&mut sink).unwrap();
+  let dx1 = x1.adjoint(&mut sink).unwrap();
+  let dx2 = x2.adjoint(&mut sink).unwrap();
+  println!("DEBUG: ON path (expect 2 allocs)");
+  let t = txn();
+  flag.propose(t, |_| true);
+  dx1.eval(t);
+  dx2.eval(t);
+  println!("DEBUG: OFF path (expect 1 alloc)");
+  let t2 = txn();
+  flag.propose(t2, |_| false);
+  dx1.eval(t2);
+  dx2.eval(t2);
+}
+
+#[test]
+#[should_panic]
+fn test_gpu_adj_fail() {
+  println!();
+  let x = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceArray1d::<f32>::zeros(1024, conn)
+  }));
+  let mut sink = Sink::from(x.clone());
+  let dx = x.adjoint(&mut sink);
 }

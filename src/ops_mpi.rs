@@ -1,20 +1,20 @@
 use ::*;
-use context::*;
-use ops::*;
+//use context::*;
+//use ops::*;
 
-use arithmetic::*;
-use arrayidx::*;
+//use arithmetic::*;
+//use arrayidx::*;
 //use cuda_blas::*;
 //use cuda_dnn::*;
-use gpudevicemem::*;
-use gpudevicemem::array::*;
-use memarray::*;
+//use gpudevicemem::*;
+//use gpudevicemem::array::*;
+//use memarray::*;
 //use rand::{Rng};
 
-use std::cell::{RefMut};
+//use std::cell::{RefMut};
 //use std::marker::{PhantomData};
 //use std::ops::{Range, RangeFrom, RangeTo, RangeFull};
-use std::sync::{Arc};
+//use std::sync::{Arc};
 
 pub struct MPIBroadcastOp;
 pub struct MPIReduceOp;
@@ -55,17 +55,17 @@ pub trait MPIAllgatherExt<V> {
 pub mod gpu {
 
 use ::*;
-use context::*;
-use ops::*;
+//use context::*;
+//use ops::*;
 use ops_mpi::*;
 
-use arithmetic::*;
-use arrayidx::*;
+//use arithmetic::*;
+//use arrayidx::*;
 //use cuda_blas::*;
 //use cuda_dnn::*;
 use gpudevicemem::*;
-use gpudevicemem::array::*;
-use memarray::*;
+//use gpudevicemem::array::*;
+//use memarray::*;
 //use rand::{Rng};
 
 use std::cell::{RefMut};

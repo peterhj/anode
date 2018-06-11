@@ -16,7 +16,7 @@ limitations under the License.
 
 use ::*;
 
-use std::marker::{PhantomData};
+//use std::marker::{PhantomData};
 use std::ops::{Add, Mul};
 use std::rc::{Rc};
 
@@ -281,18 +281,42 @@ pub trait ZerosSrcOpExt<V, Init> {
   fn build(init: Init) -> Val<V>;
 }
 
+pub trait ZerosSrcOpLikeExt<V> {
+  fn build_like(x_: Val<V>) -> Val<V>;
+}
+
 pub fn zeros<V, Init>(init: Init) -> Val<V> where ZerosSrcOp: ZerosSrcOpExt<V, Init> {
   <ZerosSrcOp as ZerosSrcOpExt<V, Init>>::build(init)
 }
 
+pub fn zeros_like<V>(x_: Val<V>) -> Val<V> where ZerosSrcOp: ZerosSrcOpLikeExt<V> {
+  <ZerosSrcOp as ZerosSrcOpLikeExt<V>>::build_like(x_)
+}
+
+pub trait OnesSrcOpExt<V, Init> {
+  fn build(init: Init) -> Val<V>;
+}
+
+pub trait OnesSrcOpLikeExt<V> {
+  fn build_like(x_: Val<V>) -> Val<V>;
+}
+
 pub trait OnesSrcOpMaybeExt<V> {
-  fn maybe_build() -> Option<Val<V>>;
+  fn maybe_build_like(x_: Val<V>) -> Option<Val<V>>;
 }
 
 impl<V> OnesSrcOpMaybeExt<V> for OnesSrcOp {
-  default fn maybe_build() -> Option<Val<V>> {
+  default fn maybe_build_like(_: Val<V>) -> Option<Val<V>> {
     None
   }
+}
+
+pub fn ones<V, Init>(init: Init) -> Val<V> where OnesSrcOp: OnesSrcOpExt<V, Init> {
+  <OnesSrcOp as OnesSrcOpExt<V, Init>>::build(init)
+}
+
+pub fn ones_like<V>(x_: Val<V>) -> Val<V> where OnesSrcOp: OnesSrcOpLikeExt<V> {
+  <OnesSrcOp as OnesSrcOpLikeExt<V>>::build_like(x_)
 }
 
 pub trait FlattenExt<V, W> {
@@ -341,8 +365,16 @@ impl<V> Add<Val<V>> for Val<V> where Self: SumExt<V> {
   }
 }
 
-pub trait RectFlatMapExt<V> {
-  fn rect(self) -> Val<V>;
+pub trait PositiveClipFlatMapExt<V> {
+  fn positive_clip(self) -> Val<V>;
+
+  fn rect(self) -> Val<V> where Self: Sized {
+    self.positive_clip()
+  }
+
+  fn relu(self) -> Val<V> where Self: Sized {
+    self.positive_clip()
+  }
 }
 
 pub trait TanhFlatMapExt<V> {
@@ -455,5 +487,50 @@ impl<A: 'static> FixOpExt<A> for FixOp {
       inplace: None,
     };
     Val::from(Rc::new(F1Op::new(FixOp, ext, x_)))
+  }
+}
+
+impl<A> SwitchOpExt<A> for SwitchOp
+where A: 'static,
+      ZerosSrcOp: ZerosSrcOpLikeExt<A>,
+{
+  fn build(flag: TCell<bool>, off_: Val<A>, on_: Val<A>) -> Val<A> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<Self>| {
+          unreachable!();
+        })
+      },
+      apply: {
+        Box::new(move |_: Txn, _state: RefMut<_>, _output: OVal<A>| {
+          // The output should be a simple clone of one of the inputs,
+          // so don't want to actually touch it.
+        })
+      },
+      build: Some({
+        let flag = flag.clone();
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: None,
+      adjoint: Some({
+        let flag = flag.clone();
+        let off_ = off_.clone();
+        let on_ = on_.clone();
+        Box::new(move |_: Pass, this: Val<A>, _state: RefMut<Self>, sink: &mut Sink| {
+          if let Some(this_adj) = this.adjoint(sink) {
+            let off_adj = switch(flag.clone(), this_adj.clone(), zeros_like(this_adj.clone()));
+            off_.put_adjoint(off_adj, sink);
+            let on_adj = switch(flag.clone(), zeros_like(this_adj.clone()), this_adj.clone());
+            on_.put_adjoint(on_adj, sink);
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(FSwitchOp::new(SwitchOp, ext, flag, off_, on_)))
   }
 }
