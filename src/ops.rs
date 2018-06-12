@@ -28,7 +28,7 @@ pub struct SerializeOp;
 pub struct DeserializeOp;
 
 pub struct CastOp;
-pub struct LinearDequantizeOp<T> { pub lo: T, pub hi: T }
+pub struct DequantizeOp<T> { pub lo: T, pub hi: T }
 
 pub struct SwitchOp;
 
@@ -240,9 +240,9 @@ pub trait DeserializeExt<V> {
 
 pub struct LinearScale;
 
-pub trait DequantizeExt<V, W, T, Scale=LinearScale> {
+pub trait DequantizeExt<V, W, T, /*Scale=LinearScale*/> {
   //fn dequantize(&self, base: T, range: T) -> Rc<F1Op<DequantizeFun<T, Scale>, V, W>>;
-  fn dequantize(&self, base: T, range: T) -> Val<W>;
+  fn dequantize(&self, lo: T, hi: T) -> Val<W>;
 }
 
 pub trait SwitchOpExt<V> {
@@ -365,6 +365,14 @@ impl<V> Add<Val<V>> for Val<V> where Self: SumExt<V> {
   }
 }
 
+pub trait BatchNormalizeExt<V, M> {
+  fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, epsilon: TCell<f64>) -> (Val<V>, Val<M>, Val<M>, Val<M>, Val<M>);
+}
+
+pub trait AverageInplaceExt<T, V> where T: Copy {
+  fn average_inplace(self, rate: TCell<T>, x_: Val<V>) -> Val<V>;
+}
+
 pub trait PositiveClipFlatMapExt<V> {
   fn positive_clip(self) -> Val<V>;
 
@@ -448,10 +456,6 @@ pub trait LeftTransposeConvLinearExt<A, Y, X> {
 
 pub trait OuterConvLinearExt<Y, X, A> {
   fn outer_conv(self, x: Val<X>) -> Val<A>;
-}
-
-pub trait BatchNormalizeExt<X, M> {
-  fn batch_normalize(self) -> (Val<X>, Val<M>, Val<M>);
 }
 
 impl<A: 'static> FixOpExt<A> for FixOp {

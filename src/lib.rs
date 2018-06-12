@@ -205,11 +205,6 @@ pub trait Walk {
   fn outdegree(&self) -> usize;
 }
 
-pub trait IOVal {
-  fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any);
-  fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any);
-}
-
 pub trait AnalysisTags {
   fn liveness(&self) -> Option<LivenessAnalysis>;
 }
@@ -258,6 +253,32 @@ pub trait AOp<V>: ANode {
   // TODO
   //fn _substitute(&self, subs: Vec<(RWVar, Rc<Any>)>) -> Option<(Rc<ANode>, Rc<AOp<V>>)> { None }
   fn _inplace(&self) -> Option<Val<V>> { None }
+}
+
+pub trait IOVal {
+  fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any);
+  fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any);
+
+  fn _serialize_vec(&self, txn: Txn, rvar: RVar, off: usize, dst: &mut Any) -> usize;
+  fn _deserialize_vec(&self, txn: Txn, rvar: RVar, xvar: RWVar, off: usize, src: &mut Any) -> usize;
+}
+
+pub trait IONodeExt {
+  fn serialize(&self, txn: Txn, dst: &mut Any);
+  fn deserialize(&self, txn: Txn, src: &mut Any);
+}
+
+pub trait VIONodeExt {
+  fn _serialize_vec(&self, txn: Txn, off: usize, dst: &mut Any) -> usize;
+  fn _deserialize_vec(&self, txn: Txn, off: usize, src: &mut Any) -> usize;
+
+  fn serialize_vec(&self, txn: Txn, dst: &mut Any) {
+    self._serialize_vec(txn, 0, dst);
+  }
+
+  fn deserialize_vec(&self, txn: Txn, src: &mut Any) {
+    self._deserialize_vec(txn, 0, src);
+  }
 }
 
 pub fn push_wrapper<Wrap>(wrapper: Wrap) -> WrapGuard where Wrap: Any + 'static {
@@ -405,6 +426,18 @@ pub struct Node {
   name: Option<String>,
 }
 
+impl Clone for Node {
+  fn clone(&self) -> Self {
+    let rvar = RVar::default();
+    Node{
+      node: self.node.clone(),
+      xvar: self.xvar,
+      rvar: rvar,
+      name: self.name.clone(),
+    }
+  }
+}
+
 impl Node {
   pub fn _node(&self) -> &ANode {
     &*self.node
@@ -436,7 +469,7 @@ impl Node {
   }
 }
 
-impl IONode for Node {
+impl IONodeExt for Node {
   fn serialize(&self, txn: Txn, dst: &mut Any) {
     // FIXME
     self.node._io()._serialize(txn, self.rvar, dst);
@@ -444,6 +477,16 @@ impl IONode for Node {
 
   fn deserialize(&self, txn: Txn, src: &mut Any) {
     self.node._io()._deserialize(txn, self.xvar, src);
+  }
+}
+
+impl VIONodeExt for Node {
+  fn _serialize_vec(&self, txn: Txn, off: usize, dst: &mut Any) -> usize {
+    self.node._io()._serialize_vec(txn, self.rvar, off, dst)
+  }
+
+  fn _deserialize_vec(&self, txn: Txn, off: usize, src: &mut Any) -> usize {
+    self.node._io()._deserialize_vec(txn, self.rvar, self.xvar, off, src)
   }
 }
 
@@ -514,6 +557,15 @@ impl<V> Val<V> where V: 'static {
       node: self.node.clone(),
       xvar: self.xvar,
       // NOTE: Should the node corresponding to a val share the same varkeys?
+      rvar: self.rvar,
+      name: self.name.clone(),
+    }
+  }
+
+  pub fn into_node(self) -> Node {
+    Node{
+      node: self.node.clone(),
+      xvar: self.xvar,
       rvar: self.rvar,
       name: self.name.clone(),
     }
@@ -661,13 +713,23 @@ impl<V> Val<V> where V: 'static {
   }
 }
 
-impl<V> IONode for Val<V> where V: 'static {
+impl<V> IONodeExt for Val<V> where V: 'static {
   fn serialize(&self, txn: Txn, dst: &mut Any) {
     self.op._io()._serialize(txn, self.rvar, dst);
   }
 
   fn deserialize(&self, txn: Txn, src: &mut Any) {
     self.op._io()._deserialize(txn, self.xvar, src);
+  }
+}
+
+impl<V> VIONodeExt for Val<V> where V: 'static {
+  fn _serialize_vec(&self, txn: Txn, off: usize, dst: &mut Any) -> usize {
+    self.op._io()._serialize_vec(txn, self.rvar, off, dst)
+  }
+
+  fn _deserialize_vec(&self, txn: Txn, off: usize, src: &mut Any) -> usize {
+    self.op._io()._deserialize_vec(txn, self.rvar, self.xvar, off, src)
   }
 }
 
@@ -740,6 +802,33 @@ impl Sink {
     sink
   }
 
+  pub fn get_adj_node(&mut self, var: RWVar) -> Option<Node> {
+    self.frozen.insert(var);
+    if self.adj_map.contains_key(&var) {
+      let adjs = self.adj_map.get(&var).unwrap();
+      match adjs.len() {
+        0 => {}
+        1 => {
+          return Some(adjs[0].0.clone());
+        }
+        _ => {
+          if self.join_map.contains_key(&var) {
+            let &(ref join_node, _) = self.join_map.get(&var).unwrap();
+            return Some(join_node.clone());
+          } else {
+            // TODO: need an untyped sum op builder.
+            unimplemented!();
+            /*let adj_nodes: Vec<_> = adjs.iter().map(|&(ref n, _)| n.clone()).collect();
+            let join = <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build(adj_nodes).unwrap();
+            self.join_map.insert(var, (join.clone().into_node(), Rc::new(join.clone())));
+            return Some(join.into_node());*/
+          }
+        }
+      }
+    }
+    None
+  }
+
   pub fn get_adj<V>(&mut self, var: RWVar) -> Option<Val<V>> where V: 'static {
     self.frozen.insert(var);
     if self.adj_map.contains_key(&var) {
@@ -767,7 +856,7 @@ impl Sink {
               }
             }).collect();
             let join = <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build(adj_ops).unwrap();
-            self.join_map.insert(var, (join.to_node(), Rc::new(join.clone())));
+            self.join_map.insert(var, (join.clone().into_node(), Rc::new(join.clone())));
             return Some(join);
           }
         }
@@ -780,9 +869,9 @@ impl Sink {
     assert!(!self.frozen.contains(&var));
     if self.adj_map.contains_key(&var) {
       let adjs = self.adj_map.get_mut(&var).unwrap();
-      adjs.push((adj_op.to_node(), Rc::new(adj_op)));
+      adjs.push((adj_op.clone().into_node(), Rc::new(adj_op)));
     } else {
-      self.adj_map.insert(var, vec![(adj_op.to_node(), Rc::new(adj_op))]);
+      self.adj_map.insert(var, vec![(adj_op.clone().into_node(), Rc::new(adj_op))]);
     }
   }
 }
@@ -811,52 +900,7 @@ impl AnalysisTags for OpBase {
   }
 }
 
-#[derive(Default)]
-pub struct NodeVector {
-  nodes:    Vec<Rc<ANode>>,
-}
-
-impl NodeVector {
-  pub fn from(nodes: Vec<Rc<ANode>>) -> Self {
-    NodeVector{nodes: nodes}
-  }
-}
-
-/*impl ANode for NodeVector {
-  fn _push(&self, pass: Pass, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
-    // FIXME: priority.
-    for node in self.nodes.iter() {
-      node._push(pass, filter, apply);
-    }
-  }
-
-  fn _pop(&self, pass: Pass, filter: &Fn(&ANode) -> bool, apply: &mut FnMut(&ANode)) {
-    // FIXME: priority.
-    for node in self.nodes.iter().rev() {
-      node._pop(pass, filter, apply);
-    }
-  }
-
-  fn _io(&self) -> &IO {
-    unimplemented!();
-  }
-
-  fn _apply(&self, _txn: Txn) {
-    // TODO
-  }
-}*/
-
-#[derive(Default)]
-pub struct VarCollection {
-  vars:     Vec<RVar>,
-}
-
-#[derive(Default)]
-pub struct NodeRefMap<T> {
-  node_map: HashMap<NodeRef, T>,
-}
-
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct NodeVec {
   nodes:    Vec<Node>,
 }
@@ -866,32 +910,46 @@ impl NodeVec {
     NodeVec{nodes: nodes}
   }
 
+  pub fn reversed(&self) -> Self {
+    let mut rev = self.clone();
+    rev.nodes.reverse();
+    rev
+  }
+
+  pub fn adjoints(&self, sink: &mut Sink) -> Self {
+    let mut adjs = self.clone();
+    for n in self.nodes.iter() {
+      match sink.get_adj_node(n.var()) {
+        None => panic!(),
+        Some(adj_n) => adjs.push(adj_n),
+      }
+    }
+    adjs
+  }
+
   pub fn push(&mut self, node: Node) {
     self.nodes.push(node);
   }
 
   pub fn push_val<A: 'static>(&mut self, val: Val<A>) {
-    self.nodes.push(val.to_node());
+    self.nodes.push(val.into_node());
   }
 }
 
-impl IONode for NodeVec {
-  fn serialize(&self, txn: Txn, dst: &mut Any) {
+impl VIONodeExt for NodeVec {
+  fn _serialize_vec(&self, txn: Txn, mut off: usize, dst: &mut Any) -> usize {
     for node in self.nodes.iter() {
-      node.serialize(txn, dst);
+      off = node._serialize_vec(txn, off, dst);
     }
+    off
   }
 
-  fn deserialize(&self, txn: Txn, src: &mut Any) {
+  fn _deserialize_vec(&self, txn: Txn, mut off: usize, src: &mut Any) -> usize {
     for node in self.nodes.iter() {
-      node.deserialize(txn, src);
+      off = node._deserialize_vec(txn, off, src);
     }
+    off
   }
-}
-
-pub trait IONode {
-  fn serialize(&self, txn: Txn, dst: &mut Any);
-  fn deserialize(&self, txn: Txn, src: &mut Any);
 }
 
 pub struct FlatIO<Buf> {
@@ -1204,6 +1262,14 @@ impl<T> IOVal for RWVal<T> where T: 'static {
   }
 
   default fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any) {
+    unimplemented!();
+  }
+
+  default fn _serialize_vec(&self, txn: Txn, rvar: RVar, off: usize, dst: &mut Any) -> usize {
+    unimplemented!();
+  }
+
+  default fn _deserialize_vec(&self, txn: Txn, rvar: RVar, xvar: RWVar, off: usize, src: &mut Any) -> usize {
     unimplemented!();
   }
 }
@@ -1977,9 +2043,9 @@ impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 's
         None => {}
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
-          self.x_._pop_adjoint(pass, sink);
         }
       }
+      self.x_._pop_adjoint(pass, sink);
     }
   }
 
@@ -2025,6 +2091,15 @@ impl<F, V> AOp<V> for F1Op<F, V, V> where V: 'static, RWVal<V>: IOVal + 'static 
       }
     }
   }
+}
+
+pub struct F1InplaceOp<F, V, W> {
+  base: OpBase,
+  ext:  OpExt<F, W>,
+  cfg:  RefCell<F>,
+  ctrl: Vec<Node>,
+  x_:   Val<V>,
+  y_:   Val<W>,
 }
 
 pub struct F2Op<F, V1, V2, W> {
@@ -2187,10 +2262,10 @@ impl<F, V1, V2, W> AOp<W> for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static,
         None => {}
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
-          self.x2_._pop_adjoint(pass, sink);
-          self.x1_._pop_adjoint(pass, sink);
         }
       }
+      self.x2_._pop_adjoint(pass, sink);
+      self.x1_._pop_adjoint(pass, sink);
     }
   }
 
@@ -2377,11 +2452,11 @@ impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 
         None => {}
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
-          self.x3_._pop_adjoint(pass, sink);
-          self.x2_._pop_adjoint(pass, sink);
-          self.x1_._pop_adjoint(pass, sink);
         }
       }
+      self.x3_._pop_adjoint(pass, sink);
+      self.x2_._pop_adjoint(pass, sink);
+      self.x1_._pop_adjoint(pass, sink);
     }
   }
 
@@ -2545,10 +2620,10 @@ impl<F, V> AOp<V> for FSwitchOp<F, V> where V: 'static, RWVal<V>: IOVal + 'stati
         None => {}
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
-          self.x2_._pop_adjoint(pass, sink);
-          self.x1_._pop_adjoint(pass, sink);
         }
       }
+      self.x2_._pop_adjoint(pass, sink);
+      self.x1_._pop_adjoint(pass, sink);
     }
   }
 }
@@ -2736,10 +2811,10 @@ impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 's
         None => {}
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
-          for x_ in self.xs_.iter().rev() {
-            x_._pop_adjoint(pass, sink);
-          }
         }
+      }
+      for x_ in self.xs_.iter().rev() {
+        x_._pop_adjoint(pass, sink);
       }
     }
   }

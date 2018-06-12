@@ -109,9 +109,9 @@ fn test_gpu_zeros_eval() {
 }
 
 #[test]
-fn test_gpu_zeros_fill_uniform() {
+fn test_gpu_zeros_init_uniform() {
   println!();
-  let x: Val<_> = touch(GPUDeviceArray1d::<f32>::uniform_fill(1024, -1.0, 1.0, &mut thread_rng()));
+  let x: Val<_> = touch(GPUDeviceArray1d::<f32>::uniform_init(1024, -1.0, 1.0, &mut thread_rng()));
   let t = txn();
   x.eval(t);
   {
@@ -128,7 +128,7 @@ fn test_gpu_zeros_fill_uniform() {
 #[test]
 fn test_gpu_io_deserialize() {
   println!();
-  let x: Val<_> = src(GPUDeviceOuterBatchArray3d::<f32>::zeros_fill(([32, 32, 3], 64)));
+  let x: Val<_> = src(GPUDeviceOuterBatchArray3d::<f32>::zeros_init(([32, 32, 3], 64)));
   let src = MemArray4d::<f32>::zeros([32, 32, 3, 64]);
   let t = txn();
   x.deserialize(t, &mut ArrayIO::new(src));
@@ -138,7 +138,7 @@ fn test_gpu_io_deserialize() {
 #[test]
 fn test_gpu_io_serialize() {
   println!();
-  let x = touch(GPUDeviceOuterBatchArray3d::<f32>::uniform_fill(([32, 32, 3], 64), -1.0, 1.0, &mut thread_rng()));
+  let x = touch(GPUDeviceOuterBatchArray3d::<f32>::uniform_init(([32, 32, 3], 64), -1.0, 1.0, &mut thread_rng()));
   let dst = MemArray4d::<f32>::zeros([32, 32, 3, 64]);
   println!("DEBUG: {:?}", &dst.flat_view().unwrap().as_slice()[.. 10]);
   let t = txn();

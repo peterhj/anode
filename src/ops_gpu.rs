@@ -18,6 +18,7 @@ use ::*;
 use context::*;
 use ffi::routines_gpu::*;
 use ops::*;
+use utils::{ZerosInit};
 
 use arithmetic::*;
 //use arrayidx::*;
@@ -115,6 +116,13 @@ impl<A> GPUMuxOp<A> where A: 'static {
       inplace: None,
     };
     ext
+  }
+}
+
+impl DequantizeExt<GPUDeviceOuterBatchArray3d<u8>, GPUDeviceOuterBatchArray3d<f32>, f32> for Val<GPUDeviceOuterBatchArray3d<u8>> {
+  fn dequantize(&self, lo: f32, hi: f32) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+    // TODO
+    unimplemented!();
   }
 }
 
@@ -694,6 +702,109 @@ where T: ZeroBits + Copy + 'static,
   }
 }
 
+impl<T> ZerosSrcOpLikeExt<GPUDeviceOuterBatchScalar<T>> for ZerosSrcOp
+where ZerosSrcOp: ZerosSrcOpExt<GPUDeviceOuterBatchScalar<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchScalar<T>>>,
+      T: ZeroBits + Copy + 'static,
+{
+  fn build_like(x_: Val<GPUDeviceOuterBatchScalar<T>>) -> Val<GPUDeviceOuterBatchScalar<T>> {
+    let x_ = x_.clone();
+    <ZerosSrcOp as ZerosSrcOpExt<GPUDeviceOuterBatchScalar<T>, _>>::build(
+        Rc::new(move |txn, conn| {
+          let x = x_.get(txn);
+          let y = GPUDeviceOuterBatchScalar::zeros((), x.max_batch_size(), conn);
+          y
+        })
+    )
+  }
+}
+
+impl<T> ZerosSrcOpExt<GPUDeviceOuterBatchScalar<T>, usize> for ZerosSrcOp
+where T: ZeroBits + Copy + 'static,
+      GPUDeviceOuterBatchScalar<T>: ZerosInit<usize, RValue=Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchScalar<T>>>,
+{
+  fn build(batch_sz: usize) -> Val<GPUDeviceOuterBatchScalar<T>> {
+    zeros(<GPUDeviceOuterBatchScalar<T> as ZerosInit<_>>::zeros_init(batch_sz))
+  }
+}
+
+impl<T, F> ZerosSrcOpExt<GPUDeviceOuterBatchScalar<T>, Rc<F>> for ZerosSrcOp
+where T: ZeroBits + Copy + 'static,
+      F: (Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchScalar<T>) + 'static,
+{
+  fn build(init_val: Rc<F>) -> Val<GPUDeviceOuterBatchScalar<T>> {
+    <Self as ZerosSrcOpExt<GPUDeviceOuterBatchScalar<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchScalar<T>>>>::build(init_val)
+  }
+}
+
+impl<T> ZerosSrcOpExt<GPUDeviceOuterBatchScalar<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchScalar<T>>> for ZerosSrcOp
+where T: ZeroBits + Copy + 'static,
+{
+  fn build(init_val: Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchScalar<T>>) -> Val<GPUDeviceOuterBatchScalar<T>> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let init_val = init_val.clone();
+          RWVal::from(Arc::new(move |txn: Txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let y = init_val(txn, conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceOuterBatchScalar<T>>| {
+          if let Some((cap, token)) = output.write(txn) {
+            implicit_ctx()._debug_print();
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            match cap {
+              WriteCap::Assign => {
+                // TODO: zero out the whole thing.
+                println!("DEBUG: ZeroSrcOp: zeroing...");
+                let mut y = output.get_mut(txn, token);
+                guard._wait(y.async_state());
+                y.as_view_mut().set_zeros(conn);
+              }
+              WriteCap::Accumulate => {}
+            }
+          }
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: None,
+      /*tangent: Some({
+        Box::new(move || {
+          // TODO
+          unimplemented!();
+        })
+      }),*/
+      adjoint: Some({
+        Box::new(move |_: Pass, this: Val<GPUDeviceOuterBatchScalar<T>>, state: RefMut<_>, sink: &mut Sink| {
+          // Do nothing.
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(FSrcOp::new(ZerosSrcOp, ext)))
+  }
+}
+
 impl<T> ZerosSrcOpLikeExt<GPUDeviceOuterBatchArray1d<T>> for ZerosSrcOp
 where ZerosSrcOp: ZerosSrcOpExt<GPUDeviceOuterBatchArray1d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray1d<T>>>,
       T: ZeroBits + Copy + 'static,
@@ -707,6 +818,15 @@ where ZerosSrcOp: ZerosSrcOpExt<GPUDeviceOuterBatchArray1d<T>, Rc<Fn(Txn, GPUDev
           y
         })
     )
+  }
+}
+
+impl<T> ZerosSrcOpExt<GPUDeviceOuterBatchArray1d<T>, (usize, usize)> for ZerosSrcOp
+where T: ZeroBits + Copy + 'static,
+      GPUDeviceOuterBatchArray1d<T>: ZerosInit<(usize, usize), RValue=Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray1d<T>>>,
+{
+  fn build(shape: (usize, usize)) -> Val<GPUDeviceOuterBatchArray1d<T>> {
+    zeros(<GPUDeviceOuterBatchArray1d<T> as ZerosInit<_>>::zeros_init(shape))
   }
 }
 
@@ -804,6 +924,15 @@ where ZerosSrcOp: ZerosSrcOpExt<GPUDeviceOuterBatchArray3d<T>, Rc<Fn(Txn, GPUDev
   }
 }
 
+impl<T> ZerosSrcOpExt<GPUDeviceOuterBatchArray3d<T>, ([usize; 3], usize)> for ZerosSrcOp
+where T: ZeroBits + Copy + 'static,
+      GPUDeviceOuterBatchArray3d<T>: ZerosInit<([usize; 3], usize), RValue=Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray3d<T>>>,
+{
+  fn build(shape: ([usize; 3], usize)) -> Val<GPUDeviceOuterBatchArray3d<T>> {
+    zeros(<GPUDeviceOuterBatchArray3d<T> as ZerosInit<_>>::zeros_init(shape))
+  }
+}
+
 impl<T, F> ZerosSrcOpExt<GPUDeviceOuterBatchArray3d<T>, Rc<F>> for ZerosSrcOp
 where T: ZeroBits + Copy + 'static,
       F: (Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray3d<T>) + 'static,
@@ -894,8 +1023,7 @@ impl<T> OnesSrcOpLikeExt<GPUDeviceScalar<T>> for OnesSrcOp
 where T: ZeroBits + PseudoField + Copy + 'static,
       OnesSrcOp: OnesSrcOpExt<GPUDeviceScalar<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceScalar<T>>>,
 {
-  fn build_like(x_: Val<GPUDeviceScalar<T>>) -> Val<GPUDeviceScalar<T>> {
-    let x_ = x_.clone();
+  fn build_like(_: Val<GPUDeviceScalar<T>>) -> Val<GPUDeviceScalar<T>> {
     <OnesSrcOp as OnesSrcOpExt<GPUDeviceScalar<T>, _>>::build(
         Rc::new(move |txn, conn| {
           let y = GPUDeviceScalar::zeros((), conn);
@@ -1273,6 +1401,13 @@ where T: Copy,
   type Output = Val<GPUDeviceOuterBatchArray1d<T>>;
 
   fn add(self, y_: Val<GPUDeviceArray1d<T>>) -> Val<GPUDeviceOuterBatchArray1d<T>> {
+    // TODO
+    unimplemented!();
+  }
+}
+
+impl BatchNormalizeExt<GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
+  fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, epsilon: TCell<f64>) -> (Val<GPUDeviceOuterBatchArray3d<f32>>, Val<GPUDeviceArray1d<f32>>, Val<GPUDeviceArray1d<f32>>, Val<GPUDeviceArray1d<f32>>, Val<GPUDeviceArray1d<f32>>) {
     // TODO
     unimplemented!();
   }
