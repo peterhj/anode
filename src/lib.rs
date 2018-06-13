@@ -34,6 +34,7 @@ extern crate arrayidx;
 #[cfg(feature = "gpu")] extern crate gpudevicemem;
 #[macro_use] extern crate lazy_static;
 extern crate memarray;
+#[cfg(feature = "mpi")] extern crate mpich;
 extern crate parking_lot;
 extern crate rand;
 extern crate rng;
@@ -66,6 +67,7 @@ pub mod ffi;
 pub mod ops;
 #[cfg(feature = "gpu")] pub mod ops_gpu;
 #[cfg(feature = "mpi")] pub mod ops_mpi;
+pub mod proc;
 pub mod templates;
 pub mod utils;
 
@@ -323,6 +325,35 @@ pub trait WrapValExt<V> {
 #[cfg(feature = "gpu")]
 pub trait GPUWrapValExt<V> {
   fn gpu_mux(&self, dev: GPUDeviceId) -> Val<V>;
+}
+
+impl<V> WrapValExt<V> for Val<V> where V: 'static {
+  fn inplace(&self) -> Option<Val<V>> {
+    self._op()._inplace()
+  }
+}
+
+/*#[cfg(not(feature = "gpu"))]
+impl<V> GPUWrapValExt<V> for Val<V> where V: 'static {
+  fn gpu_mux(&self, _dev: GPUDeviceId) -> Val<V> {
+    // TODO: cant quite just impl a no-op, since it still uses the
+    // `GPUDeviceId` type.
+  }
+}*/
+
+#[cfg(feature = "gpu")]
+impl<V> GPUWrapValExt<V> for Val<V> where V: 'static {
+  fn gpu_mux(&self, dev: GPUDeviceId) -> Val<V> {
+    let this = self.clone();
+    let wrap_ext: OpExt<GPUMuxOp<V>, V> = GPUMuxOp::<V>::build_ext();
+    let wrap_cfg: GPUMuxOp<V> = GPUMuxOp{
+      dev:  dev,
+      val:  this._exact_clone(),
+    };
+    let wrap_op = FSrcWrapOp::new(wrap_cfg, wrap_ext, this._exact_clone());
+    // FIXME: `nowrap` only makes sense here without join wrappers.
+    Val::nowrap(Rc::new(wrap_op), self.var())
+  }
 }
 
 pub trait SendValExt<V> {
@@ -783,6 +814,10 @@ pub struct FeedFwd {
   tng_map:  HashMap<RWVar, (Node, Rc<Any>)>,
 }
 
+pub fn sink<V: 'static>(sink_: Val<V>) -> Sink {
+  Sink::from(sink_)
+}
+
 pub struct Sink {
   frozen:   HashSet<RWVar>,
   adj_map:  HashMap<RWVar, Vec<(Node, Rc<Any>)>>,
@@ -791,7 +826,6 @@ pub struct Sink {
 
 impl Sink {
   pub fn from<V>(sink_: Val<V>) -> Self where V: 'static {
-    // Add a "ones" adjoint op corresponding to `sink_`.
     let sink_adj = match <OnesSrcOp as OnesSrcOpMaybeExt<V>>::maybe_build_like(sink_.clone()) {
       None => unimplemented!("FATAL: Sink: missing `ones` builder for sink val"),
       Some(adj) => adj,
@@ -805,9 +839,9 @@ impl Sink {
       adj_map:  HashMap::new(),
       join_map: HashMap::new(),
     };
-    sink_.put_adjoint(sink_adj, &mut sink);
     let p = pass();
     sink_._push_fwd(None, p, &mut |_node, _rvar, _xvar| {});
+    sink_.put_adjoint(sink_adj, &mut sink);
     sink_._pop_adjoint(p, &mut sink);
     sink
   }
@@ -883,30 +917,6 @@ impl Sink {
     } else {
       self.adj_map.insert(var, vec![(adj_op.clone().into_node(), Rc::new(adj_op))]);
     }
-  }
-}
-
-pub struct OpBase {
-  ref_:     NodeRef,
-  stack:    WalkStack,
-  tags:     CloneMap,
-  //tng_op:   RefCell<Option<Val<V>>>,
-}
-
-impl Default for OpBase {
-  fn default() -> Self {
-    OpBase{
-      ref_:     NodeRef::default(),
-      stack:    WalkStack::default(),
-      tags:     TypeMap::custom(),
-      //tng_op:   RefCell::new(None),
-    }
-  }
-}
-
-impl AnalysisTags for OpBase {
-  fn liveness(&self) -> Option<LivenessAnalysis> {
-    self.tags.get::<LivenessAnalysis>().map(|x| x.clone())
   }
 }
 
@@ -1549,6 +1559,30 @@ impl<T> RWVal<T> where T: 'static {
   }
 }
 
+pub struct OpBase {
+  ref_:     NodeRef,
+  stack:    WalkStack,
+  tags:     CloneMap,
+  //tng_op:   RefCell<Option<Val<V>>>,
+}
+
+impl Default for OpBase {
+  fn default() -> Self {
+    OpBase{
+      ref_:     NodeRef::default(),
+      stack:    WalkStack::default(),
+      tags:     TypeMap::custom(),
+      //tng_op:   RefCell::new(None),
+    }
+  }
+}
+
+impl AnalysisTags for OpBase {
+  fn liveness(&self) -> Option<LivenessAnalysis> {
+    self.tags.get::<LivenessAnalysis>().map(|x| x.clone())
+  }
+}
+
 pub struct OpExt<F, V> {
   make_val: Box<Fn(RefMut<F>) -> RWVal<V>>,
   //prepare:  Option<Box<Fn(Txn, RefMut<F>)>>,
@@ -1576,35 +1610,6 @@ pub struct OpExt<F, V> {
     }
   }
 }*/
-
-impl<V> WrapValExt<V> for Val<V> where V: 'static {
-  fn inplace(&self) -> Option<Val<V>> {
-    self._op()._inplace()
-  }
-}
-
-/*#[cfg(not(feature = "gpu"))]
-impl<V> GPUWrapValExt<V> for Val<V> where V: 'static {
-  fn gpu_mux(&self, _dev: GPUDeviceId) -> Val<V> {
-    // TODO: cant quite just impl a no-op, since it still uses the
-    // `GPUDeviceId` type.
-  }
-}*/
-
-#[cfg(feature = "gpu")]
-impl<V> GPUWrapValExt<V> for Val<V> where V: 'static {
-  fn gpu_mux(&self, dev: GPUDeviceId) -> Val<V> {
-    let this = self.clone();
-    let wrap_ext: OpExt<GPUMuxOp<V>, V> = GPUMuxOp::<V>::build_ext();
-    let wrap_cfg: GPUMuxOp<V> = GPUMuxOp{
-      dev:  dev,
-      val:  this._exact_clone(),
-    };
-    let wrap_op = FSrcWrapOp::new(wrap_cfg, wrap_ext, this._exact_clone());
-    // FIXME: `nowrap` only makes sense here without join wrappers.
-    Val::nowrap(Rc::new(wrap_op), self.var())
-  }
-}
 
 pub struct FSrcWrapOp<F, V> {
   base: OpBase,

@@ -10,7 +10,7 @@ path = "src/lib.rs"
 [features]
 default = []
 gpu = ["cuda", "cuda_blas", "cuda_coll", "cuda_dnn", "gpudevicemem"]
-mpi = []
+mpi = ["mpich"]
 
 [build-dependencies]
 bindgen = "^0.32"
@@ -34,14 +34,12 @@ float = { path = "../libfloat" }
 gpudevicemem = { path = "../gpudevicemem", optional = true }
 lazy_static = "*"
 memarray = { path = "../memarray", features = ["mkl"] }
+mpich = { path = "../libmpich", optional = true}
 parking_lot = { version = "*", features = ["nightly"] }
-#rng = "*"
 #rand = { path = "../rand" }
 rand = "^0.5"
+#rng = "*"
 rng = { path = "../rng" }
 sharedmem = { path = "../sharedmem" }
 time = "*"
 typemap = "*"
-
-#[replace]
-#"rand:0.5.0-pre.2" = { path = "../rand" }

@@ -218,8 +218,8 @@ fn test_gpu_adj() {
   let x = zeros(Rc::new(|_, conn: GPUDeviceConn| {
     GPUDeviceScalar::<f32>::zeros((), conn)
   }));
-  let mut sink = Sink::from(x.clone());
-  let dx = x.adjoint(&mut sink);
+  let mut x_sink = sink(x.clone());
+  let dx = x.adjoint(&mut x_sink);
 }
 
 #[test]
@@ -234,10 +234,10 @@ fn test_gpu_switch_adj() {
   }));
   let y = switch(flag.clone(), x1.clone(), x2.clone());
   println!("DEBUG: building adjoint");
-  let mut sink = Sink::from(y.clone());
-  let dy = y.adjoint(&mut sink).unwrap();
-  let dx1 = x1.adjoint(&mut sink).unwrap();
-  let dx2 = x2.adjoint(&mut sink).unwrap();
+  let mut y_sink = sink(y.clone());
+  let dy = y.adjoint(&mut y_sink).unwrap();
+  let dx1 = x1.adjoint(&mut y_sink).unwrap();
+  let dx2 = x2.adjoint(&mut y_sink).unwrap();
   println!("DEBUG: ON path (expect 2 allocs)");
   let t = txn();
   flag.propose(t, |_| true);
@@ -257,8 +257,8 @@ fn test_gpu_adj_fail() {
   let x = zeros(Rc::new(|_, conn: GPUDeviceConn| {
     GPUDeviceArray1d::<f32>::zeros(1024, conn)
   }));
-  let mut sink = Sink::from(x.clone());
-  let dx = x.adjoint(&mut sink);
+  let mut x_sink = sink(x.clone());
+  let dx = x.adjoint(&mut x_sink);
 }
 
 #[test]
