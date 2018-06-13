@@ -54,6 +54,10 @@ pub struct FlatMapOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatMapInplaceOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatJoinOp<FlatJoin> { pub f: FlatJoin }
 pub struct FlatLinearOp;
+pub struct BatchMean2dOp;
+pub struct BatchVariance2dOp;
+pub struct BatchNormalize2dOp;
+pub struct OnlineAverageOp;
 pub struct LinearOp;
 pub struct AffineOp;
 pub struct LeftTransposeLinearOp;
@@ -365,12 +369,59 @@ impl<V> Add<Val<V>> for Val<V> where Self: SumExt<V> {
   }
 }
 
-pub trait BatchNormalizeExt<V, M> {
-  fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, epsilon: TCell<f64>) -> (Val<V>, Val<M>, Val<M>, Val<M>, Val<M>);
+pub trait BatchMean2dOpExt<X, M> {
+  fn build(axes: [isize; 2], x_: Val<X>) -> Val<M>;
 }
 
-pub trait AverageInplaceExt<T, V> where T: Copy {
-  fn average_inplace(self, rate: TCell<T>, x_: Val<V>) -> Val<V>;
+pub trait BatchVariance2dOpExt<X, M> {
+  fn build(axes: [isize; 2], x_: Val<X>) -> Val<M>;
+}
+
+pub trait BatchNormalize2dOpExt<X, M> {
+  fn build(axes: [isize; 2], x_: Val<X>, mean_: Val<M>, var_: Val<M>) -> Val<X>;
+}
+
+pub trait BatchNormalizeExt<T, X, M> where T: Copy {
+  fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, epsilon: TCell<T>) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>);
+}
+
+impl<T, X, M> BatchNormalizeExt<T, X, M> for Val<X>
+where T: Copy,
+      X: 'static,
+      M: 'static,
+      BatchMean2dOp: BatchMean2dOpExt<X, M>,
+      BatchVariance2dOp: BatchVariance2dOpExt<X, M>,
+      BatchNormalize2dOp: BatchNormalize2dOpExt<X, M>,
+      OnlineAverageOp: OnlineAverageOpExt<T, M>,
+      ZerosSrcOp: ZerosSrcOpLikeExt<M> + ZerosSrcOpLikeExt<X>,
+{
+  fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, epsilon: TCell<T>) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>) {
+    let mean_ = <BatchMean2dOp as BatchMean2dOpExt<X, M>>::build(axes, self.clone());
+    let var_ = <BatchVariance2dOp as BatchVariance2dOpExt<X, M>>::build(axes, self.clone());
+    let avg_mean_ = zeros_like(mean_.clone()).online_average(epsilon.clone(), mean_.clone());
+    let avg_var_ = zeros_like(var_.clone()).online_average(epsilon.clone(), var_.clone());
+    let online_y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<X, M>>::build(axes, self.clone(), mean_.clone(), var_.clone());
+    let avg_y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<X, M>>::build(axes, self.clone(), avg_mean_.clone(), avg_var_.clone());
+    let y_ = switch(online, avg_y_, online_y_);
+    (y_, mean_, var_, avg_mean_, avg_var_)
+  }
+}
+
+pub trait OnlineAverageOpExt<T, V> where T: Copy {
+  fn build(rate: TCell<T>, x_: Val<V>, y_: Val<V>) -> Val<V>;
+}
+
+pub trait OnlineAverageExt<T, V> where T: Copy {
+  fn online_average(self, rate: TCell<T>, x_: Val<V>) -> Val<V>;
+}
+
+impl<T, V> OnlineAverageExt<T, V> for Val<V>
+where T: Copy,
+      OnlineAverageOp: OnlineAverageOpExt<T, V>,
+{
+  fn online_average(self, rate: TCell<T>, x_: Val<V>) -> Val<V> {
+    <OnlineAverageOp as OnlineAverageOpExt<T, V>>::build(rate, x_, self)
+  }
 }
 
 pub trait PositiveClipFlatMapExt<V> {

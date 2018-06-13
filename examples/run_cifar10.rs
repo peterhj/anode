@@ -20,7 +20,7 @@ use std::fs::{File};
 use std::io::{Write};
 use std::path::{PathBuf};
 
-fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GPUDeviceOuterBatchScalar<u32>>, TCell<bool>, TCell<f64>, NodeVec) {
+fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GPUDeviceOuterBatchScalar<u32>>, TCell<bool>, TCell<f32>, NodeVec, NodeVec, NodeVec) {
   let mut params = NodeVec::default();
   let mut online_stats = NodeVec::default();
   let mut avg_stats = NodeVec::default();
@@ -28,7 +28,7 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   let image_var = zeros(([28, 28, 3], batch_sz));
   let label_var = zeros(batch_sz);
   let online = TCell::default();
-  let epsilon = TCell::new(0.0_f64);
+  let epsilon = TCell::new(0.0);
 
   let x = image_var.dequantize(0.0_f32, 1.0_f32);
 
@@ -50,7 +50,7 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
 
   // TODO
 
-  (image_var, label_var, online, epsilon, params)
+  (image_var, label_var, online, epsilon, params, online_stats, avg_stats)
 }
 
 fn main() {
@@ -63,6 +63,7 @@ fn main() {
   let train_data = Cifar10Data::open_train(data_cfg).unwrap();
 
   let batch_sz = 128;
+  let num_classes = 10;
 
   let train_iter = train_data.uniform_random(&mut thread_rng())
     .batch_data(batch_sz)
@@ -90,28 +91,40 @@ fn main() {
     });
 
   // TODO
-  let (image_var, label_var, /*loss_var,*/ online_var, epsilon_var, params, /*online_stats, avg_stats*/) = build_resnet(batch_sz);
+  let (image_var, label_var, /*logit_var, loss_var,*/ online_var, epsilon_var, params, online_stats, avg_stats) = build_resnet(batch_sz);
+  let mut loss: Sink = { unimplemented!() };
   //let mut loss = Sink::from(loss_var);
-  //let params = params.reversed();
-  //let grads = params.adjoints(&mut loss);
+  let params = params.reversed();
+  let grads = params.adjoints(&mut loss);
+
+  let mut image_batch = MemArray4d::<u8>::zeros([32, 32, 3, batch_sz]);
+  let mut label_batch = MemArray1d::<u32>::zeros(batch_sz);
+  let mut logit_batch = MemArray2d::<f32>::zeros([num_classes, batch_sz]);
 
   for (iter_nr, (mut image_batch, mut label_batch)) in train_iter.enumerate() {
+    // TODO: do preprocessing here.
+
     // TODO
     let batch = txn();
+    params.persist(batch);
     image_var.deserialize(batch, &mut image_batch);
     label_var.deserialize(batch, &mut label_batch);
     online_var.propose(batch, |_| true);
     epsilon_var.propose(batch, |_| if iter_nr == 0 { 1.0 } else { 0.003 });
     /*
+    logit_var.eval(batch);
     grads.eval(batch);
 
-    let grad_step = txn();
-    grads.persist(grad_step);
-    sgd.step(grad_step, params, grads);
+    // TODO: log training statistics.
+    let mut loss_batch: f32 = 0.0;
+    logit_var.serialize(batch, &mut logit_batch);
+    loss_var.serialize(batch, &mut loss_batch);
 
-    let stats_update = txn();
-    online_stats.persist(stats_update);
-    avg_stats.eval(stats_update);
+    let step = txn();
+    grads.persist(step);
+    online_stats.persist(step);
+    sgd.step(step, params, grads);
+    avg_stats.eval(step);
     */
   }
 }

@@ -260,3 +260,25 @@ fn test_gpu_adj_fail() {
   let mut sink = Sink::from(x.clone());
   let dx = x.adjoint(&mut sink);
 }
+
+#[test]
+fn test_gpu_online_avg() {
+  println!();
+  let x = ones(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceArray1d::<f32>::zeros(1024, conn)
+  }));
+  let y = src(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceArray1d::<f32>::zeros(1024, conn)
+  }));
+  let alpha = TCell::default();
+  let y = y.online_average(alpha.clone(), x);
+  let t = txn();
+  alpha.propose(t, |_| 0.25);
+  y.eval(t);
+  let mut z = MemArray1d::<f32>::zeros(1024);
+  y.serialize(t, &mut z);
+  for k in 0 .. 1024 {
+    assert_eq!(z.as_view().as_slice()[k], 0.25);
+  }
+  println!("DEBUG: {:?}", &z.as_view().as_slice()[.. 10]);
+}

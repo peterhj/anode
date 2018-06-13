@@ -459,6 +459,12 @@ impl Node {
     self.node._eval_recursive(txn, self.rvar, self.xvar);
   }
 
+  pub fn persist(&self, txn: Txn) {
+    // TODO
+    unimplemented!();
+    //self.node._persist(txn, self.xvar);
+  }
+
   pub fn eval(&self, txn: Txn) {
     self._eval_recursive(txn);
     self._apply(txn);
@@ -767,6 +773,10 @@ impl<V> OVal<V> where V: 'static {
   pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwLockWriteGuard<V> {
     self.val.get_mut(txn, self.xvar, token)
   }
+
+  pub fn set<F: FnOnce(RwLockWriteGuard<V>)>(&self, txn: Txn, f: F) {
+    self.val.set(txn, self.xvar, f);
+  }
 }
 
 pub struct FeedFwd {
@@ -933,6 +943,22 @@ impl NodeVec {
 
   pub fn push_val<A: 'static>(&mut self, val: Val<A>) {
     self.nodes.push(val.into_node());
+  }
+
+  pub fn extend(&mut self, other: &NodeVec) {
+    self.nodes.extend_from_slice(&other.nodes);
+  }
+
+  pub fn persist(&self, txn: Txn) {
+    for n in self.nodes.iter() {
+      n.persist(txn);
+    }
+  }
+
+  pub fn eval(&self, txn: Txn) {
+    for n in self.nodes.iter() {
+      n.eval(txn);
+    }
   }
 }
 
@@ -1574,13 +1600,13 @@ impl<V> GPUWrapValExt<V> for Val<V> where V: 'static {
       dev:  dev,
       val:  this._exact_clone(),
     };
-    let wrap_op = FWrapOp::new(wrap_cfg, wrap_ext, this._exact_clone());
+    let wrap_op = FSrcWrapOp::new(wrap_cfg, wrap_ext, this._exact_clone());
     // FIXME: `nowrap` only makes sense here without join wrappers.
     Val::nowrap(Rc::new(wrap_op), self.var())
   }
 }
 
-pub struct FWrapOp<F, V> {
+pub struct FSrcWrapOp<F, V> {
   base: OpBase,
   ext:  OpExt<F, V>,
   cfg:  RefCell<F>,
@@ -1588,10 +1614,10 @@ pub struct FWrapOp<F, V> {
   val_: Val<V>,
 }
 
-impl<F, V> FWrapOp<F, V> {
+impl<F, V> FSrcWrapOp<F, V> {
   pub fn new(cfg: F, ext: OpExt<F, V>, val_: Val<V>) -> Self {
     let cfg = RefCell::new(cfg);
-    FWrapOp{
+    FSrcWrapOp{
       base: OpBase::default(),
       ext:  ext,
       cfg:  cfg,
@@ -1601,7 +1627,7 @@ impl<F, V> FWrapOp<F, V> {
   }
 }
 
-impl<F, V> ANode for FWrapOp<F, V> where RWVal<V>: IOVal + 'static {
+impl<F, V> ANode for FSrcWrapOp<F, V> where RWVal<V>: IOVal + 'static {
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
@@ -1665,7 +1691,7 @@ impl<F, V> ANode for FWrapOp<F, V> where RWVal<V>: IOVal + 'static {
   }
 }
 
-impl<F, V> AOp<V> for FWrapOp<F, V> where RWVal<V>: IOVal + 'static {
+impl<F, V> AOp<V> for FSrcWrapOp<F, V> where RWVal<V>: IOVal + 'static {
   fn _make_value(&self) -> RWVal<V> {
     (self.ext.make_val)(self.cfg.borrow_mut())
   }
@@ -1876,6 +1902,140 @@ where V: OVal, W: OVal {
     // TODO: figure out `attach` semantics.
   }
 }*/
+
+pub struct F1WrapOp<F, V, W> {
+  base: OpBase,
+  ext:  OpExt<F, W>,
+  cfg:  RefCell<F>,
+  ctrl: Vec<Node>,
+  x_:   Val<V>,
+  y_:   Val<W>,
+}
+
+impl<F, V, W> F1WrapOp<F, V, W> {
+  pub fn new(cfg: F, ext: OpExt<F, W>, x_: Val<V>, y_: Val<W>) -> Self {
+    let cfg = RefCell::new(cfg);
+    F1WrapOp{
+      base: OpBase::default(),
+      ext:  ext,
+      cfg:  cfg,
+      ctrl: vec![],
+      x_:   x_,
+      y_:   y_,
+    }
+  }
+}
+
+impl<F, V, W> ANode for F1WrapOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'static {
+  fn _walk(&self) -> &Walk {
+    &self.base.stack
+  }
+
+  fn _io(&self) -> &IOVal {
+    self.y_._op()._io()
+  }
+
+  fn _analysis_tags(&self) -> &AnalysisTags {
+    &self.base
+  }
+
+  fn _pred_fwd(&self, pred_buf: &mut Vec<Node>) {
+    pred_buf.push(self.x_.to_node());
+  }
+
+  fn _pred_rev(&self, pred_buf: &mut Vec<Node>) {
+    pred_buf.push(self.x_.to_node());
+  }
+
+  fn _push(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.push(pass) {
+      if stop_txn.is_none() || stop_txn != self._txn() {
+        self.x_._node()._push(stop_txn, pass, apply);
+      }
+      apply(self);
+    }
+  }
+
+  fn _pop(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
+    if self.base.stack.pop(pass) {
+      apply(self);
+      if stop_txn.is_none() || stop_txn != self._txn() {
+        self.x_._node()._pop(stop_txn, pass, apply);
+      }
+    }
+  }
+
+  fn _push_fwd(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) {
+    if self.base.stack.push(pass) {
+      if stop_txn.is_none() || stop_txn != self._txn() {
+        self.x_._push_fwd(stop_txn, pass, apply);
+      }
+      apply(self, rvar, xvar);
+    }
+  }
+
+  fn _txn(&self) -> Option<Txn> {
+    self.y_._op()._txn()
+  }
+
+  fn _reset(&self) {
+    self._value().reset();
+  }
+
+  fn _release(&self) {
+    self._value().release();
+  }
+
+  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
+    self._apply_output(txn, OVal::new(rvar, xvar, self._value()._clone()));
+  }
+
+  fn _eval_recursive(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
+    if Some(txn) != self._txn() {
+      for node in self.ctrl.iter() {
+        node.eval(txn);
+      }
+      self.x_.eval(txn);
+    }
+  }
+}
+
+impl<F, V, W> AOp<W> for F1WrapOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'static {
+  fn _make_value(&self) -> RWVal<W> {
+    (self.ext.make_val)(self.cfg.borrow_mut())
+  }
+
+  fn _value(&self) -> &RWVal<W> {
+    self.y_._op()._value()
+  }
+
+  fn _apply_output(&self, txn: Txn, val: OVal<W>) {
+    (self.ext.apply)(txn, self.cfg.borrow_mut(), val);
+  }
+
+  fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<W> {
+    match self.ext.tangent {
+      None => unimplemented!(),
+      Some(ref tangent) => (tangent)(pass, self.cfg.borrow_mut(), feedfwd),
+    }
+  }
+
+  fn _pop_adjoint(&self, pass: Pass, this: Val<W>, sink: &mut Sink) {
+    if self.base.stack.pop(pass) {
+      match self.ext.adjoint {
+        None => {}
+        Some(ref adjoint) => {
+          (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
+        }
+      }
+      self.x_._pop_adjoint(pass, sink);
+    }
+  }
+
+  fn _inplace(&self) -> Option<Val<W>> {
+    None
+  }
+}
 
 pub struct F1Op<F, V1, W> {
   base: OpBase,
@@ -2091,15 +2251,6 @@ impl<F, V> AOp<V> for F1Op<F, V, V> where V: 'static, RWVal<V>: IOVal + 'static 
       }
     }
   }
-}
-
-pub struct F1InplaceOp<F, V, W> {
-  base: OpBase,
-  ext:  OpExt<F, W>,
-  cfg:  RefCell<F>,
-  ctrl: Vec<Node>,
-  x_:   Val<V>,
-  y_:   Val<W>,
 }
 
 pub struct F2Op<F, V1, V2, W> {

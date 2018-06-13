@@ -1114,6 +1114,87 @@ where T: PseudoField + Copy + 'static,
   }
 }
 
+impl<T, F> OnesSrcOpExt<GPUDeviceArray1d<T>, Rc<F>> for OnesSrcOp
+where T: PseudoField + Copy + 'static,
+      F: (Fn(Txn, GPUDeviceConn) -> GPUDeviceArray1d<T>) + 'static,
+{
+  fn build(init_val: Rc<F>) -> Val<GPUDeviceArray1d<T>> {
+    <Self as OnesSrcOpExt<GPUDeviceArray1d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceArray1d<T>>>>::build(init_val)
+  }
+}
+
+impl<T> OnesSrcOpExt<GPUDeviceArray1d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceArray1d<T>>> for OnesSrcOp
+where T: PseudoField + Copy + 'static,
+{
+  fn build(init_val: Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceArray1d<T>>) -> Val<GPUDeviceArray1d<T>> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          println!("DEBUG: OnesSrcOpExt<|| GPUDeviceArray1d>: init...");
+          let section = GPULazyAsyncSection::default();
+          let init_val = init_val.clone();
+          RWVal::from(Arc::new(move |txn: Txn| {
+            println!("DEBUG: OnesSrcOpExt<|| GPUDeviceArray1d>: make_val: allocating...");
+            implicit_ctx()._debug_print();
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            // FIXME: this part really requires auto-wait and auto-registration.
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let y = init_val(txn, conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<T>>| {
+          if let Some((cap, token)) = output.write(txn) {
+            println!("DEBUG: OnesSrcOpExt<|| GPUDeviceArray1d>: apply: writing...");
+            implicit_ctx()._debug_print();
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            match cap {
+              WriteCap::Assign => {
+                let mut y = output.get_mut(txn, token);
+                guard._wait(y.async_state());
+                y.as_view_mut().set_constant(T::one(), conn);
+              }
+              _ => unimplemented!(),
+            }
+          }
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: None,
+      /*tangent: Some({
+        Box::new(move || {
+          // TODO
+          unimplemented!();
+        })
+      }),*/
+      adjoint: Some({
+        Box::new(move |_: Pass, this: Val<GPUDeviceArray1d<T>>, state: RefMut<_>, sink: &mut Sink| {
+          // Do nothing.
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(FSrcOp::new(OnesSrcOp, ext)))
+  }
+}
+
 impl<T: Copy> FlattenExt<GPUDeviceOuterBatchArray3d<T>, GPUDeviceOuterBatchArray1d<T>> for Val<GPUDeviceOuterBatchArray3d<T>> {
   fn flatten(self) -> Val<GPUDeviceOuterBatchArray1d<T>> {
     // TODO
@@ -1406,12 +1487,12 @@ where T: Copy,
   }
 }
 
-impl BatchNormalizeExt<GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
-  fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, epsilon: TCell<f64>) -> (Val<GPUDeviceOuterBatchArray3d<f32>>, Val<GPUDeviceArray1d<f32>>, Val<GPUDeviceArray1d<f32>>, Val<GPUDeviceArray1d<f32>>, Val<GPUDeviceArray1d<f32>>) {
+/*impl BatchNormalizeExt<GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
+  fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, epsilon: TCell<f32>) -> (Val<GPUDeviceOuterBatchArray3d<f32>>, Val<GPUDeviceArray1d<f32>>, Val<GPUDeviceArray1d<f32>>, Val<GPUDeviceArray1d<f32>>, Val<GPUDeviceArray1d<f32>>) {
     // TODO
     unimplemented!();
   }
-}
+}*/
 
 impl PositiveClipFlatMapExt<GPUDeviceOuterBatchArray1d<f32>> for Val<GPUDeviceOuterBatchArray1d<f32>> {
   fn positive_clip(self) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
@@ -1637,7 +1718,6 @@ impl<F> FlatMapOp<F> where F: Clone + 'static {
         let f_config = f_config.clone();
         let x_ = x_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray<Idx, T>>| {
-          let x_ = x_.clone();
           if let Some((cap, token)) = output.write(txn) {
             implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
@@ -1750,7 +1830,6 @@ impl<F> FlatJoinOp<F> where F: Clone + 'static {
         let f_config = f_config.clone();
         let xs_ = xs_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<A>| {
-          let xs_ = xs_.clone();
           if let Some((cap, token)) = output.write(txn) {
             let mut pool = implicit_ctx().gpu().pool();
             let conn = pool.conn();
@@ -1797,6 +1876,69 @@ impl<F> FlatJoinOp<F> where F: Clone + 'static {
       }),*/
     };
     Val::from(Rc::new(FJoinOp::new(FlatJoinOp{f: f_config}, ext, xs_)))
+  }
+}
+
+impl BatchMean2dOpExt<GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> for BatchMean2dOp {
+  fn build(axes: [isize; 2], x_: Val<GPUDeviceOuterBatchArray3d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+    // TODO
+    unimplemented!();
+  }
+}
+
+impl BatchVariance2dOpExt<GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> for BatchVariance2dOp {
+  fn build(axes: [isize; 2], x_: Val<GPUDeviceOuterBatchArray3d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+    // TODO
+    unimplemented!();
+  }
+}
+
+impl BatchNormalize2dOpExt<GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> for BatchNormalize2dOp {
+  fn build(axes: [isize; 2], x_: Val<GPUDeviceOuterBatchArray3d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+    // TODO
+    unimplemented!();
+  }
+}
+
+impl OnlineAverageOpExt<f32, GPUDeviceArray1d<f32>> for OnlineAverageOp {
+  fn build(rate: TCell<f32>, x_: Val<GPUDeviceArray1d<f32>>, y_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          unreachable!();
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let rate = rate.clone();
+        let x_ = x_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<f32>>| {
+          output.set(txn, |mut y| {
+            println!("DEBUG: OnlineAverageOp: apply: writing...");
+            let mut pool = implicit_ctx().gpu().pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            guard._wait(y.async_state());
+            let r = rate.get(txn);
+            y.as_view_mut().online_average(r, x.as_view(), conn);
+          });
+        })
+      },
+      build: Some({
+        Box::new(move |_args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: None,
+      adjoint: None,
+      inplace: None,
+    };
+    Val::from(Rc::new(F1WrapOp::new(OnlineAverageOp, ext, x_, y_)))
   }
 }
 
