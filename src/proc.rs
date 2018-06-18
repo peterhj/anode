@@ -26,6 +26,7 @@ pub struct DistProcGroup {
 
 impl Drop for DistProcGroup {
   fn drop(&mut self) {
+    // TODO: should make sure that the proc group outlives procs.
     assert!(mpi_finalize().is_ok());
   }
 }
@@ -75,6 +76,7 @@ impl DistProcJoinHandle {
   }
 }
 
+#[derive(Clone)]
 pub struct DistProc {
   rank:     usize,
   nranks:   usize,
@@ -93,5 +95,20 @@ impl DistProc {
 
   pub fn num_ranks(&self) -> usize {
     self.nranks
+  }
+
+  pub fn barrier(&self) {
+    mpi_barrier(&mut MPIComm::world()).unwrap();
+  }
+
+  pub fn allreduce_sum<T: MPIDataTypeExt + Copy>(&self, buf: &mut [T]) {
+    let ptr = buf.as_mut_ptr();
+    let len = buf.len();
+    unsafe { mpi_allreduce(
+        ptr, len,
+        ptr, len,
+        MPIReduceOp::Sum,
+        &mut MPIComm::world(),
+    ).unwrap() };
   }
 }

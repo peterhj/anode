@@ -7,6 +7,6 @@ fn main() {
   for node in group {
     node.spawn(|proc| {
       println!("DEBUG: hello world: {}", proc.rank());
-    });
+    }).unwrap().join();
   }
 }
