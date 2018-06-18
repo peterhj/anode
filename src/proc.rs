@@ -14,6 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+use mpich::*;
+
 use std::sync::{ONCE_INIT, Once};
 
 static DIST_PROC_GROUP_ONCE: Once = ONCE_INIT;
@@ -22,11 +24,18 @@ pub struct DistProcGroup {
   closed:   bool,
 }
 
+impl Drop for DistProcGroup {
+  fn drop(&mut self) {
+    assert!(mpi_finalize().is_ok());
+  }
+}
+
 impl Default for DistProcGroup {
   fn default() -> Self {
     DIST_PROC_GROUP_ONCE.call_once(|| {
       // TODO: use this to init MPI.
       //MPI::init()
+      assert!(mpi_init_multithreaded().is_ok());
     });
     DistProcGroup{
       closed:   false,
@@ -43,10 +52,12 @@ impl Iterator for DistProcGroup {
     }
     // TODO: fork/join-over-SPMD impl.
     self.closed = true;
-    // TODO
-    let rank = 0;
-    //let rank = MPIComm::world().rank() as usize;
-    Some(DistProc{rank})
+    let rank = MPIComm::world().rank() as usize;
+    let nranks = MPIComm::world().num_ranks() as usize;
+    Some(DistProc{
+      rank,
+      nranks,
+    })
   }
 }
 
@@ -65,13 +76,22 @@ impl DistProcJoinHandle {
 }
 
 pub struct DistProc {
-  rank: usize,
+  rank:     usize,
+  nranks:   usize,
 }
 
 impl DistProc {
-  pub fn spawn<F>(self, f: F) -> Result<DistProcJoinHandle, ()> where F: FnOnce(usize) + 'static {
+  pub fn spawn<F>(self, f: F) -> Result<DistProcJoinHandle, ()> where F: FnOnce(DistProc) + Send + 'static {
     // TODO
-    f(self.rank);
+    f(self);
     Ok(DistProcJoinHandle{})
+  }
+
+  pub fn rank(&self) -> usize {
+    self.rank
+  }
+
+  pub fn num_ranks(&self) -> usize {
+    self.nranks
   }
 }

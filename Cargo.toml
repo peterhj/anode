@@ -9,11 +9,13 @@ path = "src/lib.rs"
 
 [features]
 default = []
+cuda9 = ["cuda_blas/cuda9", "gpudevicemem/cuda9"]
 gpu = ["cuda", "cuda_blas", "cuda_coll", "cuda_dnn", "gpudevicemem"]
 mpi = ["mpich"]
 
 [build-dependencies]
-bindgen = "^0.32"
+#bindgen = "^0.32"
+bindgen = "*"
 cc = "*"
 walkdir = "*"
 
@@ -35,7 +37,8 @@ gpudevicemem = { path = "../gpudevicemem", optional = true }
 lazy_static = "*"
 memarray = { path = "../memarray", features = ["mkl"] }
 mpich = { path = "../libmpich", optional = true}
-parking_lot = { version = "*", features = ["nightly"] }
+#parking_lot = { version = "*", features = ["nightly"] }
+parking_lot = { version = "^0.5", features = ["nightly"] }
 #rand = { path = "../rand" }
 rand = "^0.5"
 #rng = "*"
