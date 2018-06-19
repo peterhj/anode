@@ -1,13 +1,19 @@
 extern crate anode;
 extern crate colorimage;
+extern crate gpudevicemem;
+extern crate memarray;
 extern crate mpich;
 extern crate rand;
 extern crate sharedmem;
 extern crate superdata;
 
+use anode::*;
+use anode::ops::*;
 use anode::proc::*;
 use anode::utils::*;
 use colorimage::*;
+use gpudevicemem::array::*;
+use memarray::*;
 use mpich::*;
 use rand::prelude::*;
 use rand::rngs::mock::*;
@@ -18,7 +24,7 @@ use superdata::datasets::imagenet::*;
 use std::cmp::{max, min};
 use std::path::{PathBuf};
 
-struct SplitShardsMPI<Data> {
+/*struct SplitShardsMPI<Data> {
   part_len: usize,
   part_off: usize,
   all_data: Data,
@@ -103,6 +109,23 @@ impl<Data: RandomAccess<Item=(SharedMem<u8>, u32)>> RandomAccess for JoinShardsM
       */
     }
   }
+}*/
+
+fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GPUDeviceOuterBatchScalar<u32>>, TCell<bool>, TCell<f32>, NodeVec, NodeVec, NodeVec) {
+  let mut params = NodeVec::default();
+  let mut online_stats = NodeVec::default();
+  let mut avg_stats = NodeVec::default();
+
+  /*let image_var = zeros(([3, 224, 224], batch_sz));
+  let label_var = zeros(batch_sz);
+  let online = TCell::default();
+  let epsilon = TCell::new(0.0);
+
+  let x = image_var.dequantize(0.0_f32, 1.0_f32);
+  //let x = x.transpose_pixels_to_planes();*/
+
+  // TODO
+  unimplemented!();
 }
 
 fn main() {
@@ -137,6 +160,7 @@ fn main() {
       println!("DEBUG: rank: {} train part len: {}", proc.rank(), train_shard.len());*/
 
       let num_data_workers = 20;
+      let num_classes = 1000;
       let batch_sz = 32;
       let eval_interval = 5000;
 
@@ -161,6 +185,7 @@ fn main() {
                     None
                   }
                 };
+                // TODO: data augmentation.
                 (maybe_image, label)
               })
           })
@@ -172,14 +197,30 @@ fn main() {
       let mut images = Vec::with_capacity(batch_sz);
       let mut labels = Vec::with_capacity(batch_sz);
 
+      let mut image_batch = MemArray4d::<u8>::zeros([3, 224, 224, batch_sz]);
+      let mut label_batch = MemArray1d::<u32>::zeros(batch_sz);
+      let mut logit_batch = MemArray2d::<f32>::zeros([num_classes, batch_sz]);
+
       for (iter_nr, batch) in train_iter.enumerate() {
         images.clear();
         labels.clear();
-        for (maybe_image, label) in batch.into_iter() {
+        for (idx, (maybe_image, label)) in batch.into_iter().enumerate() {
           images.push(maybe_image);
           labels.push(label);
+          label_batch.as_view_mut().as_mut_slice()[idx] = label;
         }
-        //break;
+
+        let batch_txn = txn();
+        // TODO: evaluate the batch.
+
+        for idx in 0 .. batch_sz {
+          // TODO: calculate accuracy stats.
+        }
+
+        let step_txn = txn();
+        // TODO: gradient step.
+        // TODO: update moving average stats.
+
         if (iter_nr + 1) % 100 == 0 {
           println!("DEBUG: train: lap elapsed: {:.6} s", stopwatch.click().lap_time());
         }
@@ -196,9 +237,10 @@ fn main() {
               .batch_data(batch_sz);
           let mut shard_ctr = 0;
           'eval_batch_loop: for eval_batch in val_iter {
-            // TODO
+            let batch_txn = txn();
+            // TODO: evaluate the batch.
             for idx in 0 .. batch_sz {
-              // TODO
+              // TODO: calculate accuracy stats.
               shard_ctr += 1;
               if shard_ctr == shard_len {
                 break 'eval_batch_loop;

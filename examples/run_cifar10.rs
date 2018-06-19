@@ -1,5 +1,5 @@
 extern crate anode;
-//extern crate gpudevmem;
+//extern crate cuda_dnn;
 extern crate gpudevicemem;
 extern crate memarray;
 extern crate rand;
@@ -9,6 +9,7 @@ use anode::*;
 use anode::ops::*;
 use anode::ops_gpu::*;
 use anode::utils::*;
+//use cuda_dnn::*;
 use gpudevicemem::array::*;
 use memarray::*;
 use superdata::*;
@@ -33,13 +34,16 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   let x = image_var.dequantize(0.0_f32, 1.0_f32);
 
   let mut conv1 = Conv2dShape::default_nchw();
+  conv1.src_size = [28, 28, 3];
   conv1.ker_size = [3, 3];
+  conv1.features = 16;
   conv1.stride = [1, 1];
   conv1.zero_pad = [1, 1];
   let w1 = touch(GPUDeviceArray4d::<f32>::normal_init([3, 3, 3, 16], 0.0, 0.01, &mut thread_rng()));
   let b1 = touch(GPUDeviceArray1d::<f32>::zeros_init(16));
   params.push_val(w1.clone());
   params.push_val(b1.clone());
+  //let x = Conv2dAffineOp::build_device_obatch_val(conv1, w1, x, b1);
   let x = w1.conv_add(conv1, x, b1);
   let (x, x_mean, x_var, x_avg_mean, x_avg_var) = x.batch_normalize_2d([0, 1], online.clone(), epsilon.clone());
   online_stats.push_val(x_mean);

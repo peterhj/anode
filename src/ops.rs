@@ -70,10 +70,10 @@ pub struct Conv2dAffineOp { pub conv_shape: Conv2dShape }
 pub struct Conv3dLinearOp;
 pub struct Conv3dAffineOp;
 pub struct LeftTransposeConv1dLinearOp;
-pub struct LeftTransposeConv2dLinearOp;
+pub struct LeftTransposeConv2dLinearOp { pub conv_shape: Conv2dShape }
 pub struct LeftTransposeConv3dLinearOp;
 pub struct OuterConv1dLinearOp;
-pub struct OuterConv2dLinearOp;
+pub struct OuterConv2dLinearOp { pub conv_shape: Conv2dShape }
 pub struct OuterConv3dLinearOp;
 pub struct Resample2dOp<ResampleF> { pub f: ResampleF }
 pub struct ReduceOp<ReduceF> { pub f: ReduceF, /*pub axes: _*/ }
@@ -105,12 +105,14 @@ pub struct Conv2dShape {
   pub src_space_axes:   [isize; 2],
   pub src_feature_axis: isize,
   pub src_batch_axis:   isize,
+  pub src_size:         [usize; 3],
   pub dst_space_axes:   [isize; 2],
   pub dst_feature_axis: isize,
   pub dst_batch_axis:   isize,
   pub ker_space_axes:   [isize; 2],
   pub ker_output_axis:  isize,
   pub ker_size:         [usize; 2],
+  pub features:         usize,
   pub dilation:         [usize; 2],
   pub stride:           [usize; 2],
   pub zero_pad:         [usize; 2],
@@ -126,12 +128,14 @@ impl Conv2dShape {
       src_space_axes:   [0, 1],
       src_feature_axis: 2,
       src_batch_axis:   3,
+      src_size:         [0, 0, 0],
       dst_space_axes:   [0, 1],
       dst_feature_axis: 2,
       dst_batch_axis:   3,
       ker_space_axes:   [0, 1],
       ker_output_axis:  3,
       ker_size:         [0, 0],
+      features:         0,
       dilation:         [1, 1],
       stride:           [1, 1],
       zero_pad:         [0, 0],
@@ -147,12 +151,14 @@ impl Conv2dShape {
       src_space_axes:   [1, 2],
       src_feature_axis: 0,
       src_batch_axis:   3,
+      src_size:         [0, 0, 0],
       dst_space_axes:   [1, 2],
       dst_feature_axis: 0,
       dst_batch_axis:   3,
       ker_space_axes:   [0, 1],
       ker_output_axis:  3,
       ker_size:         [0, 0],
+      features:         0,
       dilation:         [1, 1],
       stride:           [1, 1],
       zero_pad:         [0, 0],
@@ -168,12 +174,14 @@ impl Conv2dShape {
       src_space_axes:   [1, 2],
       src_feature_axis: 3,
       src_batch_axis:   0,
+      src_size:         [0, 0, 0],
       dst_space_axes:   [1, 2],
       dst_feature_axis: 3,
       dst_batch_axis:   0,
       ker_space_axes:   [0, 1],
       ker_output_axis:  3,
       ker_size:         [0, 0],
+      features:         0,
       dilation:         [1, 1],
       stride:           [1, 1],
       zero_pad:         [0, 0],
@@ -181,6 +189,7 @@ impl Conv2dShape {
   }
 
   pub fn calculate_output_size(&self, w_size: [usize; 4], x_size: [usize; 3]) -> [usize; 3] {
+    // TODO: this assumes NCHW layout.
     assert!(self.ker_size[0] >= 1);
     assert!(self.ker_size[1] >= 1);
     assert!(self.dilation[0] >= 1);
@@ -501,12 +510,16 @@ pub trait ConvAffineExt<A, X, Y, B>: ConvLinearExt<A, X, Y> {
   fn conv_add(self, conv_shape: Self::ConvShape, x: Val<X>, b: Val<B>) -> Val<Y>;
 }
 
-pub trait LeftTransposeConvLinearExt<A, Y, X> {
-  fn left_transpose_conv(self, y: Val<Y>) -> Val<X>;
+pub trait LeftTransposeConvLinearExt<A, X, Y> {
+  type ConvShape;
+
+  fn left_transpose_conv(self, conv_shape: Self::ConvShape, y: Val<Y>) -> Val<X>;
 }
 
-pub trait OuterConvLinearExt<Y, X, A> {
-  fn outer_conv(self, x: Val<X>) -> Val<A>;
+pub trait OuterConvLinearExt<A, X, Y> {
+  type ConvShape;
+
+  fn outer_conv(self, conv_shape: Self::ConvShape, x: Val<X>) -> Val<A>;
 }
 
 impl<A: 'static> FixOpExt<A> for FixOp {
