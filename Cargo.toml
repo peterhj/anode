@@ -11,7 +11,7 @@ path = "src/lib.rs"
 default = []
 cuda9 = ["cuda_blas/cuda9", "gpudevicemem/cuda9"]
 gpu = ["cuda", "cuda_blas", "cuda_coll", "cuda_dnn", "gpudevicemem"]
-mpi = ["mpich"]
+mpi = ["mpich", "superdata/mpi"]
 
 [build-dependencies]
 #bindgen = "^0.32"

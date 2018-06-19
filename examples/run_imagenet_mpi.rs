@@ -1,25 +1,64 @@
 extern crate anode;
 extern crate colorimage;
+extern crate mpich;
+extern crate rand;
 extern crate sharedmem;
 extern crate superdata;
 
 use anode::proc::*;
+use anode::utils::*;
 use colorimage::*;
+use mpich::*;
+use rand::prelude::*;
+use rand::rngs::mock::*;
 use sharedmem::*;
 use superdata::*;
 use superdata::datasets::imagenet::*;
 
+use std::cmp::{max, min};
 use std::path::{PathBuf};
 
-struct JoinPartitionsMPI<Data> {
+struct SplitShardsMPI<Data> {
+  part_len: usize,
+  part_off: usize,
+  all_data: Data,
+  proc:     DistProc,
+}
+
+impl<Data: RandomAccess> SplitShardsMPI<Data> {
+  pub fn new(all_data: Data, proc: DistProc) -> Self {
+    //let mut all_len = [data.len() as u64];
+    //proc.barrier();
+    //proc.allreduce_sum(&mut all_len);
+    //proc.barrier();
+    //let all_len = all_len[0] as usize;
+    let rdup_all_len = (all_data.len() + proc.num_ranks() - 1) / proc.num_ranks() * proc.num_ranks();
+    let rdup_part_len = rdup_all_len / proc.num_ranks();
+    let part_off = proc.rank() * rdup_part_len;
+    let part_len = min(all_data.len(), (proc.rank() + 1) * rdup_part_len) - part_off;
+    println!("DEBUG: SplitShardsMPI: rank: {} all len: {} part offset: {} part len: {}",
+        proc.rank(), all_data.len(), part_off, part_len);
+    //let rm_buf = MPIWindow::new(64 * 1024 * 1024, &mut MPIComm::world()).unwrap();
+    //println!("DEBUG:   rma window created");
+    SplitShardsMPI{
+      part_len: part_len,
+      part_off: part_off,
+      all_data: all_data,
+      proc:     proc,
+    }
+  }
+}
+
+struct JoinShardsMPI<Data> {
   all_len:  usize,
   part_len: usize,
   offset:   usize,
   data:     Data,
   proc:     DistProc,
+  //rm_buf:   MPIWindow<u8>,
 }
 
-impl<Data: RandomAccess> JoinPartitionsMPI<Data> {
+impl<Data: RandomAccess> JoinShardsMPI<Data> {
   pub fn new(data: Data, proc: DistProc) -> Self {
     let mut all_len = [data.len() as u64];
     proc.barrier();
@@ -29,9 +68,11 @@ impl<Data: RandomAccess> JoinPartitionsMPI<Data> {
     let rdup_all_len = (all_len + proc.num_ranks() - 1) / proc.num_ranks() * proc.num_ranks();
     let rdup_part_len = rdup_all_len / proc.num_ranks();
     let offset = proc.rank() * rdup_part_len;
-    println!("DEBUG: JoinPartitionsMPI: rank: {} all len: {} part len: {} offset: {} data len: {}",
+    println!("DEBUG: JoinShardsMPI: rank: {} all len: {} part len: {} offset: {} data len: {}",
         proc.rank(), all_len, rdup_part_len, offset, data.len());
-    JoinPartitionsMPI{
+    //let rm_buf = MPIWindow::new(64 * 1024 * 1024, &mut MPIComm::world()).unwrap();
+    //println!("DEBUG:   rma window created");
+    JoinShardsMPI{
       all_len:  all_len,
       part_len: rdup_part_len,
       offset:   offset,
@@ -41,7 +82,7 @@ impl<Data: RandomAccess> JoinPartitionsMPI<Data> {
   }
 }
 
-impl<Data: RandomAccess<Item=(SharedMem<u8>, u32)>> RandomAccess for JoinPartitionsMPI<Data> {
+impl<Data: RandomAccess<Item=(SharedMem<u8>, u32)>> RandomAccess for JoinShardsMPI<Data> {
   type Item = <Data as RandomAccess>::Item;
 
   fn len(&self) -> usize {
@@ -89,34 +130,82 @@ fn main() {
       let train_dataset = ImagenetTrainData::load_index(data_cfg.clone()).unwrap();
       println!("DEBUG: train len: {}", train_dataset.len());
 
-      let val_partition = val_dataset.partition(proc.rank(), proc.num_ranks());
-      println!("DEBUG: rank: {} val part len: {}", proc.rank(), val_partition.len());
+      /*let val_shard = val_dataset.partition(proc.rank(), proc.num_ranks());
+      println!("DEBUG: rank: {} val part len: {}", proc.rank(), val_shard.len());
 
-      let train_partition = train_dataset.partition(proc.rank(), proc.num_ranks());
-      println!("DEBUG: rank: {} train part len: {}", proc.rank(), train_partition.len());
+      let train_shard = train_dataset.partition(proc.rank(), proc.num_ranks());
+      println!("DEBUG: rank: {} train part len: {}", proc.rank(), train_shard.len());*/
 
+      let num_data_workers = 20;
       let batch_sz = 32;
+      let eval_interval = 5000;
 
-      let train_iter =
-          // TODO
-          //train_partition
-          JoinPartitionsMPI::new(train_partition, proc.clone())
-          .one_pass()
-          //.uniform_sample()
-          .batch_data(batch_sz);
+      // TODO: sharding.
+      let train_iter = {
+          let mut worker_rngs = Vec::with_capacity(num_data_workers);
+          for _ in 0 .. num_data_workers {
+            worker_rngs.push(SmallRng::from_rng(thread_rng()).unwrap());
+          }
+          async_join_data(num_data_workers, |worker_rank| {
+            let mut rng = worker_rngs[worker_rank].clone();
+            train_dataset.clone()
+              .uniform_random(&mut rng)
+              .map_data(|(value, label)| {
+                let maybe_image = match ColorImage::decode(&value) {
+                  Ok(image) => {
+                    //println!("DEBUG: image: dims: {} {}", image.width(), image.height());
+                    Some(image)
+                  }
+                  Err(_) => {
+                    println!("WARNING: image decode error");
+                    None
+                  }
+                };
+                (maybe_image, label)
+              })
+          })
+          .async_prefetch_data(batch_sz * max(2, num_data_workers))
+          .batch_data(batch_sz)
+      };
 
-      for (iter_nr, mut batch) in train_iter.enumerate() {
-        let maybe_image = match ColorImage::decode(&batch[0].0) {
-          Ok(image) => {
-            println!("DEBUG: image: dims: {} {}", image.width(), image.height());
-            Some(image)
+      let mut stopwatch = Stopwatch::new();
+      let mut images = Vec::with_capacity(batch_sz);
+      let mut labels = Vec::with_capacity(batch_sz);
+
+      for (iter_nr, batch) in train_iter.enumerate() {
+        images.clear();
+        labels.clear();
+        for (maybe_image, label) in batch.into_iter() {
+          images.push(maybe_image);
+          labels.push(label);
+        }
+        //break;
+        if (iter_nr + 1) % 100 == 0 {
+          println!("DEBUG: train: lap elapsed: {:.6} s", stopwatch.click().lap_time());
+        }
+        continue;
+
+        if (iter_nr + 1) % eval_interval == 0 {
+          // TODO: validation.
+          let val_shard = val_dataset.partition(proc.rank(), proc.num_ranks());
+          let shard_len = val_shard.len();
+          let val_iter =
+              val_shard
+              .one_pass()
+              .round_up_data(batch_sz)
+              .batch_data(batch_sz);
+          let mut shard_ctr = 0;
+          'eval_batch_loop: for eval_batch in val_iter {
+            // TODO
+            for idx in 0 .. batch_sz {
+              // TODO
+              shard_ctr += 1;
+              if shard_ctr == shard_len {
+                break 'eval_batch_loop;
+              }
+            }
           }
-          Err(_) => {
-            println!("WARNING: image decode error");
-            None
-          }
-        };
-        break;
+        }
       }
     }).unwrap().join();
   }
