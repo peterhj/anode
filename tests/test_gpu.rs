@@ -286,11 +286,22 @@ fn test_gpu_switch_adj() {
   flag.propose(t, |_| true);
   dx1.eval(t);
   dx2.eval(t);
+  let _ = dx1.get(t);
+  let _ = dx2.get(t);
   println!("DEBUG: OFF path (expect 1 alloc)");
   let t2 = txn();
   flag.propose(t2, |_| false);
   dx1.eval(t2);
   dx2.eval(t2);
+  let _ = dx1.get(t2);
+  let _ = dx2.get(t2);
+  println!("DEBUG: ON path (expect no allocs)");
+  let t3 = txn();
+  flag.propose(t3, |_| true);
+  dx1.eval(t3);
+  dx2.eval(t3);
+  let _ = dx1.get(t3);
+  let _ = dx2.get(t3);
 }
 
 #[test]
