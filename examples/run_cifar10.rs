@@ -29,7 +29,8 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   let image_var = zeros(([28, 28, 3], batch_sz));
   let label_var = zeros(batch_sz);
   let online = TCell::default();
-  let epsilon = TCell::new(0.0);
+  let avg_rate = TCell::new(0.0);
+  let epsilon: f32 = 1.0e-6;
 
   let x = image_var.dequantize(0.0_f32, 1.0_f32);
 
@@ -45,7 +46,7 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   params.push_val(b1.clone());
   //let x = Conv2dAffineOp::build_device_obatch_val(conv1, w1, x, b1);
   let x = w1.conv_add(conv1, x, b1);
-  let (x, x_mean, x_var, x_avg_mean, x_avg_var) = x.batch_normalize_2d([0, 1], online.clone(), epsilon.clone());
+  let (x, x_mean, x_var, x_avg_mean, x_avg_var) = x.batch_normalize_2d([0, 1], online.clone(), avg_rate.clone(), epsilon);
   online_stats.push_val(x_mean);
   online_stats.push_val(x_var);
   avg_stats.push_val(x_avg_mean);
@@ -54,7 +55,7 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
 
   // TODO
 
-  (image_var, label_var, online, epsilon, params, online_stats, avg_stats)
+  (image_var, label_var, online, avg_rate, params, online_stats, avg_stats)
 }
 
 fn main() {
@@ -95,7 +96,7 @@ fn main() {
     });
 
   // TODO
-  let (image_var, label_var, /*logit_var, loss_var,*/ online_var, epsilon_var, params, online_stats, avg_stats) = build_resnet(batch_sz);
+  let (image_var, label_var, /*logit_var, loss_var,*/ online_var, avg_rate_var, params, online_stats, avg_stats) = build_resnet(batch_sz);
   let mut loss: Sink = { unimplemented!() };
   //let mut loss = Sink::from(loss_var);
   let params = params.reversed();
@@ -114,7 +115,7 @@ fn main() {
     image_var.deserialize(batch, &mut image_batch);
     label_var.deserialize(batch, &mut label_batch);
     online_var.propose(batch, |_| true);
-    epsilon_var.propose(batch, |_| if iter_nr == 0 { 1.0 } else { 0.003 });
+    avg_rate_var.propose(batch, |_| if iter_nr == 0 { 1.0 } else { 0.003 });
     /*
     logit_var.eval(batch);
     grads.eval(batch);

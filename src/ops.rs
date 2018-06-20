@@ -69,6 +69,7 @@ pub struct Conv2dLinearOp { pub conv_shape: Conv2dShape }
 pub struct Conv2dAffineOp { pub conv_shape: Conv2dShape }
 pub struct Conv3dLinearOp;
 pub struct Conv3dAffineOp;
+pub struct Conv2dReduceBwdOp { pub conv_shape: Conv2dShape }
 pub struct LeftTransposeConv1dLinearOp;
 pub struct LeftTransposeConv2dLinearOp { pub conv_shape: Conv2dShape }
 pub struct LeftTransposeConv3dLinearOp;
@@ -386,12 +387,12 @@ pub trait BatchVariance2dOpExt<X, M> {
   fn build(axes: [isize; 2], x_: Val<X>) -> Val<M>;
 }
 
-pub trait BatchNormalize2dOpExt<X, M> {
-  fn build(axes: [isize; 2], x_: Val<X>, mean_: Val<M>, var_: Val<M>) -> Val<X>;
+pub trait BatchNormalize2dOpExt<T, X, M> {
+  fn build(axes: [isize; 2], epsilon: T, x_: Val<X>, mean_: Val<M>, var_: Val<M>) -> Val<X>;
 }
 
 pub trait BatchNormalizeExt<T, X, M> where T: Copy {
-  fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, epsilon: TCell<T>) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>);
+  fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, avg_rate: TCell<T>, epsilon: T) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>);
 }
 
 impl<T, X, M> BatchNormalizeExt<T, X, M> for Val<X>
@@ -400,36 +401,36 @@ where T: Copy,
       M: 'static,
       BatchMean2dOp: BatchMean2dOpExt<X, M>,
       BatchVariance2dOp: BatchVariance2dOpExt<X, M>,
-      BatchNormalize2dOp: BatchNormalize2dOpExt<X, M>,
+      BatchNormalize2dOp: BatchNormalize2dOpExt<T, X, M>,
       OnlineAverageOp: OnlineAverageOpExt<T, M>,
       ZerosSrcOp: ZerosSrcOpLikeExt<M> + ZerosSrcOpLikeExt<X>,
 {
-  fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, epsilon: TCell<T>) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>) {
+  fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, avg_rate: TCell<T>, epsilon: T) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>) {
     let mean_ = <BatchMean2dOp as BatchMean2dOpExt<X, M>>::build(axes, self.clone());
     let var_ = <BatchVariance2dOp as BatchVariance2dOpExt<X, M>>::build(axes, self.clone());
-    let avg_mean_ = zeros_like(mean_.clone()).online_average(epsilon.clone(), mean_.clone());
-    let avg_var_ = zeros_like(var_.clone()).online_average(epsilon.clone(), var_.clone());
-    let online_y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<X, M>>::build(axes, self.clone(), mean_.clone(), var_.clone());
-    let avg_y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<X, M>>::build(axes, self.clone(), avg_mean_.clone(), avg_var_.clone());
+    let avg_mean_ = zeros_like(mean_.clone()).online_average(avg_rate.clone(), mean_.clone());
+    let avg_var_ = zeros_like(var_.clone()).online_average(avg_rate.clone(), var_.clone());
+    let online_y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<T, X, M>>::build(axes, epsilon, self.clone(), mean_.clone(), var_.clone());
+    let avg_y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<T, X, M>>::build(axes, epsilon, self.clone(), avg_mean_.clone(), avg_var_.clone());
     let y_ = switch(online, avg_y_, online_y_);
     (y_, mean_, var_, avg_mean_, avg_var_)
   }
 }
 
 pub trait OnlineAverageOpExt<T, V> where T: Copy {
-  fn build(rate: TCell<T>, x_: Val<V>, y_: Val<V>) -> Val<V>;
+  fn build(avg_rate: TCell<T>, x_: Val<V>, y_: Val<V>) -> Val<V>;
 }
 
 pub trait OnlineAverageExt<T, V> where T: Copy {
-  fn online_average(self, rate: TCell<T>, x_: Val<V>) -> Val<V>;
+  fn online_average(self, avg_rate: TCell<T>, x_: Val<V>) -> Val<V>;
 }
 
 impl<T, V> OnlineAverageExt<T, V> for Val<V>
 where T: Copy,
       OnlineAverageOp: OnlineAverageOpExt<T, V>,
 {
-  fn online_average(self, rate: TCell<T>, x_: Val<V>) -> Val<V> {
-    <OnlineAverageOp as OnlineAverageOpExt<T, V>>::build(rate, x_, self)
+  fn online_average(self, avg_rate: TCell<T>, x_: Val<V>) -> Val<V> {
+    <OnlineAverageOp as OnlineAverageOpExt<T, V>>::build(avg_rate, x_, self)
   }
 }
 
@@ -510,6 +511,12 @@ pub trait ConvAffineExt<A, X, Y, B>: ConvLinearExt<A, X, Y> {
   fn conv_add(self, conv_shape: Self::ConvShape, x: Val<X>, b: Val<B>) -> Val<Y>;
 }
 
+pub trait ConvReduceBwdExt<X, B> {
+  type ConvShape;
+
+  fn conv_reduce_bwd(self, conv_shape: Self::ConvShape) -> Val<B>;
+}
+
 pub trait LeftTransposeConvLinearExt<A, X, Y> {
   type ConvShape;
 
@@ -520,6 +527,18 @@ pub trait OuterConvLinearExt<A, X, Y> {
   type ConvShape;
 
   fn outer_conv(self, conv_shape: Self::ConvShape, x: Val<X>) -> Val<A>;
+}
+
+pub trait PoolExt<X> {
+  type PoolShape;
+
+  fn pool(self, pool_shape: Self::PoolShape) -> Val<X>;
+}
+
+pub trait TransposePoolExt<X> {
+  type PoolShape;
+
+  fn transpose_pool(self, pool_shape: Self::PoolShape) -> Val<X>;
 }
 
 impl<A: 'static> FixOpExt<A> for FixOp {

@@ -1893,15 +1893,15 @@ impl BatchVariance2dOpExt<GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>
   }
 }
 
-impl BatchNormalize2dOpExt<GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> for BatchNormalize2dOp {
-  fn build(axes: [isize; 2], x_: Val<GPUDeviceOuterBatchArray3d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+impl BatchNormalize2dOpExt<f32, GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> for BatchNormalize2dOp {
+  fn build(axes: [isize; 2], epsilon: f32, x_: Val<GPUDeviceOuterBatchArray3d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
     // TODO
     unimplemented!();
   }
 }
 
 impl OnlineAverageOpExt<f32, GPUDeviceArray1d<f32>> for OnlineAverageOp {
-  fn build(rate: TCell<f32>, x_: Val<GPUDeviceArray1d<f32>>, y_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+  fn build(avg_rate: TCell<f32>, x_: Val<GPUDeviceArray1d<f32>>, y_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
     let ext = OpExt{
       make_val: {
         //Box::new(move || {
@@ -1911,7 +1911,7 @@ impl OnlineAverageOpExt<f32, GPUDeviceArray1d<f32>> for OnlineAverageOp {
       },
       apply: {
         let section = GPULazyAsyncSection::default();
-        let rate = rate.clone();
+        let avg_rate = avg_rate.clone();
         let x_ = x_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<f32>>| {
           output.set(txn, |mut y| {
@@ -1923,7 +1923,7 @@ impl OnlineAverageOpExt<f32, GPUDeviceArray1d<f32>> for OnlineAverageOp {
             let x = x_.get(txn);
             guard._wait(x.async_state());
             guard._wait(y.async_state());
-            let r = rate.get(txn);
+            let r = avg_rate.get(txn);
             y.as_view_mut().online_average(r, x.as_view(), conn);
           });
         })
@@ -2437,6 +2437,7 @@ where T: GPUDataTyped + CudnnDataTypeExt + PseudoField + ZeroBits + Copy + 'stat
       GPUDeviceArrayViewMut4d<T>: GPUTensorOps<T> + GPUBatchConvOps<T, T, T>,
       Val<GPUDeviceOuterBatchArray3d<T>>: OuterConvLinearExt<GPUDeviceArray4d<T>, GPUDeviceOuterBatchArray3d<T>, GPUDeviceOuterBatchArray3d<T>, ConvShape=Conv2dShape>,
       Val<GPUDeviceArray4d<T>>: LeftTransposeConvLinearExt<GPUDeviceArray4d<T>, GPUDeviceOuterBatchArray3d<T>, GPUDeviceOuterBatchArray3d<T>, ConvShape=Conv2dShape>,
+      Val<GPUDeviceOuterBatchArray3d<T>>: ConvReduceBwdExt<GPUDeviceOuterBatchArray3d<T>, GPUDeviceArray1d<T>, ConvShape=Conv2dShape>,
 {
   fn conv_add(self, conv_shape: Conv2dShape, x: Val<GPUDeviceOuterBatchArray3d<T>>, b: Val<GPUDeviceArray1d<T>>) -> Val<GPUDeviceOuterBatchArray3d<T>> {
     Conv2dAffineOp::build_device_obatch_val(conv_shape, self, x, b)
@@ -2457,6 +2458,7 @@ impl Conv2dAffineOp {
         GPUDeviceArrayViewMut4d<T>: GPUTensorOps<T> + GPUBatchConvOps<T, T, T>,
         Val<GPUDeviceOuterBatchArray3d<T>>: OuterConvLinearExt<GPUDeviceArray4d<T>, GPUDeviceOuterBatchArray3d<T>, GPUDeviceOuterBatchArray3d<T>, ConvShape=Conv2dShape>,
         Val<GPUDeviceArray4d<T>>: LeftTransposeConvLinearExt<GPUDeviceArray4d<T>, GPUDeviceOuterBatchArray3d<T>, GPUDeviceOuterBatchArray3d<T>, ConvShape=Conv2dShape>,
+        Val<GPUDeviceOuterBatchArray3d<T>>: ConvReduceBwdExt<GPUDeviceOuterBatchArray3d<T>, GPUDeviceArray1d<T>, ConvShape=Conv2dShape>,
   {
     let ext = OpExt{
       make_val: {
@@ -2575,7 +2577,7 @@ impl Conv2dAffineOp {
             // FIXME
             let adj_w_ = adj_y_.clone().outer_conv(conv_shape, x_.clone());
             let adj_x_ = w_.clone().left_transpose_conv(conv_shape, adj_y_.clone());
-            let adj_b_ = { unimplemented!() };
+            let adj_b_ = adj_y_.clone().conv_reduce_bwd(conv_shape);
             w_.put_adjoint(adj_w_, sink);
             x_.put_adjoint(adj_x_, sink);
             b_.put_adjoint(adj_b_, sink);
@@ -2862,6 +2864,125 @@ impl OuterConv2dLinearOp {
       inplace: None,
     };
     Val::from(Rc::new(F2Op::new(OuterConv2dLinearOp{conv_shape}, ext, y_, x_)))
+  }
+}
+
+impl<T> ConvReduceBwdExt<GPUDeviceOuterBatchArray3d<T>, GPUDeviceArray1d<T>> for Val<GPUDeviceOuterBatchArray3d<T>>
+where T: GPUDataTyped + CudnnDataTypeExt + PseudoField + ZeroBits + Copy + 'static,
+      CudnnHandle: CudnnConvExt<T, T, T, HostScalar=T>,
+      GPUDeviceArrayViewMut1d<T>: GPUBatchConvReduceOps<T, T, T>,
+{
+  type ConvShape = Conv2dShape;
+
+  fn conv_reduce_bwd(self, conv_shape: Conv2dShape) -> Val<GPUDeviceArray1d<T>> {
+    Conv2dReduceBwdOp::build_device_obatch_val(conv_shape, self)
+  }
+}
+
+impl Conv2dReduceBwdOp {
+  pub fn build_device_obatch_val<T>(
+      conv_shape: Conv2dShape,
+      x_: Val<GPUDeviceOuterBatchArray3d<T>>)
+  -> Val<GPUDeviceArray1d<T>>
+  // TODO: `ZeroBits` should not be necessary here.
+  where T: GPUDataTyped + CudnnDataTypeExt + PseudoField + ZeroBits + Copy + 'static,
+        CudnnHandle: CudnnConvExt<T, T, T, HostScalar=T>,
+        GPUDeviceArrayViewMut1d<T>: GPUBatchConvReduceOps<T, T, T>,
+  {
+    let ext = OpExt{
+      make_val: {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let b_size = conv_shape.features;
+            let b = GPUDeviceArray1d::zeros(b_size, conn);
+            guard._wait(b.async_state());
+            b
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceArray1d<T>>| {
+          if let Some((cap, token)) = output.write(txn) {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            match cap {
+              WriteCap::Assign => {
+                let x = x_.get(txn).as_view();
+                let mut b = output.get_mut(txn, token).as_view_mut();
+                guard._wait(x.async_state());
+                guard._wait(b.async_state());
+                let xconv_shape = XConvFullShape::Conv2d(Conv2dFullShape{
+                  ker_space_axes:   conv_shape.ker_space_axes,
+                  ker_output_axis:  conv_shape.ker_output_axis,
+                  src_space_axes:   conv_shape.src_space_axes,
+                  src_feature_axis: conv_shape.src_feature_axis,
+                  src_batch_axis:   conv_shape.src_batch_axis,
+                  // TODO: assumes NCHW layout.
+                  //src_size:         conv_shape.src_size,
+                  src_size:         [
+                    conv_shape.src_size[0],
+                    conv_shape.src_size[1],
+                    conv_shape.src_size[2],
+                    x.size()[3],
+                  ],
+                  dst_space_axes:   conv_shape.dst_space_axes,
+                  dst_feature_axis: conv_shape.dst_feature_axis,
+                  dst_batch_axis:   conv_shape.dst_batch_axis,
+                  dst_size:         x.size(),
+                  filter:   conv_shape.ker_size,
+                  dilation: conv_shape.dilation,
+                  stride:   conv_shape.stride,
+                  zero_pad: conv_shape.zero_pad,
+                  groups:   1,
+                  cross:    true,
+                });
+                let mut state = match query_gpu_conv_bwd_b_state(conn.device(), None, None, xconv_shape, conn.clone()) {
+                  None => panic!("invalid conv2d config"),
+                  Some(state) => state,
+                };
+                b.batch_conv2d_reduce_bwd(
+                    &mut state,
+                    x,
+                    conn.clone(),
+                );
+              }
+              WriteCap::Accumulate => unimplemented!(),
+            }
+          }
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: Some({
+        Box::new(move |_: Pass, _state: RefMut<_>, _feedfwd: &mut FeedFwd| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      adjoint: Some({
+        Box::new(move |_: Pass, _this: Val<GPUDeviceArray1d<T>>, _state: RefMut<_>, _sink: &mut Sink| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F1Op::new(Conv2dReduceBwdOp{conv_shape}, ext, x_)))
   }
 }
 
