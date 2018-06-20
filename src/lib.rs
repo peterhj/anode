@@ -103,9 +103,6 @@ pub struct RWVar(RVar);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeRef(u64);
 
-/*#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct ValRef(u64);*/
-
 pub fn txn() -> Txn {
   Txn::default()
 }
@@ -453,6 +450,7 @@ pub struct Torus3d<V=()> {
 
 pub struct Node {
   node: Rc<ANode>,
+  mode: WriteMode,
   xvar: RWVar,
   rvar: RVar,
   name: Option<String>,
@@ -463,6 +461,7 @@ impl Clone for Node {
     let rvar = RVar::default();
     Node{
       node: self.node.clone(),
+      mode: self.mode,
       xvar: self.xvar,
       rvar: rvar,
       name: self.name.clone(),
@@ -529,23 +528,25 @@ impl VIONodeExt for Node {
 }
 
 pub struct Val<V> {
-  node: Rc<ANode>,
-  op:   Rc<AOp<V>>,
-  //mode: WriteMode,
-  xvar: RWVar,
-  rvar: RVar,
-  name: Option<String>,
+  node:     Rc<ANode>,
+  op:       Rc<AOp<V>>,
+  //value:    RWVal<V>,
+  mode:     WriteMode,
+  xvar:     RWVar,
+  rvar:     RVar,
+  name:     Option<String>,
 }
 
 impl<V> Clone for Val<V> {
   fn clone(&self) -> Val<V> {
     let rvar = RVar::default();
     Val{
-      node: self.node.clone(),
-      op:   self.op.clone(),
-      xvar: self.xvar,
-      rvar: rvar,
-      name: self.name.clone(),
+      node:     self.node.clone(),
+      op:       self.op.clone(),
+      mode:     self.mode,
+      xvar:     self.xvar,
+      rvar:     rvar,
+      name:     self.name.clone(),
     }
   }
 }
@@ -554,22 +555,24 @@ impl<V> Val<V> where V: 'static {
   pub fn nowrap<Op>(op: Rc<Op>, xvar: RWVar) -> Self where Op: AOp<V> + 'static {
     let rvar = RVar::default();
     Val{
-      node: op.clone(),
-      op:   op,
-      xvar: xvar,
-      rvar: rvar,
-      name: None,
+      node:     op.clone(),
+      op:       op,
+      mode:     WriteMode::Exclusive,
+      xvar:     xvar,
+      rvar:     rvar,
+      name:     None,
     }
   }
 
   pub fn from<Op>(op: Rc<Op>) -> Self where Op: AOp<V> + 'static {
     let rvar = RVar::default();
     let val = Val{
-      node: op.clone(),
-      op:   op,
-      xvar: RWVar(rvar),
-      rvar: rvar,
-      name: None,
+      node:     op.clone(),
+      op:       op,
+      mode:     WriteMode::Exclusive,
+      xvar:     RWVar(rvar),
+      rvar:     rvar,
+      name:     None,
     };
     let val = WRAP_VAL_STACK.with(|stack| {
       let stack = stack.borrow();
@@ -590,22 +593,24 @@ impl<V> Val<V> where V: 'static {
     val
   }
 
-  pub fn to_node(&self) -> Node {
+  pub fn _to_node(&self) -> Node {
     Node{
-      node: self.node.clone(),
-      xvar: self.xvar,
+      node:     self.node.clone(),
+      mode:     self.mode,
+      xvar:     self.xvar,
       // NOTE: Should the node corresponding to a val share the same varkeys?
-      rvar: self.rvar,
-      name: self.name.clone(),
+      rvar:     self.rvar,
+      name:     self.name.clone(),
     }
   }
 
   pub fn into_node(self) -> Node {
     Node{
-      node: self.node.clone(),
-      xvar: self.xvar,
-      rvar: self.rvar,
-      name: self.name.clone(),
+      node:     self.node.clone(),
+      mode:     self.mode,
+      xvar:     self.xvar,
+      rvar:     self.rvar,
+      name:     self.name.clone(),
     }
   }
 
@@ -619,46 +624,50 @@ impl<V> Val<V> where V: 'static {
 
   pub fn _exact_clone(&self) -> Val<V> {
     Val{
-      node: self.node.clone(),
-      op:   self.op.clone(),
-      xvar: self.xvar,
-      rvar: self.rvar,
-      name: self.name.clone(),
+      node:     self.node.clone(),
+      op:       self.op.clone(),
+      mode:     self.mode,
+      xvar:     self.xvar,
+      rvar:     self.rvar,
+      name:     self.name.clone(),
     }
   }
 
   pub fn accumulate(&self) -> Val<V> {
-    self.op._value()._set_accumulate();
+    //self.op._value()._set_accumulate();
     let rvar = RVar::default();
     Val{
-      node: self.node.clone(),
-      op:   self.op.clone(),
-      xvar: RWVar(rvar),
-      rvar: rvar,
-      name: self.name.clone(),
+      node:     self.node.clone(),
+      op:       self.op.clone(),
+      mode:     WriteMode::Accumulate,
+      xvar:     RWVar(rvar),
+      rvar:     rvar,
+      name:     self.name.clone(),
     }
   }
 
   pub fn clobber(&self) -> Val<V> {
-    self.op._value()._set_clobber();
+    //self.op._value()._set_clobber();
     let rvar = RVar::default();
     Val{
-      node: self.node.clone(),
-      op:   self.op.clone(),
-      xvar: RWVar(rvar),
-      rvar: rvar,
-      name: self.name.clone(),
+      node:     self.node.clone(),
+      op:       self.op.clone(),
+      mode:     WriteMode::Clobber,
+      xvar:     RWVar(rvar),
+      rvar:     rvar,
+      name:     self.name.clone(),
     }
   }
 
   pub fn named(&self, name: &str) -> Val<V> {
     let rvar = RVar::default();
     Val{
-      node: self.node.clone(),
-      op:   self.op.clone(),
-      xvar: self.xvar,
-      rvar: rvar,
-      name: Some(name.to_owned()),
+      node:     self.node.clone(),
+      op:       self.op.clone(),
+      mode:     self.mode,
+      xvar:     self.xvar,
+      rvar:     rvar,
+      name:     Some(name.to_owned()),
     }
   }
 
@@ -708,7 +717,7 @@ impl<V> Val<V> where V: 'static {
   }
 
   pub fn write(&self, txn: Txn) -> Option<(WriteCap, WriteToken)> {
-    self.op._value().write(txn, self.xvar)
+    self.op._value().write(txn, self.xvar, self.mode)
   }
 
   pub fn get(&self, txn: Txn) -> RwLockReadGuard<V> {
@@ -722,7 +731,7 @@ impl<V> Val<V> where V: 'static {
   }
 
   pub fn set<F: FnOnce(RwLockWriteGuard<V>)>(&self, txn: Txn, f: F) {
-    self.op._value().set(txn, self.xvar, f);
+    self.op._value().set(txn, self.xvar, self.mode, f);
   }
 
   pub fn _make_value(&self) -> RWVal<V> {
@@ -772,17 +781,21 @@ impl<V> VIONodeExt for Val<V> where V: 'static {
 }
 
 pub struct OVal<V> {
-  val:  RWVal<V>,
-  rvar: RVar,
-  xvar: RWVar,
+  value:    RWVal<V>,
+  rvar:     RVar,
+  xvar:     RWVar,
+  mode:     WriteMode,
 }
 
 impl<V> OVal<V> where V: 'static {
-  pub fn new(rvar: RVar, xvar: RWVar, val: RWVal<V>) -> Self {
+  pub fn new(rvar: RVar, xvar: RWVar, /*mode: WriteMode,*/ value: RWVal<V>) -> Self {
     OVal{
-      val:  val,
-      rvar: rvar,
-      xvar: xvar,
+      value:    value,
+      rvar:     rvar,
+      xvar:     xvar,
+      // FIXME
+      mode:     WriteMode::Exclusive,
+      //mode:     mode,
     }
   }
 
@@ -791,23 +804,23 @@ impl<V> OVal<V> where V: 'static {
   }
 
   pub fn persist(&self, txn: Txn) {
-    self.val.persist(txn, self.xvar);
+    self.value.persist(txn, self.xvar);
   }
 
   pub fn write(&self, txn: Txn) -> Option<(WriteCap, WriteToken)> {
-    self.val.write(txn, self.xvar)
+    self.value.write(txn, self.xvar, self.mode)
   }
 
   pub fn get(&self, txn: Txn) -> RwLockReadGuard<V> {
-    self.val.get(txn, self.rvar)
+    self.value.get(txn, self.rvar)
   }
 
   pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwLockWriteGuard<V> {
-    self.val.get_mut(txn, self.xvar, token)
+    self.value.get_mut(txn, self.xvar, token)
   }
 
   pub fn set<F: FnOnce(RwLockWriteGuard<V>)>(&self, txn: Txn, f: F) {
-    self.val.set(txn, self.xvar, f);
+    self.value.set(txn, self.xvar, self.mode, f);
   }
 }
 
@@ -1248,7 +1261,7 @@ impl<'a> WriteToken<'a> {
 }
 
 pub struct RWValBuf<T> {
-  mode:         WriteMode,
+  //mode:         WriteMode,
   curr_txn:     Option<Txn>,
   l_consumers:  Mutex<HashSet<RVar>>,
   d_consumers:  HashSet<RVar>,
@@ -1260,7 +1273,7 @@ pub struct RWValBuf<T> {
 impl<T> Default for RWValBuf<T> {
   fn default() -> Self {
     RWValBuf{
-      mode:         WriteMode::Exclusive,
+      //mode:         WriteMode::Exclusive,
       curr_txn:     None,
       l_consumers:  Mutex::new(HashSet::new()),
       d_consumers:  HashSet::new(),
@@ -1347,7 +1360,7 @@ impl<T> RWVal<T> where T: 'static {
     }
   }
 
-  pub fn _set_accumulate(&self) {
+  /*pub fn _set_accumulate(&self) {
     let mut buf = self.buf.write();
     match buf.mode {
       WriteMode::Exclusive => {
@@ -1367,7 +1380,7 @@ impl<T> RWVal<T> where T: 'static {
       WriteMode::Clobber => {}
       _ => panic!(),
     }
-  }
+  }*/
 
   pub fn txn(&self) -> Option<Txn> {
     let buf = self.buf.read();
@@ -1421,7 +1434,7 @@ impl<T> RWVal<T> where T: 'static {
     buf.l_producers.insert(xvar);
   }
 
-  pub fn write(&self, txn: Txn, xvar: RWVar) -> Option<(WriteCap, WriteToken)> {
+  pub fn write(&self, txn: Txn, xvar: RWVar, mode: WriteMode) -> Option<(WriteCap, WriteToken)> {
     let mut buf = self.buf.write();
 
     let new_txn = buf.curr_txn.is_none() || buf.curr_txn.unwrap() != txn;
@@ -1433,7 +1446,7 @@ impl<T> RWVal<T> where T: 'static {
       buf.d_producers.clear();
     }
 
-    match buf.mode {
+    match mode {
       WriteMode::Exclusive => {
         match (buf.l_producers.len(), buf.d_producers.len()) {
           (0, 0) => {}
@@ -1485,7 +1498,7 @@ impl<T> RWVal<T> where T: 'static {
     }
 
     let first = buf.l_producers.is_empty();
-    let cap = match (buf.mode, first) {
+    let cap = match (mode, first) {
       (WriteMode::Accumulate, false) => WriteCap::Accumulate,
       (_, true) => WriteCap::Assign,
       _ => unreachable!(),
@@ -1548,8 +1561,8 @@ impl<T> RWVal<T> where T: 'static {
     RwLockWriteGuard::map(buf, |buf| buf.data.as_mut().unwrap())
   }
 
-  pub fn set<F>(&self, txn: Txn, xvar: RWVar, f: F) where F: FnOnce(RwLockWriteGuard<T>) {
-    if let Some((cap, token)) = self.write(txn, xvar) {
+  pub fn set<F>(&self, txn: Txn, xvar: RWVar, mode: WriteMode, f: F) where F: FnOnce(RwLockWriteGuard<T>) {
+    if let Some((cap, token)) = self.write(txn, xvar, mode) {
       match cap {
         WriteCap::Assign => {
           f(self.get_mut(txn, xvar, token));
@@ -1946,11 +1959,11 @@ impl<F, V, W> ANode for F1WrapOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 's
   }
 
   fn _pred_fwd(&self, pred_buf: &mut Vec<Node>) {
-    pred_buf.push(self.x_.to_node());
+    pred_buf.push(self.x_._to_node());
   }
 
   fn _pred_rev(&self, pred_buf: &mut Vec<Node>) {
-    pred_buf.push(self.x_.to_node());
+    pred_buf.push(self.x_._to_node());
   }
 
   fn _push(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
@@ -2083,11 +2096,11 @@ impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'st
   }
 
   fn _pred_fwd(&self, pred_buf: &mut Vec<Node>) {
-    pred_buf.push(self.x_.to_node());
+    pred_buf.push(self.x_._to_node());
   }
 
   fn _pred_rev(&self, pred_buf: &mut Vec<Node>) {
-    pred_buf.push(self.x_.to_node());
+    pred_buf.push(self.x_._to_node());
   }
 
   fn _push(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
@@ -2301,13 +2314,13 @@ impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, 
   }
 
   fn _pred_fwd(&self, pred_buf: &mut Vec<Node>) {
-    pred_buf.push(self.x1_.to_node());
-    pred_buf.push(self.x2_.to_node());
+    pred_buf.push(self.x1_._to_node());
+    pred_buf.push(self.x2_._to_node());
   }
 
   fn _pred_rev(&self, pred_buf: &mut Vec<Node>) {
-    pred_buf.push(self.x2_.to_node());
-    pred_buf.push(self.x1_.to_node());
+    pred_buf.push(self.x2_._to_node());
+    pred_buf.push(self.x1_._to_node());
   }
 
   fn _push(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
@@ -2483,15 +2496,15 @@ impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: '
   }
 
   fn _pred_fwd(&self, pred_buf: &mut Vec<Node>) {
-    pred_buf.push(self.x1_.to_node());
-    pred_buf.push(self.x2_.to_node());
-    pred_buf.push(self.x3_.to_node());
+    pred_buf.push(self.x1_._to_node());
+    pred_buf.push(self.x2_._to_node());
+    pred_buf.push(self.x3_._to_node());
   }
 
   fn _pred_rev(&self, pred_buf: &mut Vec<Node>) {
-    pred_buf.push(self.x3_.to_node());
-    pred_buf.push(self.x2_.to_node());
-    pred_buf.push(self.x1_.to_node());
+    pred_buf.push(self.x3_._to_node());
+    pred_buf.push(self.x2_._to_node());
+    pred_buf.push(self.x1_._to_node());
   }
 
   fn _push(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
@@ -2675,13 +2688,13 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, RWVal<V>: IOVal + 'static
   }
 
   fn _pred_fwd(&self, pred_buf: &mut Vec<Node>) {
-    pred_buf.push(self.x1_.to_node());
-    pred_buf.push(self.x2_.to_node());
+    pred_buf.push(self.x1_._to_node());
+    pred_buf.push(self.x2_._to_node());
   }
 
   fn _pred_rev(&self, pred_buf: &mut Vec<Node>) {
-    pred_buf.push(self.x2_.to_node());
-    pred_buf.push(self.x1_.to_node());
+    pred_buf.push(self.x2_._to_node());
+    pred_buf.push(self.x1_._to_node());
   }
 
   fn _push(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
@@ -2836,13 +2849,13 @@ impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'st
 
   fn _pred_fwd(&self, pred_buf: &mut Vec<Node>) {
     for x_ in self.xs_.iter() {
-      pred_buf.push(x_.to_node());
+      pred_buf.push(x_._to_node());
     }
   }
 
   fn _pred_rev(&self, pred_buf: &mut Vec<Node>) {
     for x_ in self.xs_.iter().rev() {
-      pred_buf.push(x_.to_node());
+      pred_buf.push(x_._to_node());
     }
   }
 

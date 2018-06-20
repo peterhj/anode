@@ -250,7 +250,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar) {
+      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
@@ -308,7 +308,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar) {
+      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
@@ -329,7 +329,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar) {
+      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
@@ -390,7 +390,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar) {
+      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
@@ -459,7 +459,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar) {
+      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
@@ -512,7 +512,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray4d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar) {
+      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
@@ -564,7 +564,7 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray1d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar) {
+      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
@@ -617,7 +617,7 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray3d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar) {
+      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
@@ -639,7 +639,7 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray3d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar) {
+      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
