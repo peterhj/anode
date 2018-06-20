@@ -198,7 +198,7 @@ fn test_gpu_switch() {
     println!("DEBUG: test: allocating...");
     GPUDeviceArray1d::<f32>::zeros(1024, conn)
   }));
-  let x2 = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+  let x2 = ones(Rc::new(|_, conn: GPUDeviceConn| {
     println!("DEBUG: test: allocating...");
     GPUDeviceArray1d::<f32>::zeros(1024, conn)
   }));
@@ -210,6 +210,49 @@ fn test_gpu_switch() {
   flag.propose(t, |_| true);
   y.eval(t);
   // TODO
+}
+
+#[test]
+fn test_gpu_switch_get() {
+  println!();
+  let flag = TCell::new(false);
+  let x1 = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+    println!("DEBUG: test: allocating...");
+    GPUDeviceArray1d::<f32>::zeros(1024, conn)
+  }));
+  let x2 = ones(Rc::new(|_, conn: GPUDeviceConn| {
+    println!("DEBUG: test: allocating...");
+    GPUDeviceArray1d::<f32>::zeros(1024, conn)
+  }));
+  let y = switch(flag.clone(), x1, x2);
+  let mut z = MemArray1d::<f32>::zeros(1024);
+  let t = txn();
+  flag.propose(t, |_| false);
+  y.eval(t);
+  let _ = y.get(t);
+  y.serialize(t, &mut z);
+  for k in 0 .. 1024 {
+    assert_eq!(z.as_view().as_slice()[k], 0.0);
+  }
+  println!("DEBUG: {:?}", &z.as_view().as_slice()[.. 10]);
+  let t = txn();
+  flag.propose(t, |_| true);
+  y.eval(t);
+  let _ = y.get(t);
+  y.serialize(t, &mut z);
+  for k in 0 .. 1024 {
+    assert_eq!(z.as_view().as_slice()[k], 1.0);
+  }
+  println!("DEBUG: {:?}", &z.as_view().as_slice()[.. 10]);
+  let t = txn();
+  flag.propose(t, |_| false);
+  y.eval(t);
+  let _ = y.get(t);
+  y.serialize(t, &mut z);
+  for k in 0 .. 1024 {
+    assert_eq!(z.as_view().as_slice()[k], 0.0);
+  }
+  println!("DEBUG: {:?}", &z.as_view().as_slice()[.. 10]);
 }
 
 #[test]

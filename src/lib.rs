@@ -211,7 +211,7 @@ pub trait AnalysisTags {
 
 pub trait ANode {
   fn _walk(&self) -> &Walk;
-  fn _io(&self) -> &IOVal;
+  //fn _io(&self) -> &IOVal;
   fn _analysis_tags(&self) -> &AnalysisTags { unimplemented!(); }
 
   fn _pred_fwd(&self, pred_buf: &mut Vec<Node>) { unimplemented!(); }
@@ -224,13 +224,13 @@ pub trait ANode {
   fn _pop_rev(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) { unimplemented!(); }
 
   fn _txn(&self) -> Option<Txn>;
-  fn _reset(&self);
-  fn _release(&self);
+  //fn _reset(&self);
+  //fn _release(&self);
   //fn _persist(&self, txn: Txn);
   //fn _prepare(&self, txn: Txn);
   //fn _cleanup(&self, txn: Txn);
   fn _eval_recursive(&self, txn: Txn, rvar: RVar, xvar: RWVar);
-  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode);
+  //fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode);
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>);
 }
 
@@ -238,12 +238,23 @@ pub trait AOp<V>: ANode {
   fn _pred_val_fwd(&self, pred_buf: &mut Vec<Rc<Any>>) { unimplemented!(); }
   fn _pred_val_rev(&self, pred_buf: &mut Vec<Rc<Any>>) { unimplemented!(); }
 
+  //fn _value(&self) -> &RWVal<V>;
+
+  // TODO(peter, 20180620)
+  /*fn _persist_output(&self, txn: Txn, output: OVal<V>) { unimplemented!(); }
+  fn _write_output(&self, txn: Txn, output: OVal<V>) -> Option<(WriteCap, WriteToken)> { unimplemented!(); }
+  fn _get_output(&self, txn: Txn, output: OVal<V>) -> RWLockReadGuard<V> { unimplemented!(); }
+  fn _get_mut_output(&self, txn: Txn, token: WriteToken, output: OVal<V>) -> RWLockWriteGuard<V> { unimplemented!(); }
+  fn _set_output(&self, txn: Txn, output: OVal<V>) { unimplemented!(); }*/
+  fn _value2(&self, txn: Txn, static_value: Option<RWVal<V>>) -> RWVal<V> { unimplemented!(); }
+  //fn _value3(&self, txn: Txn, static_value: Option<&RWVal<V>>) -> &RWVal<V> { unimplemented!(); }
+  fn _value3<'a>(&'a self, txn: Txn, static_value: Option<&'a RWVal<V>>) -> &'a RWVal<V> { unimplemented!(); }
+
   fn _make_value(&self) -> RWVal<V>;
-  fn _value(&self) -> &RWVal<V>;
 
   fn _build(&self, pred_vals: Vec<Rc<Any>>) -> Val<V> { unimplemented!(); }
 
-  fn _apply_output(&self, txn: Txn, val: OVal<V>);
+  fn _apply_output(&self, txn: Txn, output: OVal<V>);
 
   fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<V> { unimplemented!(); }
   //fn tangent(&self) -> Val<V>;
@@ -486,7 +497,8 @@ impl Node {
   }
 
   pub fn _apply(&self, txn: Txn) {
-    self.node._apply(txn, self.rvar, self.xvar, self.mode);
+    //self.node._apply(txn, self.rvar, self.xvar, self.mode);
+    self.node._apply_any(txn, self.rvar, self.xvar, self.mode, self.value.clone());
   }
 
   pub fn _eval_recursive(&self, txn: Txn) {
@@ -511,22 +523,29 @@ impl Node {
 
 impl IONodeExt for Node {
   fn serialize(&self, txn: Txn, dst: &mut Any) {
-    // FIXME
-    self.node._io()._serialize(txn, self.rvar, dst);
+    // FIXME(peter, 20180620)
+    unimplemented!();
+    //self.node._io()._serialize(txn, self.rvar, dst);
   }
 
   fn deserialize(&self, txn: Txn, src: &mut Any) {
-    self.node._io()._deserialize(txn, self.xvar, src);
+    // FIXME(peter, 20180620)
+    unimplemented!();
+    //self.node._io()._deserialize(txn, self.xvar, src);
   }
 }
 
 impl VIONodeExt for Node {
   fn _serialize_vec(&self, txn: Txn, off: usize, dst: &mut Any) -> usize {
-    self.node._io()._serialize_vec(txn, self.rvar, off, dst)
+    // FIXME(peter, 20180620)
+    unimplemented!();
+    //self.node._io()._serialize_vec(txn, self.rvar, off, dst)
   }
 
   fn _deserialize_vec(&self, txn: Txn, off: usize, src: &mut Any) -> usize {
-    self.node._io()._deserialize_vec(txn, self.rvar, self.xvar, off, src)
+    // FIXME(peter, 20180620)
+    unimplemented!();
+    //self.node._io()._deserialize_vec(txn, self.rvar, self.xvar, off, src)
   }
 }
 
@@ -546,7 +565,8 @@ impl<V> Clone for Val<V> where V: 'static {
     Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
-      value:    self.value.as_ref().map(|v| v._clone()),
+      //value:    self.value.as_ref().map(|v| v._clone()),
+      value:    self._clone_value(),
       mode:     self.mode,
       xvar:     self.xvar,
       rvar:     rvar,
@@ -618,7 +638,8 @@ impl<V> Val<V> where V: 'static {
     Node{
       node:     self.node.clone(),
       mode:     self.mode,
-      value:    Rc::new(self.value.as_ref().map(|v| v._clone())),
+      //value:    Rc::new(self.value.as_ref().map(|v| v._clone())),
+      value:    Rc::new(self._clone_value()),
       xvar:     self.xvar,
       // NOTE: Should the node corresponding to a val share the same varkeys?
       rvar:     self.rvar,
@@ -630,7 +651,8 @@ impl<V> Val<V> where V: 'static {
     Node{
       node:     self.node.clone(),
       mode:     self.mode,
-      value:    Rc::new(self.value.as_ref().map(|v| v._clone())),
+      //value:    Rc::new(self.value.as_ref().map(|v| v._clone())),
+      value:    Rc::new(self._clone_value()),
       xvar:     self.xvar,
       rvar:     self.rvar,
       name:     self.name.clone(),
@@ -650,7 +672,8 @@ impl<V> Val<V> where V: 'static {
       node:     self.node.clone(),
       op:       self.op.clone(),
       //value:    self.value._clone(),
-      value:    self.value.as_ref().map(|v| v._clone()),
+      //value:    self.value.as_ref().map(|v| v._clone()),
+      value:    self._clone_value(),
       mode:     self.mode,
       xvar:     self.xvar,
       rvar:     self.rvar,
@@ -665,7 +688,8 @@ impl<V> Val<V> where V: 'static {
       node:     self.node.clone(),
       op:       self.op.clone(),
       //value:    self.value._clone(),
-      value:    self.value.as_ref().map(|v| v._clone()),
+      //value:    self.value.as_ref().map(|v| v._clone()),
+      value:    self._clone_value(),
       mode:     WriteMode::Accumulate,
       xvar:     RWVar(rvar),
       rvar:     rvar,
@@ -680,7 +704,8 @@ impl<V> Val<V> where V: 'static {
       node:     self.node.clone(),
       op:       self.op.clone(),
       //value:    self.value._clone(),
-      value:    self.value.as_ref().map(|v| v._clone()),
+      //value:    self.value.as_ref().map(|v| v._clone()),
+      value:    self._clone_value(),
       mode:     WriteMode::Clobber,
       xvar:     RWVar(rvar),
       rvar:     rvar,
@@ -694,7 +719,8 @@ impl<V> Val<V> where V: 'static {
       node:     self.node.clone(),
       op:       self.op.clone(),
       //value:    self.value._clone(),
-      value:    self.value.as_ref().map(|v| v._clone()),
+      //value:    self.value.as_ref().map(|v| v._clone()),
+      value:    self._clone_value(),
       mode:     self.mode,
       xvar:     self.xvar,
       rvar:     rvar,
@@ -719,7 +745,8 @@ impl<V> Val<V> where V: 'static {
   }
 
   pub fn _apply(&self, txn: Txn) {
-    self.op._apply(txn, self.rvar, self.xvar, self.mode);
+    //self.op._apply(txn, self.rvar, self.xvar, self.mode);
+    self.op._apply_output(txn, OVal::with_value(self.rvar, self.xvar, self.mode, self._static_value()));
   }
 
   pub fn _eval_recursive(&self, txn: Txn) {
@@ -736,37 +763,69 @@ impl<V> Val<V> where V: 'static {
   }
 
   pub fn reset(&self) {
-    self.op._reset();
+    //self.op._reset();
+    self.value.as_ref().map(|v| v.reset());
   }
 
   pub fn release(&self) {
-    self.op._release();
+    //self.op._release();
+    self.value.as_ref().map(|v| v.release());
   }
 
   pub fn persist(&self, txn: Txn) {
-    self.op._value().persist(txn, self.xvar);
+    //self.op._value().persist(txn, self.xvar);
+    //self.op._persist_output(txn, self.xvar, self._clone_value());
+    let xvalue = self.op._value2(txn, self._static_value());
+    xvalue.persist(txn, self.xvar);
   }
 
   pub fn write(&self, txn: Txn) -> Option<(WriteCap, WriteToken)> {
-    self.op._value().write(txn, self.xvar, self.mode)
+    //self.op._value().write(txn, self.xvar, self.mode)
+    //self.op._write_output(txn, self.xvar, self.mode, self._clone_value());
+    //let xvalue = self.op._value2(txn, self._static_value());
+    let xvalue = self.op._value3(txn, self.value.as_ref());
+    xvalue.write(txn, self.xvar, self.mode)
   }
 
   pub fn get(&self, txn: Txn) -> RwLockReadGuard<V> {
-    //self.eval(txn);
-    self.op._value().get(txn, self.rvar)
+    //self.op._value().get(txn, self.rvar)
+    //self.op._get_output(txn, self.rvar, self._clone_value());
+    //let xvalue = self.op._value2(txn, self._static_value());
+    let xvalue = self.op._value3(txn, self.value.as_ref());
+    xvalue.get(txn, self.rvar)
   }
 
   pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwLockWriteGuard<V> {
-    //self.eval(txn);
-    self.op._value().get_mut(txn, self.xvar, token)
+    //self.op._value().get_mut(txn, self.xvar, token)
+    //self.op._get_mut_output(txn, self.xvar, token, self._clone_value());
+    //let xvalue = self.op._value2(txn, self._static_value());
+    let xvalue = self.op._value3(txn, self.value.as_ref());
+    xvalue.get_mut(txn, self.xvar, token)
   }
 
   pub fn set<F: FnOnce(RwLockWriteGuard<V>)>(&self, txn: Txn, f: F) {
-    self.op._value().set(txn, self.xvar, self.mode, f);
+    //self.op._value().set(txn, self.xvar, self.mode, f);
+    //self.op._set_output(txn, self.xvar, self.mode, self._clone_value());
+    let xvalue = self.op._value2(txn, self._static_value());
+    xvalue.set(txn, self.xvar, self.mode, f);
   }
 
-  pub fn _clone_value(&self) -> RWVal<V> {
-    self.op._value()._clone()
+  fn _value2(&self, txn: Txn) -> RWVal<V> {
+    self.op._value2(txn, self._static_value())
+  }
+
+  fn _value3<'a>(&'a self, txn: Txn) -> &'a RWVal<V> {
+    self.op._value3(txn, self.value.as_ref())
+  }
+
+  fn _clone_value(&self) -> Option<RWVal<V>> {
+    self.value.as_ref().map(|v| v._clone())
+  }
+
+  //pub fn _static_value(&self) -> RWVal<V> {
+  pub fn _static_value(&self) -> Option<RWVal<V>> {
+    //self.op._value()._clone()
+    self._clone_value()
   }
 
   pub fn _make_value(&self) -> RWVal<V> {
@@ -797,21 +856,21 @@ impl<V> Val<V> where V: 'static {
 
 impl<V> IONodeExt for Val<V> where V: 'static {
   fn serialize(&self, txn: Txn, dst: &mut Any) {
-    self.op._io()._serialize(txn, self.rvar, dst);
+    self._value3(txn)._serialize(txn, self.rvar, dst);
   }
 
   fn deserialize(&self, txn: Txn, src: &mut Any) {
-    self.op._io()._deserialize(txn, self.xvar, src);
+    self._value3(txn)._deserialize(txn, self.xvar, src);
   }
 }
 
 impl<V> VIONodeExt for Val<V> where V: 'static {
   fn _serialize_vec(&self, txn: Txn, off: usize, dst: &mut Any) -> usize {
-    self.op._io()._serialize_vec(txn, self.rvar, off, dst)
+    self._value3(txn)._serialize_vec(txn, self.rvar, off, dst)
   }
 
   fn _deserialize_vec(&self, txn: Txn, off: usize, src: &mut Any) -> usize {
-    self.op._io()._deserialize_vec(txn, self.rvar, self.xvar, off, src)
+    self._value3(txn)._deserialize_vec(txn, self.rvar, self.xvar, off, src)
   }
 }
 
@@ -826,6 +885,15 @@ impl<V> OVal<V> where V: 'static {
   pub fn new(rvar: RVar, xvar: RWVar, mode: WriteMode, value: RWVal<V>) -> Self {
     OVal{
       value:    Some(value),
+      rvar:     rvar,
+      xvar:     xvar,
+      mode:     mode,
+    }
+  }
+
+  pub fn with_value(rvar: RVar, xvar: RWVar, mode: WriteMode, value: Option<RWVal<V>>) -> Self {
+    OVal{
+      value:    value,
       rvar:     rvar,
       xvar:     xvar,
       mode:     mode,
@@ -1689,9 +1757,9 @@ impl<F, V> ANode for FSrcWrapOp<F, V> where RWVal<V>: IOVal + 'static {
     &self.base.stack
   }
 
-  fn _io(&self) -> &IOVal {
+  /*fn _io(&self) -> &IOVal {
     self.val_._op()._io()
-  }
+  }*/
 
   fn _analysis_tags(&self) -> &AnalysisTags {
     &self.base
@@ -1723,18 +1791,18 @@ impl<F, V> ANode for FSrcWrapOp<F, V> where RWVal<V>: IOVal + 'static {
     self.val_._op()._txn()
   }
 
-  fn _reset(&self) {
+  /*fn _reset(&self) {
     self.val_.reset();
   }
 
   fn _release(&self) {
     self.val_.release();
-  }
+  }*/
 
-  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
+  /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     //println!("DEBUG: FWrap: apply");
     self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
-  }
+  }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
     if let Some(value) = any_value.downcast_ref::<RWVal<V>>() {
@@ -1757,13 +1825,31 @@ impl<F, V> ANode for FSrcWrapOp<F, V> where RWVal<V>: IOVal + 'static {
 }
 
 impl<F, V> AOp<V> for FSrcWrapOp<F, V> where RWVal<V>: IOVal + 'static {
+  fn _value2(&self, txn: Txn, static_value: Option<RWVal<V>>) -> RWVal<V> {
+    if static_value.is_some() {
+      return static_value.as_ref().unwrap()._clone();
+    } else {
+      // FIXME
+      unimplemented!();
+    }
+  }
+
+  fn _value3<'a>(&'a self, txn: Txn, static_value: Option<&'a RWVal<V>>) -> &'a RWVal<V> {
+    if static_value.is_some() {
+      return static_value.unwrap();
+    } else {
+      // FIXME
+      unimplemented!();
+    }
+  }
+
   fn _make_value(&self) -> RWVal<V> {
     (self.ext.make_val)(self.cfg.borrow_mut())
   }
 
-  fn _value(&self) -> &RWVal<V> {
+  /*fn _value(&self) -> &RWVal<V> {
     self.val_._op()._value()
-  }
+  }*/
 
   fn _apply_output(&self, txn: Txn, val: OVal<V>) {
     (self.ext.apply)(txn, self.cfg.borrow_mut(), val);
@@ -1824,9 +1910,9 @@ impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
     &self.base.stack
   }
 
-  fn _io(&self) -> &IOVal {
+  /*fn _io(&self) -> &IOVal {
     &self.val
-  }
+  }*/
 
   fn _analysis_tags(&self) -> &AnalysisTags {
     &self.base
@@ -1860,13 +1946,13 @@ impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
     self.val.txn()
   }
 
-  fn _reset(&self) {
+  /*fn _reset(&self) {
     self._value().reset();
   }
 
   fn _release(&self) {
     self._value().release();
-  }
+  }*/
 
   /*fn _persist(&self, txn: Txn) {
     self.val.persist(txn);
@@ -1885,10 +1971,10 @@ impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
     }
   }*/
 
-  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
+  /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     //println!("DEBUG: FSrcOp: apply");
     self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
-  }
+  }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
     if let Some(value) = any_value.downcast_ref::<RWVal<V>>() {
@@ -1929,14 +2015,32 @@ impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
 }
 
 impl<F, V> AOp<V> for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
+  fn _value2(&self, txn: Txn, static_value: Option<RWVal<V>>) -> RWVal<V> {
+    if static_value.is_some() {
+      return static_value.as_ref().unwrap()._clone();
+    } else {
+      // FIXME
+      unimplemented!();
+    }
+  }
+
+  fn _value3<'a>(&'a self, txn: Txn, static_value: Option<&'a RWVal<V>>) -> &'a RWVal<V> {
+    if static_value.is_some() {
+      return static_value.unwrap();
+    } else {
+      // FIXME
+      unimplemented!();
+    }
+  }
+
   fn _make_value(&self) -> RWVal<V> {
     //(self.ext.make_val)()
     (self.ext.make_val)(self.cfg.borrow_mut())
   }
 
-  fn _value(&self) -> &RWVal<V> {
+  /*fn _value(&self) -> &RWVal<V> {
     &self.val
-  }
+  }*/
 
   fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<V> {
     match self.ext.tangent {
@@ -2004,9 +2108,9 @@ impl<F, V, W> ANode for F1WrapOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 's
     &self.base.stack
   }
 
-  fn _io(&self) -> &IOVal {
+  /*fn _io(&self) -> &IOVal {
     self.y_._op()._io()
-  }
+  }*/
 
   fn _analysis_tags(&self) -> &AnalysisTags {
     &self.base
@@ -2051,17 +2155,17 @@ impl<F, V, W> ANode for F1WrapOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 's
     self.y_._op()._txn()
   }
 
-  fn _reset(&self) {
+  /*fn _reset(&self) {
     self._value().reset();
   }
 
   fn _release(&self) {
     self._value().release();
-  }
+  }*/
 
-  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
+  /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
-  }
+  }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
     if let Some(value) = any_value.downcast_ref::<RWVal<W>>() {
@@ -2082,13 +2186,31 @@ impl<F, V, W> ANode for F1WrapOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 's
 }
 
 impl<F, V, W> AOp<W> for F1WrapOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'static {
+  fn _value2(&self, txn: Txn, static_value: Option<RWVal<W>>) -> RWVal<W> {
+    if static_value.is_some() {
+      return static_value.as_ref().unwrap()._clone();
+    } else {
+      // FIXME
+      unimplemented!();
+    }
+  }
+
+  fn _value3<'a>(&'a self, txn: Txn, static_value: Option<&'a RWVal<W>>) -> &'a RWVal<W> {
+    if static_value.is_some() {
+      return static_value.unwrap();
+    } else {
+      // FIXME
+      unimplemented!();
+    }
+  }
+
   fn _make_value(&self) -> RWVal<W> {
     (self.ext.make_val)(self.cfg.borrow_mut())
   }
 
-  fn _value(&self) -> &RWVal<W> {
+  /*fn _value(&self) -> &RWVal<W> {
     self.y_._op()._value()
-  }
+  }*/
 
   fn _apply_output(&self, txn: Txn, val: OVal<W>) {
     (self.ext.apply)(txn, self.cfg.borrow_mut(), val);
@@ -2149,9 +2271,9 @@ impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'st
     &self.base.stack
   }
 
-  fn _io(&self) -> &IOVal {
+  /*fn _io(&self) -> &IOVal {
     &self.y
-  }
+  }*/
 
   fn _analysis_tags(&self) -> &AnalysisTags {
     &self.base
@@ -2196,13 +2318,13 @@ impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'st
     self.y.txn()
   }
 
-  fn _reset(&self) {
+  /*fn _reset(&self) {
     self._value().reset();
   }
 
   fn _release(&self) {
     self._value().release();
-  }
+  }*/
 
   /*fn _persist(&self, txn: Txn) {
     self.y.persist(txn);
@@ -2222,10 +2344,10 @@ impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'st
     }
   }*/
 
-  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
+  /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     //println!("DEBUG: F1Op: apply");
     self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
-  }
+  }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
     if let Some(value) = any_value.downcast_ref::<RWVal<W>>() {
@@ -2248,14 +2370,32 @@ impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'st
 }
 
 impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'static {
+  fn _value2(&self, txn: Txn, static_value: Option<RWVal<W>>) -> RWVal<W> {
+    if static_value.is_some() {
+      return static_value.as_ref().unwrap()._clone();
+    } else {
+      // FIXME
+      unimplemented!();
+    }
+  }
+
+  fn _value3<'a>(&'a self, txn: Txn, static_value: Option<&'a RWVal<W>>) -> &'a RWVal<W> {
+    if static_value.is_some() {
+      return static_value.unwrap();
+    } else {
+      // FIXME
+      unimplemented!();
+    }
+  }
+
   fn _make_value(&self) -> RWVal<W> {
     //(self.ext.make_val)()
     (self.ext.make_val)(self.cfg.borrow_mut())
   }
 
-  fn _value(&self) -> &RWVal<W> {
+  /*fn _value(&self) -> &RWVal<W> {
     &self.y
-  }
+  }*/
 
   fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<W> {
     match self.ext.tangent {
@@ -2375,9 +2515,9 @@ impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, 
     &self.base.stack
   }
 
-  fn _io(&self) -> &IOVal {
+  /*fn _io(&self) -> &IOVal {
     &self.y
-  }
+  }*/
 
   fn _analysis_tags(&self) -> &AnalysisTags {
     &self.base
@@ -2427,13 +2567,13 @@ impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, 
     self.y.txn()
   }
 
-  fn _reset(&self) {
+  /*fn _reset(&self) {
     self._value().reset();
   }
 
   fn _release(&self) {
     self._value().release();
-  }
+  }*/
 
   /*fn _persist(&self, txn: Txn) {
     self.y.persist(txn);
@@ -2454,9 +2594,9 @@ impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, 
     }
   }*/
 
-  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
+  /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
-  }
+  }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
     if let Some(value) = any_value.downcast_ref::<RWVal<W>>() {
@@ -2478,14 +2618,32 @@ impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, 
 }
 
 impl<F, V1, V2, W> AOp<W> for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, RWVal<W>: IOVal + 'static {
+  fn _value2(&self, txn: Txn, static_value: Option<RWVal<W>>) -> RWVal<W> {
+    if static_value.is_some() {
+      return static_value.as_ref().unwrap()._clone();
+    } else {
+      // FIXME
+      unimplemented!();
+    }
+  }
+
+  fn _value3<'a>(&'a self, txn: Txn, static_value: Option<&'a RWVal<W>>) -> &'a RWVal<W> {
+    if static_value.is_some() {
+      return static_value.unwrap();
+    } else {
+      // FIXME
+      unimplemented!();
+    }
+  }
+
   fn _make_value(&self) -> RWVal<W> {
     //(self.ext.make_val)()
     (self.ext.make_val)(self.cfg.borrow_mut())
   }
 
-  fn _value(&self) -> &RWVal<W> {
+  /*fn _value(&self) -> &RWVal<W> {
     &self.y
-  }
+  }*/
 
   fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<W> {
     match self.ext.tangent {
@@ -2565,9 +2723,9 @@ impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: '
     &self.base.stack
   }
 
-  fn _io(&self) -> &IOVal {
+  /*fn _io(&self) -> &IOVal {
     &self.y
-  }
+  }*/
 
   fn _analysis_tags(&self) -> &AnalysisTags {
     &self.base
@@ -2622,13 +2780,13 @@ impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: '
     self.y.txn()
   }
 
-  fn _reset(&self) {
+  /*fn _reset(&self) {
     self._value().reset();
   }
 
   fn _release(&self) {
     self._value().release();
-  }
+  }*/
 
   /*fn _persist(&self, txn: Txn) {
     self.y.persist(txn);
@@ -2650,9 +2808,9 @@ impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: '
     }
   }*/
 
-  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
+  /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
-  }
+  }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
     if let Some(value) = any_value.downcast_ref::<RWVal<W>>() {
@@ -2675,14 +2833,32 @@ impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: '
 }
 
 impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 'static, V3: 'static, RWVal<W>: IOVal + 'static {
+  fn _value2(&self, txn: Txn, static_value: Option<RWVal<W>>) -> RWVal<W> {
+    if static_value.is_some() {
+      return static_value.as_ref().unwrap()._clone();
+    } else {
+      // FIXME
+      unimplemented!();
+    }
+  }
+
+  fn _value3<'a>(&'a self, txn: Txn, static_value: Option<&'a RWVal<W>>) -> &'a RWVal<W> {
+    if static_value.is_some() {
+      return static_value.unwrap();
+    } else {
+      // FIXME
+      unimplemented!();
+    }
+  }
+
   fn _make_value(&self) -> RWVal<W> {
     //(self.ext.make_val)()
     (self.ext.make_val)(self.cfg.borrow_mut())
   }
 
-  fn _value(&self) -> &RWVal<W> {
+  /*fn _value(&self) -> &RWVal<W> {
     &self.y
-  }
+  }*/
 
   fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<W> {
     match self.ext.tangent {
@@ -2761,13 +2937,13 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, RWVal<V>: IOVal + 'static
     &self.base.stack
   }
 
-  fn _io(&self) -> &IOVal {
+  /*fn _io(&self) -> &IOVal {
     // NOTE: `always_get` is valid here.
     match self.flag.always_get() {
       false => self.x1_._op()._io(),
       true  => self.x2_._op()._io(),
     }
-  }
+  }*/
 
   fn _analysis_tags(&self) -> &AnalysisTags {
     &self.base
@@ -2817,21 +2993,21 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, RWVal<V>: IOVal + 'static
     self.done.txn()
   }
 
-  fn _reset(&self) {
+  /*fn _reset(&self) {
     self.done.reset();
   }
 
   fn _release(&self) {
     self.done.reset();
-  }
+  }*/
 
-  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
+  /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     match self.flag.get(txn) {
       false => self._apply_output(txn, OVal::new(rvar, xvar, mode, self.x1_._op()._value()._clone())),
       true  => self._apply_output(txn, OVal::new(rvar, xvar, mode, self.x2_._op()._value()._clone())),
     }
     self.done.propose(txn, |_| ());
-  }
+  }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
     if let Some(value) = any_value.downcast_ref::<RWVal<V>>() {
@@ -2855,17 +3031,39 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, RWVal<V>: IOVal + 'static
 }
 
 impl<F, V> AOp<V> for FSwitchOp<F, V> where V: 'static, RWVal<V>: IOVal + 'static {
+  fn _value2(&self, txn: Txn, static_value: Option<RWVal<V>>) -> RWVal<V> {
+    if static_value.is_some() {
+      return static_value.as_ref().unwrap()._clone();
+    } else {
+      match self.flag.get(txn) {
+        false => self.x1_._value2(txn),
+        true  => self.x2_._value2(txn),
+      }
+    }
+  }
+
+  fn _value3<'a>(&'a self, txn: Txn, static_value: Option<&'a RWVal<V>>) -> &'a RWVal<V> {
+    if static_value.is_some() {
+      return static_value.unwrap();
+    } else {
+      match self.flag.get(txn) {
+        false => self.x1_._value3(txn),
+        true  => self.x2_._value3(txn),
+      }
+    }
+  }
+
   fn _make_value(&self) -> RWVal<V> {
     (self.ext.make_val)(self.cfg.borrow_mut())
   }
 
-  fn _value(&self) -> &RWVal<V> {
+  /*fn _value(&self) -> &RWVal<V> {
     // NOTE: `always_get` is valid here.
     match self.flag.always_get() {
       false => self.x1_._op()._value(),
       true  => self.x2_._op()._value(),
     }
-  }
+  }*/
 
   fn _apply_output(&self, txn: Txn, val: OVal<V>) {
     (self.ext.apply)(txn, self.cfg.borrow_mut(), val);
@@ -2933,9 +3131,9 @@ impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'st
     &self.base.stack
   }
 
-  fn _io(&self) -> &IOVal {
+  /*fn _io(&self) -> &IOVal {
     &self.y
-  }
+  }*/
 
   fn _analysis_tags(&self) -> &AnalysisTags {
     &self.base
@@ -2990,13 +3188,13 @@ impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'st
     self.y.txn()
   }
 
-  fn _reset(&self) {
+  /*fn _reset(&self) {
     self._value().reset();
   }
 
   fn _release(&self) {
     self._value().release();
-  }
+  }*/
 
   /*fn _persist(&self, txn: Txn) {
     self.y.persist(txn);
@@ -3018,9 +3216,9 @@ impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'st
     }
   }*/
 
-  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
+  /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
-  }
+  }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
     if let Some(value) = any_value.downcast_ref::<RWVal<W>>() {
@@ -3043,14 +3241,32 @@ impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'st
 }
 
 impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'static {
+  fn _value2(&self, txn: Txn, static_value: Option<RWVal<W>>) -> RWVal<W> {
+    if static_value.is_some() {
+      return static_value.as_ref().unwrap()._clone();
+    } else {
+      // FIXME
+      unimplemented!();
+    }
+  }
+
+  fn _value3<'a>(&'a self, txn: Txn, static_value: Option<&'a RWVal<W>>) -> &'a RWVal<W> {
+    if static_value.is_some() {
+      return static_value.unwrap();
+    } else {
+      // FIXME
+      unimplemented!();
+    }
+  }
+
   fn _make_value(&self) -> RWVal<W> {
     //(self.ext.make_val)()
     (self.ext.make_val)(self.cfg.borrow_mut())
   }
 
-  fn _value(&self) -> &RWVal<W> {
+  /*fn _value(&self) -> &RWVal<W> {
     &self.y
-  }
+  }*/
 
   fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<W> {
     if self.base.stack.push(pass) {

@@ -1955,7 +1955,8 @@ impl OnlineAverageOpExt<f32, GPUDeviceArray1d<f32>> for OnlineAverageOp {
       inplace: None,
     };
     //Val::from(Rc::new(F1WrapOp::new(OnlineAverageOp, ext, x_, y_)))
-    Val::with_value(Rc::new(F1WrapOp::new(OnlineAverageOp, ext, x_, y_.clone())), Some(y_._clone_value()))
+    let y = y_._static_value();
+    Val::with_value(Rc::new(F1WrapOp::new(OnlineAverageOp, ext, x_, y_)), y)
   }
 }
 

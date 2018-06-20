@@ -555,7 +555,7 @@ impl<A: 'static> FixOpExt<A> for FixOp {
         let x_ = x_.clone();
         //Box::new(move || {
         Box::new(move |state: RefMut<Self>| {
-          x_._op()._value()._clone()
+          unreachable!();
         })
       },
       apply: {
