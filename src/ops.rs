@@ -625,6 +625,7 @@ where A: 'static,
       }),
       inplace: None,
     };
-    Val::from(Rc::new(FSwitchOp::new(SwitchOp, ext, flag, off_, on_)))
+    //Val::from(Rc::new(FSwitchOp::new(SwitchOp, ext, flag, off_, on_)))
+    Val::with_value(Rc::new(FSwitchOp::new(SwitchOp, ext, flag, off_, on_)), None)
   }
 }

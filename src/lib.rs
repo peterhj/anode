@@ -230,7 +230,8 @@ pub trait ANode {
   //fn _prepare(&self, txn: Txn);
   //fn _cleanup(&self, txn: Txn);
   fn _eval_recursive(&self, txn: Txn, rvar: RVar, xvar: RWVar);
-  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar);
+  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode);
+  fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>);
 }
 
 pub trait AOp<V>: ANode {
@@ -449,22 +450,24 @@ pub struct Torus3d<V=()> {
 }
 
 pub struct Node {
-  node: Rc<ANode>,
-  mode: WriteMode,
-  xvar: RWVar,
-  rvar: RVar,
-  name: Option<String>,
+  node:     Rc<ANode>,
+  mode:     WriteMode,
+  value:    Rc<Any>,
+  xvar:     RWVar,
+  rvar:     RVar,
+  name:     Option<String>,
 }
 
 impl Clone for Node {
   fn clone(&self) -> Self {
     let rvar = RVar::default();
     Node{
-      node: self.node.clone(),
-      mode: self.mode,
-      xvar: self.xvar,
-      rvar: rvar,
-      name: self.name.clone(),
+      node:     self.node.clone(),
+      mode:     self.mode,
+      value:    self.value.clone(),
+      xvar:     self.xvar,
+      rvar:     rvar,
+      name:     self.name.clone(),
     }
   }
 }
@@ -483,7 +486,7 @@ impl Node {
   }
 
   pub fn _apply(&self, txn: Txn) {
-    self.node._apply(txn, self.rvar, self.xvar);
+    self.node._apply(txn, self.rvar, self.xvar, self.mode);
   }
 
   pub fn _eval_recursive(&self, txn: Txn) {
@@ -530,19 +533,20 @@ impl VIONodeExt for Node {
 pub struct Val<V> {
   node:     Rc<ANode>,
   op:       Rc<AOp<V>>,
-  //value:    RWVal<V>,
+  value:    Option<RWVal<V>>,
   mode:     WriteMode,
   xvar:     RWVar,
   rvar:     RVar,
   name:     Option<String>,
 }
 
-impl<V> Clone for Val<V> {
+impl<V> Clone for Val<V> where V: 'static {
   fn clone(&self) -> Val<V> {
     let rvar = RVar::default();
     Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
+      value:    self.value.as_ref().map(|v| v._clone()),
       mode:     self.mode,
       xvar:     self.xvar,
       rvar:     rvar,
@@ -556,7 +560,8 @@ impl<V> Val<V> where V: 'static {
     let rvar = RVar::default();
     Val{
       node:     op.clone(),
-      op:       op,
+      op:       op.clone(),
+      value:    Some(op._make_value()),
       mode:     WriteMode::Exclusive,
       xvar:     xvar,
       rvar:     rvar,
@@ -568,13 +573,15 @@ impl<V> Val<V> where V: 'static {
     let rvar = RVar::default();
     let val = Val{
       node:     op.clone(),
-      op:       op,
+      op:       op.clone(),
+      value:    Some(op._make_value()),
       mode:     WriteMode::Exclusive,
       xvar:     RWVar(rvar),
       rvar:     rvar,
       name:     None,
     };
-    let val = WRAP_VAL_STACK.with(|stack| {
+    // FIXME(peter, 20180619): disable wrappers while revamping ops.
+    /*let val = WRAP_VAL_STACK.with(|stack| {
       let stack = stack.borrow();
       if stack.is_empty() {
         val
@@ -589,7 +596,21 @@ impl<V> Val<V> where V: 'static {
           val
         }
       }
-    });
+    });*/
+    val
+  }
+
+  pub fn with_value<Op>(op: Rc<Op>, value: Option<RWVal<V>>) -> Self where Op: AOp<V> + 'static {
+    let rvar = RVar::default();
+    let val = Val{
+      node:     op.clone(),
+      op:       op.clone(),
+      value:    value,
+      mode:     WriteMode::Exclusive,
+      xvar:     RWVar(rvar),
+      rvar:     rvar,
+      name:     None,
+    };
     val
   }
 
@@ -597,6 +618,7 @@ impl<V> Val<V> where V: 'static {
     Node{
       node:     self.node.clone(),
       mode:     self.mode,
+      value:    Rc::new(self.value.as_ref().map(|v| v._clone())),
       xvar:     self.xvar,
       // NOTE: Should the node corresponding to a val share the same varkeys?
       rvar:     self.rvar,
@@ -608,6 +630,7 @@ impl<V> Val<V> where V: 'static {
     Node{
       node:     self.node.clone(),
       mode:     self.mode,
+      value:    Rc::new(self.value.as_ref().map(|v| v._clone())),
       xvar:     self.xvar,
       rvar:     self.rvar,
       name:     self.name.clone(),
@@ -626,6 +649,8 @@ impl<V> Val<V> where V: 'static {
     Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
+      //value:    self.value._clone(),
+      value:    self.value.as_ref().map(|v| v._clone()),
       mode:     self.mode,
       xvar:     self.xvar,
       rvar:     self.rvar,
@@ -639,6 +664,8 @@ impl<V> Val<V> where V: 'static {
     Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
+      //value:    self.value._clone(),
+      value:    self.value.as_ref().map(|v| v._clone()),
       mode:     WriteMode::Accumulate,
       xvar:     RWVar(rvar),
       rvar:     rvar,
@@ -652,6 +679,8 @@ impl<V> Val<V> where V: 'static {
     Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
+      //value:    self.value._clone(),
+      value:    self.value.as_ref().map(|v| v._clone()),
       mode:     WriteMode::Clobber,
       xvar:     RWVar(rvar),
       rvar:     rvar,
@@ -664,6 +693,8 @@ impl<V> Val<V> where V: 'static {
     Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
+      //value:    self.value._clone(),
+      value:    self.value.as_ref().map(|v| v._clone()),
       mode:     self.mode,
       xvar:     self.xvar,
       rvar:     rvar,
@@ -688,7 +719,7 @@ impl<V> Val<V> where V: 'static {
   }
 
   pub fn _apply(&self, txn: Txn) {
-    self.op._apply(txn, self.rvar, self.xvar);
+    self.op._apply(txn, self.rvar, self.xvar, self.mode);
   }
 
   pub fn _eval_recursive(&self, txn: Txn) {
@@ -732,6 +763,10 @@ impl<V> Val<V> where V: 'static {
 
   pub fn set<F: FnOnce(RwLockWriteGuard<V>)>(&self, txn: Txn, f: F) {
     self.op._value().set(txn, self.xvar, self.mode, f);
+  }
+
+  pub fn _clone_value(&self) -> RWVal<V> {
+    self.op._value()._clone()
   }
 
   pub fn _make_value(&self) -> RWVal<V> {
@@ -781,21 +816,19 @@ impl<V> VIONodeExt for Val<V> where V: 'static {
 }
 
 pub struct OVal<V> {
-  value:    RWVal<V>,
+  value:    Option<RWVal<V>>,
   rvar:     RVar,
   xvar:     RWVar,
   mode:     WriteMode,
 }
 
 impl<V> OVal<V> where V: 'static {
-  pub fn new(rvar: RVar, xvar: RWVar, /*mode: WriteMode,*/ value: RWVal<V>) -> Self {
+  pub fn new(rvar: RVar, xvar: RWVar, mode: WriteMode, value: RWVal<V>) -> Self {
     OVal{
-      value:    value,
+      value:    Some(value),
       rvar:     rvar,
       xvar:     xvar,
-      // FIXME
-      mode:     WriteMode::Exclusive,
-      //mode:     mode,
+      mode:     mode,
     }
   }
 
@@ -804,23 +837,28 @@ impl<V> OVal<V> where V: 'static {
   }
 
   pub fn persist(&self, txn: Txn) {
-    self.value.persist(txn, self.xvar);
+    assert!(self.value.is_some());
+    self.value.as_ref().unwrap().persist(txn, self.xvar);
   }
 
   pub fn write(&self, txn: Txn) -> Option<(WriteCap, WriteToken)> {
-    self.value.write(txn, self.xvar, self.mode)
+    assert!(self.value.is_some());
+    self.value.as_ref().unwrap().write(txn, self.xvar, self.mode)
   }
 
   pub fn get(&self, txn: Txn) -> RwLockReadGuard<V> {
-    self.value.get(txn, self.rvar)
+    assert!(self.value.is_some());
+    self.value.as_ref().unwrap().get(txn, self.rvar)
   }
 
   pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwLockWriteGuard<V> {
-    self.value.get_mut(txn, self.xvar, token)
+    assert!(self.value.is_some());
+    self.value.as_ref().unwrap().get_mut(txn, self.xvar, token)
   }
 
   pub fn set<F: FnOnce(RwLockWriteGuard<V>)>(&self, txn: Txn, f: F) {
-    self.value.set(txn, self.xvar, self.mode, f);
+    assert!(self.value.is_some());
+    self.value.as_ref().unwrap().set(txn, self.xvar, self.mode, f);
   }
 }
 
@@ -1693,9 +1731,17 @@ impl<F, V> ANode for FSrcWrapOp<F, V> where RWVal<V>: IOVal + 'static {
     self.val_.release();
   }
 
-  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
+  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     //println!("DEBUG: FWrap: apply");
-    self._apply_output(txn, OVal::new(rvar, xvar, self._value()._clone()));
+    self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
+  }
+
+  fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
+    if let Some(value) = any_value.downcast_ref::<RWVal<V>>() {
+      self._apply_output(txn, OVal::new(rvar, xvar, mode, value._clone()));
+    } else {
+      unreachable!();
+    }
   }
 
   fn _eval_recursive(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
@@ -1839,9 +1885,17 @@ impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
     }
   }*/
 
-  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
+  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     //println!("DEBUG: FSrcOp: apply");
-    self._apply_output(txn, OVal::new(rvar, xvar, self._value()._clone()));
+    self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
+  }
+
+  fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
+    if let Some(value) = any_value.downcast_ref::<RWVal<V>>() {
+      self._apply_output(txn, OVal::new(rvar, xvar, mode, value._clone()));
+    } else {
+      unreachable!();
+    }
   }
 
   fn _eval_recursive(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
@@ -2005,8 +2059,16 @@ impl<F, V, W> ANode for F1WrapOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 's
     self._value().release();
   }
 
-  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
-    self._apply_output(txn, OVal::new(rvar, xvar, self._value()._clone()));
+  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
+    self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
+  }
+
+  fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
+    if let Some(value) = any_value.downcast_ref::<RWVal<W>>() {
+      self._apply_output(txn, OVal::new(rvar, xvar, mode, value._clone()));
+    } else {
+      unreachable!();
+    }
   }
 
   fn _eval_recursive(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
@@ -2160,9 +2222,17 @@ impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'st
     }
   }*/
 
-  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
+  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     //println!("DEBUG: F1Op: apply");
-    self._apply_output(txn, OVal::new(rvar, xvar, self._value()._clone()));
+    self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
+  }
+
+  fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
+    if let Some(value) = any_value.downcast_ref::<RWVal<W>>() {
+      self._apply_output(txn, OVal::new(rvar, xvar, mode, value._clone()));
+    } else {
+      unreachable!();
+    }
   }
 
   fn _eval_recursive(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
@@ -2384,8 +2454,16 @@ impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, 
     }
   }*/
 
-  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
-    self._apply_output(txn, OVal::new(rvar, xvar, self._value()._clone()));
+  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
+    self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
+  }
+
+  fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
+    if let Some(value) = any_value.downcast_ref::<RWVal<W>>() {
+      self._apply_output(txn, OVal::new(rvar, xvar, mode, value._clone()));
+    } else {
+      unreachable!();
+    }
   }
 
   fn _eval_recursive(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
@@ -2572,8 +2650,16 @@ impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: '
     }
   }*/
 
-  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
-    self._apply_output(txn, OVal::new(rvar, xvar, self._value()._clone()));
+  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
+    self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
+  }
+
+  fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
+    if let Some(value) = any_value.downcast_ref::<RWVal<W>>() {
+      self._apply_output(txn, OVal::new(rvar, xvar, mode, value._clone()));
+    } else {
+      unreachable!();
+    }
   }
 
   fn _eval_recursive(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
@@ -2739,12 +2825,20 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, RWVal<V>: IOVal + 'static
     self.done.reset();
   }
 
-  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
+  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     match self.flag.get(txn) {
-      false => self._apply_output(txn, OVal::new(rvar, xvar, self.x1_._op()._value()._clone())),
-      true  => self._apply_output(txn, OVal::new(rvar, xvar, self.x2_._op()._value()._clone())),
+      false => self._apply_output(txn, OVal::new(rvar, xvar, mode, self.x1_._op()._value()._clone())),
+      true  => self._apply_output(txn, OVal::new(rvar, xvar, mode, self.x2_._op()._value()._clone())),
     }
     self.done.propose(txn, |_| ());
+  }
+
+  fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
+    if let Some(value) = any_value.downcast_ref::<RWVal<V>>() {
+      self._apply_output(txn, OVal::new(rvar, xvar, mode, value._clone()));
+    } else {
+      unreachable!();
+    }
   }
 
   fn _eval_recursive(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
@@ -2924,8 +3018,16 @@ impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'st
     }
   }*/
 
-  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
-    self._apply_output(txn, OVal::new(rvar, xvar, self._value()._clone()));
+  fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
+    self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
+  }
+
+  fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
+    if let Some(value) = any_value.downcast_ref::<RWVal<W>>() {
+      self._apply_output(txn, OVal::new(rvar, xvar, mode, value._clone()));
+    } else {
+      unreachable!();
+    }
   }
 
   fn _eval_recursive(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
