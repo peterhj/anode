@@ -940,6 +940,7 @@ pub fn sink<V: 'static>(sink_: Val<V>) -> Sink {
 }
 
 pub struct Sink {
+  volatile: HashSet<RWVar>,
   frozen:   HashSet<RWVar>,
   adj_map:  HashMap<RWVar, Vec<(Node, Rc<Any>)>>,
   join_map: HashMap<RWVar, (Node, Rc<Any>)>,
@@ -956,6 +957,7 @@ impl Sink {
 
   pub fn with_adj<V>(sink_: Val<V>, sink_adj: Val<V>) -> Self where V: 'static {
     let mut sink = Sink{
+      volatile: HashSet::new(),
       frozen:   HashSet::new(),
       adj_map:  HashMap::new(),
       join_map: HashMap::new(),
@@ -1020,13 +1022,24 @@ impl Sink {
                 Some(adj_op) => adj_op.clone(),
               }
             }).collect();
+            let mut no_volatile_adjs = true;
+            for adj_op in adj_ops.iter() {
+              if self.volatile.contains(&adj_op.var()) {
+                no_volatile_adjs = false;
+                break;
+              }
+            }
             // TODO: if none of `adj_ops` are volatile (TODO: define volatile),
             // transform this join into an in-place/accumulate op.
-            //let join = match <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build(adj_ops) {
-            for adj_op in adj_ops.iter() {
-              self.frozen.insert(adj_op.var());
-            }
-            let join = match <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build_inplace(adj_ops) {
+            // FIXME: also gate on an "explicitly allow non-volatile" flag.
+            let join = match if no_volatile_adjs {
+              for adj_op in adj_ops.iter() {
+                self.frozen.insert(adj_op.var());
+              }
+              <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build_inplace(adj_ops)
+            } else {
+              <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build(adj_ops)
+            } {
               None => panic!("FATAL: Sink::get_adj(): failed to sum adjoints"),
               Some(join) => join,
             };
