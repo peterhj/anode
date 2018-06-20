@@ -1903,7 +1903,7 @@ impl BatchMean2dOpExt<GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> fo
 }
 
 impl BatchVariance2dOpExt<GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> for BatchVariance2dOp {
-  fn build(axes: [isize; 2], x_: Val<GPUDeviceOuterBatchArray3d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+  fn build(axes: [isize; 2], x_: Val<GPUDeviceOuterBatchArray3d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
     // TODO
     unimplemented!();
   }

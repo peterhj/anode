@@ -391,7 +391,7 @@ pub trait BatchMean2dOpExt<X, M> {
 }
 
 pub trait BatchVariance2dOpExt<X, M> {
-  fn build(axes: [isize; 2], x_: Val<X>) -> Val<M>;
+  fn build(axes: [isize; 2], x_: Val<X>, mean_: Val<M>) -> Val<M>;
 }
 
 pub trait BatchNormalize2dOpExt<T, X, M> {
@@ -414,7 +414,7 @@ where T: Copy,
 {
   fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, avg_rate: TCell<T>, epsilon: T) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>) {
     let mean_ = <BatchMean2dOp as BatchMean2dOpExt<X, M>>::build(axes, self.clone());
-    let var_ = <BatchVariance2dOp as BatchVariance2dOpExt<X, M>>::build(axes, self.clone());
+    let var_ = <BatchVariance2dOp as BatchVariance2dOpExt<X, M>>::build(axes, self.clone(), mean_.clone());
     let avg_mean_ = zeros_like(mean_.clone()).online_average(avg_rate.clone(), mean_.clone());
     let avg_var_ = zeros_like(var_.clone()).online_average(avg_rate.clone(), var_.clone());
     let online_y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<T, X, M>>::build(axes, epsilon, self.clone(), mean_.clone(), var_.clone());
