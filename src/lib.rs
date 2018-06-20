@@ -68,7 +68,7 @@ pub mod ffi;
 pub mod ops;
 #[cfg(feature = "gpu")] pub mod ops_gpu;
 #[cfg(feature = "mpi")] pub mod ops_mpi;
-pub mod proc;
+#[cfg(feature = "mpi")] pub mod proc;
 pub mod templates;
 pub mod utils;
 

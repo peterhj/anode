@@ -2,19 +2,19 @@ extern crate anode;
 extern crate colorimage;
 extern crate gpudevicemem;
 extern crate memarray;
-extern crate mpich;
+#[cfg(feature = "mpi")] extern crate mpich;
 extern crate rand;
 extern crate sharedmem;
 extern crate superdata;
 
 use anode::*;
 use anode::ops::*;
-use anode::proc::*;
+#[cfg(feature = "mpi")] use anode::proc::*;
 use anode::utils::*;
 use colorimage::*;
 use gpudevicemem::array::*;
 use memarray::*;
-use mpich::*;
+#[cfg(feature = "mpi")] use mpich::*;
 use rand::prelude::*;
 use rand::rngs::mock::*;
 use sharedmem::*;
@@ -128,6 +128,11 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   unimplemented!();
 }
 
+#[cfg(not(feature = "mpi"))]
+fn main() {
+}
+
+#[cfg(feature = "mpi")]
 fn main() {
   let mut group = DistProcGroup::default();
   for node in group {
