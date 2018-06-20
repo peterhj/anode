@@ -281,4 +281,13 @@ fn test_gpu_online_avg() {
     assert_eq!(z.as_view().as_slice()[k], 0.25);
   }
   println!("DEBUG: {:?}", &z.as_view().as_slice()[.. 10]);
+  let t = txn();
+  alpha.propose(t, |_| 0.25);
+  y.eval(t);
+  let mut z = MemArray1d::<f32>::zeros(1024);
+  y.serialize(t, &mut z);
+  for k in 0 .. 1024 {
+    assert_eq!(z.as_view().as_slice()[k], 0.4375);
+  }
+  println!("DEBUG: {:?}", &z.as_view().as_slice()[.. 10]);
 }

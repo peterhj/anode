@@ -1,7 +1,12 @@
 extern crate anode;
 
-use anode::proc::*;
+#[cfg(feature = "mpi")] use anode::proc::*;
 
+#[cfg(not(feature = "mpi"))]
+fn main() {
+}
+
+#[cfg(feature = "mpi")]
 fn main() {
   let mut group = DistProcGroup::default();
   for node in group {
