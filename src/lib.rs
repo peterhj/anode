@@ -211,7 +211,6 @@ pub trait AnalysisTags {
 
 pub trait ANode {
   fn _walk(&self) -> &Walk;
-  //fn _io(&self) -> &IOVal;
   fn _analysis_tags(&self) -> &AnalysisTags { unimplemented!(); }
 
   fn _pred_fwd(&self, pred_buf: &mut Vec<Node>) { unimplemented!(); }
@@ -229,6 +228,10 @@ pub trait ANode {
   //fn _persist(&self, txn: Txn);
   //fn _prepare(&self, txn: Txn);
   //fn _cleanup(&self, txn: Txn);
+
+  //fn _io(&self) -> &IOVal;
+  fn _io<'a>(&'a self, txn: Txn, static_any_value: &'a Any) -> &'a IOVal;
+
   fn _eval_recursive(&self, txn: Txn, rvar: RVar, xvar: RWVar);
   //fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode);
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>);
@@ -239,38 +242,29 @@ pub trait AOp<V>: ANode {
   fn _pred_val_rev(&self, pred_buf: &mut Vec<Rc<Any>>) { unimplemented!(); }
 
   //fn _value(&self) -> &RWVal<V>;
-
-  // TODO(peter, 20180620)
-  /*fn _persist_output(&self, txn: Txn, output: OVal<V>) { unimplemented!(); }
-  fn _write_output(&self, txn: Txn, output: OVal<V>) -> Option<(WriteCap, WriteToken)> { unimplemented!(); }
-  fn _get_output(&self, txn: Txn, output: OVal<V>) -> RWLockReadGuard<V> { unimplemented!(); }
-  fn _get_mut_output(&self, txn: Txn, token: WriteToken, output: OVal<V>) -> RWLockWriteGuard<V> { unimplemented!(); }
-  fn _set_output(&self, txn: Txn, output: OVal<V>) { unimplemented!(); }*/
-  fn _value2(&self, txn: Txn, static_value: Option<RWVal<V>>) -> RWVal<V> { unimplemented!(); }
-  //fn _value3(&self, txn: Txn, static_value: Option<&RWVal<V>>) -> &RWVal<V> { unimplemented!(); }
-  fn _value3<'a>(&'a self, txn: Txn, static_value: Option<&'a RWVal<V>>) -> &'a RWVal<V> { unimplemented!(); }
+  fn _value2(&self, txn: Txn, static_value: Option<RWVal<V>>) -> RWVal<V>;
+  fn _value3<'a>(&'a self, txn: Txn, static_value: Option<&'a RWVal<V>>) -> &'a RWVal<V>;
 
   fn _make_value(&self) -> RWVal<V>;
-
   fn _build(&self, pred_vals: Vec<Rc<Any>>) -> Val<V> { unimplemented!(); }
-
   fn _apply_output(&self, txn: Txn, output: OVal<V>);
-
   fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<V> { unimplemented!(); }
   //fn tangent(&self) -> Val<V>;
-
   fn _pop_adjoint(&self, pass: Pass, this: Val<V>, sink: &mut Sink) { unimplemented!(); }
   //fn adjoint(&self, sink: &mut Sink) -> Val<V>;
-
   // TODO
   //fn _substitute(&self, subs: Vec<(RWVar, Rc<Any>)>) -> Option<(Rc<ANode>, Rc<AOp<V>>)> { None }
   fn _inplace(&self) -> Option<Val<V>> { None }
 }
 
-pub trait IOVal {
+pub trait AnyRWVal {
+  fn _txn(&self) -> Option<Txn>;
+  fn _persist(&self, txn: Txn, xvar: RWVar);
+}
+
+pub trait IOVal: AnyRWVal {
   fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any);
   fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any);
-
   fn _serialize_vec(&self, txn: Txn, rvar: RVar, off: usize, dst: &mut Any) -> usize;
   fn _deserialize_vec(&self, txn: Txn, rvar: RVar, xvar: RWVar, off: usize, src: &mut Any) -> usize;
 }
@@ -502,17 +496,13 @@ impl Node {
   }
 
   pub fn _eval_recursive(&self, txn: Txn) {
-    // FIXME(peter, 20180620)
-    unimplemented!();
-    /*if Some(txn) == self._value3_io(txn).txn() {
+    if Some(txn) == self.node._io(txn, &*self.value)._txn() {
       self.node._eval_recursive(txn, self.rvar, self.xvar);
-    }*/
+    }
   }
 
   pub fn persist(&self, txn: Txn) {
-    // TODO
-    unimplemented!();
-    //self.node._persist(txn, self.xvar);
+    self.node._io(txn, &*self.value)._persist(txn, self.xvar);
   }
 
   pub fn eval(&self, txn: Txn) {
@@ -527,29 +517,21 @@ impl Node {
 
 impl IONodeExt for Node {
   fn serialize(&self, txn: Txn, dst: &mut Any) {
-    // FIXME(peter, 20180620)
-    unimplemented!();
-    //self.node._io()._serialize(txn, self.rvar, dst);
+    self.node._io(txn, &*self.value)._serialize(txn, self.rvar, dst);
   }
 
   fn deserialize(&self, txn: Txn, src: &mut Any) {
-    // FIXME(peter, 20180620)
-    unimplemented!();
-    //self.node._io()._deserialize(txn, self.xvar, src);
+    self.node._io(txn, &*self.value)._deserialize(txn, self.xvar, src);
   }
 }
 
 impl VIONodeExt for Node {
   fn _serialize_vec(&self, txn: Txn, off: usize, dst: &mut Any) -> usize {
-    // FIXME(peter, 20180620)
-    unimplemented!();
-    //self.node._io()._serialize_vec(txn, self.rvar, off, dst)
+    self.node._io(txn, &*self.value)._serialize_vec(txn, self.rvar, off, dst)
   }
 
   fn _deserialize_vec(&self, txn: Txn, off: usize, src: &mut Any) -> usize {
-    // FIXME(peter, 20180620)
-    unimplemented!();
-    //self.node._io()._deserialize_vec(txn, self.rvar, self.xvar, off, src)
+    self.node._io(txn, &*self.value)._deserialize_vec(txn, self.rvar, self.xvar, off, src)
   }
 }
 
@@ -781,7 +763,7 @@ impl<V> Val<V> where V: 'static {
   pub fn persist(&self, txn: Txn) {
     //self.op._value().persist(txn, self.xvar);
     //self.op._persist_output(txn, self.xvar, self._clone_value());
-    let xvalue = self.op._value2(txn, self._static_value());
+    let xvalue = self.op._value3(txn, self.value.as_ref());
     xvalue.persist(txn, self.xvar);
   }
 
@@ -812,7 +794,7 @@ impl<V> Val<V> where V: 'static {
   pub fn set<F: FnOnce(RwLockWriteGuard<V>)>(&self, txn: Txn, f: F) {
     //self.op._value().set(txn, self.xvar, self.mode, f);
     //self.op._set_output(txn, self.xvar, self.mode, self._clone_value());
-    let xvalue = self.op._value2(txn, self._static_value());
+    let xvalue = self.op._value3(txn, self.value.as_ref());
     xvalue.set(txn, self.xvar, self.mode, f);
   }
 
@@ -941,7 +923,7 @@ pub struct FeedFwd {
 }
 
 pub fn sink<V: 'static>(sink_: Val<V>) -> Sink {
-  Sink::from(sink_)
+  Sink::new(sink_)
 }
 
 pub struct Sink {
@@ -951,7 +933,7 @@ pub struct Sink {
 }
 
 impl Sink {
-  pub fn from<V>(sink_: Val<V>) -> Self where V: 'static {
+  pub fn new<V>(sink_: Val<V>) -> Self where V: 'static {
     let sink_adj = match <OnesSrcOp as OnesSrcOpMaybeExt<V>>::maybe_build_like(sink_.clone()) {
       None => unimplemented!("FATAL: Sink: missing `ones` builder for sink val"),
       Some(adj) => adj,
@@ -1025,7 +1007,13 @@ impl Sink {
                 Some(adj_op) => adj_op.clone(),
               }
             }).collect();
-            let join = <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build(adj_ops).unwrap();
+            // TODO: if none of `adj_ops` are volatile (TODO: define volatile),
+            // transform this join into an in-place/accumulate op.
+            let join = match <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build(adj_ops) {
+            //let join = match <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build_inplace(adj_ops) {
+              None => panic!("FATAL: Sink::get_adj(): failed to sum adjoints"),
+              Some(join) => join,
+            };
             self.join_map.insert(var, (join.clone().into_node(), Rc::new(join.clone())));
             return Some(join);
           }
@@ -1412,10 +1400,19 @@ impl<T> ShareableRWVal<T> where T: 'static {
 }
 
 pub struct RWVal<T> {
-  //ref_:     ValRef,
   alloc:    Arc<Fn(Txn) -> T>,
   buf:      Arc<RwLock<RWValBuf<T>>>,
   borrow:   (),
+}
+
+impl<T> AnyRWVal for RWVal<T> where T: 'static {
+  fn _txn(&self) -> Option<Txn> {
+    self.txn()
+  }
+
+  fn _persist(&self, txn: Txn, xvar: RWVar) {
+    self.persist(txn, xvar);
+  }
 }
 
 impl<T> IOVal for RWVal<T> where T: 'static {
@@ -1440,7 +1437,6 @@ impl<T> RWVal<T> where T: 'static {
   pub fn from(alloc: Arc<Fn(Txn) -> T>) -> Self {
     let buf = Arc::new(RwLock::new(RWValBuf::default()));
     RWVal{
-      //ref_:     ValRef::default(),
       alloc:    alloc,
       buf:      buf,
       borrow:   (),
@@ -1465,7 +1461,6 @@ impl<T> RWVal<T> where T: 'static {
 
   pub fn _clone(&self) -> Self {
     RWVal{
-      //ref_:     self.ref_,
       alloc:    self.alloc.clone(),
       buf:      self.buf.clone(),
       borrow:   (),
@@ -1805,14 +1800,27 @@ impl<F, V> ANode for FSrcWrapOp<F, V> where RWVal<V>: IOVal + 'static {
     self.val_.release();
   }*/
 
+  fn _io<'a>(&'a self, txn: Txn, static_any_value: &'a Any) -> &'a IOVal {
+    if let Some(static_value) = static_any_value.downcast_ref::<Option<RWVal<V>>>() {
+      if static_value.is_some() {
+        return static_value.as_ref().unwrap();
+      } else {
+        // FIXME
+        unimplemented!();
+      }
+    } else {
+      unreachable!();
+    }
+  }
+
   /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     //println!("DEBUG: FWrap: apply");
     self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
   }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
-    if let Some(value) = any_value.downcast_ref::<RWVal<V>>() {
-      self._apply_output(txn, OVal::new(rvar, xvar, mode, value._clone()));
+    if let Some(value) = any_value.downcast_ref::<Option<RWVal<V>>>() {
+      self._apply_output(txn, OVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())));
     } else {
       unreachable!();
     }
@@ -1977,14 +1985,27 @@ impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
     }
   }*/
 
+  fn _io<'a>(&'a self, txn: Txn, static_any_value: &'a Any) -> &'a IOVal {
+    if let Some(static_value) = static_any_value.downcast_ref::<Option<RWVal<V>>>() {
+      if static_value.is_some() {
+        return static_value.as_ref().unwrap();
+      } else {
+        // FIXME
+        unimplemented!();
+      }
+    } else {
+      unreachable!();
+    }
+  }
+
   /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     //println!("DEBUG: FSrcOp: apply");
     self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
   }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
-    if let Some(value) = any_value.downcast_ref::<RWVal<V>>() {
-      self._apply_output(txn, OVal::new(rvar, xvar, mode, value._clone()));
+    if let Some(value) = any_value.downcast_ref::<Option<RWVal<V>>>() {
+      self._apply_output(txn, OVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())));
     } else {
       unreachable!();
     }
@@ -2169,13 +2190,26 @@ impl<F, V, W> ANode for F1WrapOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 's
     self._value().release();
   }*/
 
+  fn _io<'a>(&'a self, txn: Txn, static_any_value: &'a Any) -> &'a IOVal {
+    if let Some(static_value) = static_any_value.downcast_ref::<Option<RWVal<W>>>() {
+      if static_value.is_some() {
+        return static_value.as_ref().unwrap();
+      } else {
+        // FIXME
+        unimplemented!();
+      }
+    } else {
+      unreachable!();
+    }
+  }
+
   /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
   }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
-    if let Some(value) = any_value.downcast_ref::<RWVal<W>>() {
-      self._apply_output(txn, OVal::new(rvar, xvar, mode, value._clone()));
+    if let Some(value) = any_value.downcast_ref::<Option<RWVal<W>>>() {
+      self._apply_output(txn, OVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())));
     } else {
       unreachable!();
     }
@@ -2350,14 +2384,27 @@ impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'st
     }
   }*/
 
+  fn _io<'a>(&'a self, txn: Txn, static_any_value: &'a Any) -> &'a IOVal {
+    if let Some(static_value) = static_any_value.downcast_ref::<Option<RWVal<W>>>() {
+      if static_value.is_some() {
+        return static_value.as_ref().unwrap();
+      } else {
+        // FIXME
+        unimplemented!();
+      }
+    } else {
+      unreachable!();
+    }
+  }
+
   /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     //println!("DEBUG: F1Op: apply");
     self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
   }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
-    if let Some(value) = any_value.downcast_ref::<RWVal<W>>() {
-      self._apply_output(txn, OVal::new(rvar, xvar, mode, value._clone()));
+    if let Some(value) = any_value.downcast_ref::<Option<RWVal<W>>>() {
+      self._apply_output(txn, OVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())));
     } else {
       unreachable!();
     }
@@ -2600,13 +2647,26 @@ impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, 
     }
   }*/
 
+  fn _io<'a>(&'a self, txn: Txn, static_any_value: &'a Any) -> &'a IOVal {
+    if let Some(static_value) = static_any_value.downcast_ref::<Option<RWVal<W>>>() {
+      if static_value.is_some() {
+        return static_value.as_ref().unwrap();
+      } else {
+        // FIXME
+        unimplemented!();
+      }
+    } else {
+      unreachable!();
+    }
+  }
+
   /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
   }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
-    if let Some(value) = any_value.downcast_ref::<RWVal<W>>() {
-      self._apply_output(txn, OVal::new(rvar, xvar, mode, value._clone()));
+    if let Some(value) = any_value.downcast_ref::<Option<RWVal<W>>>() {
+      self._apply_output(txn, OVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())));
     } else {
       unreachable!();
     }
@@ -2814,13 +2874,26 @@ impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: '
     }
   }*/
 
+  fn _io<'a>(&'a self, txn: Txn, static_any_value: &'a Any) -> &'a IOVal {
+    if let Some(static_value) = static_any_value.downcast_ref::<Option<RWVal<W>>>() {
+      if static_value.is_some() {
+        return static_value.as_ref().unwrap();
+      } else {
+        // FIXME
+        unimplemented!();
+      }
+    } else {
+      unreachable!();
+    }
+  }
+
   /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
   }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
-    if let Some(value) = any_value.downcast_ref::<RWVal<W>>() {
-      self._apply_output(txn, OVal::new(rvar, xvar, mode, value._clone()));
+    if let Some(value) = any_value.downcast_ref::<Option<RWVal<W>>>() {
+      self._apply_output(txn, OVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())));
     } else {
       unreachable!();
     }
@@ -3007,6 +3080,19 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, RWVal<V>: IOVal + 'static
     self.done.reset();
   }*/
 
+  fn _io<'a>(&'a self, txn: Txn, static_any_value: &'a Any) -> &'a IOVal {
+    if let Some(static_value) = static_any_value.downcast_ref::<Option<RWVal<V>>>() {
+      if static_value.is_some() {
+        return static_value.as_ref().unwrap();
+      } else {
+        // FIXME
+        unimplemented!();
+      }
+    } else {
+      unreachable!();
+    }
+  }
+
   /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     match self.flag.get(txn) {
       false => self._apply_output(txn, OVal::new(rvar, xvar, mode, self.x1_._op()._value()._clone())),
@@ -3016,8 +3102,8 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, RWVal<V>: IOVal + 'static
   }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
-    if let Some(value) = any_value.downcast_ref::<RWVal<V>>() {
-      self._apply_output(txn, OVal::new(rvar, xvar, mode, value._clone()));
+    if let Some(value) = any_value.downcast_ref::<Option<RWVal<V>>>() {
+      self._apply_output(txn, OVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())));
     } else {
       unreachable!();
     }
@@ -3222,13 +3308,26 @@ impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'st
     }
   }*/
 
+  fn _io<'a>(&'a self, txn: Txn, static_any_value: &'a Any) -> &'a IOVal {
+    if let Some(static_value) = static_any_value.downcast_ref::<Option<RWVal<W>>>() {
+      if static_value.is_some() {
+        return static_value.as_ref().unwrap();
+      } else {
+        // FIXME
+        unimplemented!();
+      }
+    } else {
+      unreachable!();
+    }
+  }
+
   /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
   }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
-    if let Some(value) = any_value.downcast_ref::<RWVal<W>>() {
-      self._apply_output(txn, OVal::new(rvar, xvar, mode, value._clone()));
+    if let Some(value) = any_value.downcast_ref::<Option<RWVal<W>>>() {
+      self._apply_output(txn, OVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())));
     } else {
       unreachable!();
     }

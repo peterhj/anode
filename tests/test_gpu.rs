@@ -136,6 +136,16 @@ fn test_gpu_io_deserialize() {
 }
 
 #[test]
+fn test_gpu_io_deserialize_node() {
+  println!();
+  let x: Val<_> = src(GPUDeviceOuterBatchArray3d::<f32>::zeros_init(([32, 32, 3], 64)));
+  let src = MemArray4d::<f32>::zeros([32, 32, 3, 64]);
+  let t = txn();
+  x._to_node().deserialize(t, &mut ArrayIO::new(src));
+  x.eval(t);
+}
+
+#[test]
 fn test_gpu_io_serialize() {
   println!();
   let x = touch(GPUDeviceOuterBatchArray3d::<f32>::uniform_init(([32, 32, 3], 64), -1.0, 1.0, &mut thread_rng()));
@@ -145,6 +155,20 @@ fn test_gpu_io_serialize() {
   x.eval(t);
   let mut dst = ArrayIO::new(dst);
   x.serialize(t, &mut dst);
+  let dst = dst.take();
+  println!("DEBUG: {:?}", &dst.flat_view().unwrap().as_slice()[.. 10]);
+}
+
+#[test]
+fn test_gpu_io_serialize_node() {
+  println!();
+  let x = touch(GPUDeviceOuterBatchArray3d::<f32>::uniform_init(([32, 32, 3], 64), -1.0, 1.0, &mut thread_rng()));
+  let dst = MemArray4d::<f32>::zeros([32, 32, 3, 64]);
+  println!("DEBUG: {:?}", &dst.flat_view().unwrap().as_slice()[.. 10]);
+  let t = txn();
+  x.eval(t);
+  let mut dst = ArrayIO::new(dst);
+  x._to_node().serialize(t, &mut dst);
   let dst = dst.take();
   println!("DEBUG: {:?}", &dst.flat_view().unwrap().as_slice()[.. 10]);
 }
@@ -263,6 +287,19 @@ fn test_gpu_adj() {
   }));
   let mut x_sink = sink(x.clone());
   let dx = x.adjoint(&mut x_sink);
+}
+
+#[test]
+fn test_gpu_adj_sumjoin() {
+  println!();
+  let x = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+    //GPUDeviceOuterBatchArray1d::<f32>::zeros(1024, 1, conn)
+    GPUDeviceScalar::<f32>::zeros((), conn)
+  }));
+  //let y = sum(vec![x.clone(), x.clone()]);
+  let y = x.clone() + x.clone();
+  let mut y_sink = sink(y.clone());
+  let dx = x.adjoint(&mut y_sink);
 }
 
 #[test]
