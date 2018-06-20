@@ -1285,8 +1285,16 @@ impl SumJoinOp {
       }),
       // TODO
       tangent: None,
-      // TODO
-      adjoint: None,
+      adjoint: Some({
+        let inputs_ = inputs_.clone();
+        Box::new(move |_: Pass, y_: Val<A>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            for i in 0 .. inputs_.len() {
+              inputs_[i].put_adjoint(adj_y_.clone(), sink);
+            }
+          }
+        })
+      }),
       inplace: None,
     };
     Rc::new(FJoinOp::new(SumJoinOp, ext, inputs_))
@@ -1363,8 +1371,16 @@ impl SumJoinOp {
       }),
       // TODO
       tangent: None,
-      // TODO
-      adjoint: None,
+      adjoint: Some({
+        let inputs_ = inputs_.clone();
+        Box::new(move |_: Pass, y_: Val<A>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            for i in 0 .. inputs_.len() {
+              inputs_[i].put_adjoint(adj_y_.clone(), sink);
+            }
+          }
+        })
+      }),
       inplace: None,
     };
     Rc::new(FJoinOp::new(SumJoinOp, ext, inputs_))

@@ -55,8 +55,13 @@ pub struct FlatMapInplaceOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatJoinOp<FlatJoin> { pub f: FlatJoin }
 pub struct FlatLinearOp;
 pub struct BatchMean2dOp;
+pub struct BatchMean2dBwdOp;
 pub struct BatchVariance2dOp;
+pub struct BatchVariance2dBwdOp;
 pub struct BatchNormalize2dOp;
+pub struct BatchNormalize2dBwdXOp;
+pub struct BatchNormalize2dBwdMeanOp;
+pub struct BatchNormalize2dBwdVarianceOp;
 pub struct OnlineAverageOp;
 pub struct LinearOp;
 pub struct AffineOp;
@@ -76,6 +81,8 @@ pub struct LeftTransposeConv3dLinearOp;
 pub struct OuterConv1dLinearOp;
 pub struct OuterConv2dLinearOp { pub conv_shape: Conv2dShape }
 pub struct OuterConv3dLinearOp;
+pub struct Pool2dOp;
+pub struct TransposePool2dOp;
 pub struct Resample2dOp<ResampleF> { pub f: ResampleF }
 pub struct ReduceOp<ReduceF> { pub f: ReduceF, /*pub axes: _*/ }
 

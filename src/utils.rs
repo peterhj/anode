@@ -8,6 +8,7 @@ use rand::prelude::*;
 use rand::distributions::{Distribution, Uniform, Normal};
 use time::*;
 
+use std::f32;
 use std::rc::{Rc};
 
 pub fn duration_secs(d: Duration) -> f64 {
@@ -51,6 +52,18 @@ impl Stopwatch {
   pub fn lap_time(&self) -> f64 {
     duration_secs(self.prev_lap.to(self.curr_lap))
   }
+}
+
+pub fn _arg_max(xs: &[f32]) -> usize {
+  let mut top_x = f32::NEG_INFINITY;
+  let mut top_k = 0;
+  for (k, &x) in xs.iter().enumerate() {
+    if x > top_x {
+      top_x = x;
+      top_k = k;
+    }
+  }
+  top_k
 }
 
 pub trait ZerosInit<Shape> {

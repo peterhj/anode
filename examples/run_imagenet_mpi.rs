@@ -116,13 +116,15 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   let mut online_stats = NodeVec::default();
   let mut avg_stats = NodeVec::default();
 
-  /*let image_var = zeros(([3, 224, 224], batch_sz));
+  /*
+  let image_var = zeros(([224, 224, 3], batch_sz));
   let label_var = zeros(batch_sz);
   let online = TCell::default();
   let epsilon = TCell::new(0.0);
 
   let x = image_var.dequantize(0.0_f32, 1.0_f32);
-  //let x = x.transpose_pixels_to_planes();*/
+  //let x = x.transpose_pixels_to_planes();
+  */
 
   // TODO
   unimplemented!();
@@ -176,8 +178,10 @@ fn main() {
               .uniform_random(&mut rng)
               .map_data(|(value, label)| {
                 let maybe_image = match ColorImage::decode(&value) {
-                  Ok(image) => {
+                  Ok(mut image) => {
                     //println!("DEBUG: image: dims: {} {}", image.width(), image.height());
+                    // TODO: data augmentation.
+                    image.resize(224, 224);
                     Some(image)
                   }
                   Err(_) => {
@@ -185,7 +189,6 @@ fn main() {
                     None
                   }
                 };
-                // TODO: data augmentation.
                 (maybe_image, label)
               })
           })
@@ -197,9 +200,10 @@ fn main() {
       let mut images = Vec::with_capacity(batch_sz);
       let mut labels = Vec::with_capacity(batch_sz);
 
-      let mut image_batch = MemArray4d::<u8>::zeros([3, 224, 224, batch_sz]);
+      let mut image_batch = MemArray4d::<u8>::zeros([224, 224, 3, batch_sz]);
       let mut label_batch = MemArray1d::<u32>::zeros(batch_sz);
       let mut logit_batch = MemArray2d::<f32>::zeros([num_classes, batch_sz]);
+      let mut loss: f32 = 0.0;
 
       for (iter_nr, batch) in train_iter.enumerate() {
         images.clear();
@@ -212,9 +216,22 @@ fn main() {
 
         let batch_txn = txn();
         // TODO: evaluate the batch.
+        /*
+        image_var.deserialize(batch_txn, &mut image_batch);
+        label_var.deserialize(batch_txn, &mut label_batch);
+        online_var.propose(batch_txn, |_| true);
+        loss_var.eval(batch_txn);
+        grads.eval(batch_txn);
+        logit_var.serialize(batch_txn, &mut logit_batch);
+        loss_var.serialize(batch_txn, &mut loss);
+        */
 
+        let mut acc_ct = 0;
         for idx in 0 .. batch_sz {
-          // TODO: calculate accuracy stats.
+          let k = _arg_max(&logit_batch.flat_view().unwrap().as_slice()[num_classes * idx .. num_classes * (idx + 1)]);
+          if k == labels[idx] as _ {
+            acc_ct += 1;
+          }
         }
 
         let step_txn = txn();
@@ -222,7 +239,12 @@ fn main() {
         // TODO: update moving average stats.
 
         if (iter_nr + 1) % 100 == 0 {
-          println!("DEBUG: train: lap elapsed: {:.6} s", stopwatch.click().lap_time());
+          println!("DEBUG: train: iters: {} acc: {:.4} ({}/{}) loss: {:.6} elapsed: {:.6} s",
+              iter_nr + 1,
+              acc_ct as f64 / batch_sz as f64,
+              acc_ct, batch_sz,
+              loss,
+              stopwatch.click().lap_time());
         }
         continue;
 

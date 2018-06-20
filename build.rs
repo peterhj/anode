@@ -46,6 +46,7 @@ fn main() {
       .flag("-Xcompiler").flag("-Werror")
       .include("routines_gpu")
       .include("/usr/local/cuda/include")
+      .file("routines_gpu/batch_norm.cu")
       .file("routines_gpu/flat_join.cu")
       .file("routines_gpu/flat_map.cu")
       .compile("libanode_routines_gpu.a");
