@@ -1081,11 +1081,17 @@ where T: PseudoField + Copy + 'static,
             let mut guard = section.enter(conn.clone());
             match cap {
               WriteCap::Assign => {
+                //println!("DEBUG: OnesSrcOp: apply: assign");
                 let mut y = output.get_mut(txn, token);
                 guard._wait(y.async_state());
                 y.as_view_mut().set_constant(T::one(), conn);
               }
-              _ => unimplemented!(),
+              WriteCap::Accumulate => {
+                //println!("DEBUG: OnesSrcOp: apply: accumulate");
+                let mut y = output.get_mut(txn, token);
+                guard._wait(y.async_state());
+                y.as_view_mut().add_constant_inplace(T::one(), conn);
+              }
             }
           }
         })
@@ -1166,6 +1172,11 @@ where T: PseudoField + Copy + 'static,
                 guard._wait(y.async_state());
                 y.as_view_mut().set_constant(T::one(), conn);
               }
+              WriteCap::Accumulate => {
+                let mut y = output.get_mut(txn, token);
+                guard._wait(y.async_state());
+                y.as_view_mut().add_constant_inplace(T::one(), conn);
+              }
               _ => unimplemented!(),
             }
           }
@@ -1214,8 +1225,8 @@ impl<T: ZeroBits + 'static> SumJoinOpExt<GPUDeviceScalar<T>> for SumJoinOp
   }
 
   fn build_inplace(xs_: Vec<Val<GPUDeviceScalar<T>>>) -> Val<GPUDeviceScalar<T>> {
-    // TODO
-    unimplemented!();
+    println!("DEBUG: SumJoinOp: build inplace");
+    SumJoinOp::build_inplace_device_op(xs_)
   }
 }
 
@@ -1227,8 +1238,8 @@ impl<T: ZeroBits + 'static> SumJoinOpExt<GPUDeviceArray1d<T>> for SumJoinOp
   }
 
   fn build_inplace(xs_: Vec<Val<GPUDeviceArray1d<T>>>) -> Val<GPUDeviceArray1d<T>> {
-    // TODO
-    unimplemented!();
+    println!("DEBUG: SumJoinOp: build inplace");
+    SumJoinOp::build_inplace_device_op(xs_)
   }
 }
 
@@ -1253,11 +1264,9 @@ where T: Copy + 'static,
 }*/
 
 impl SumJoinOp {
-  pub fn build_device_op<T, A>(inputs_: Vec<Val<A>>) -> Val<A>
+  pub fn build_device_op<T, A>(xs_: Vec<Val<A>>) -> Val<A>
   where T: ZeroBits + 'static/* + PseudoField*/,
-        //A: GPUDeviceArrayZeros + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + 'static,
         A: GPUDeviceAsync
-            //+ GPUDeviceArrayZeros<T>
             + GPUDeviceZerosShape<T>
             + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>>
             + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>>
@@ -1265,18 +1274,18 @@ impl SumJoinOp {
   {
     let ext = OpExt{
       make_val: {
-        let inputs_ = inputs_.clone();
+        let xs_ = xs_.clone();
         //Box::new(move || {
         Box::new(move |state: RefMut<_>| {
           let section = GPULazyAsyncSection::default();
-          let inputs_ = inputs_.clone();
+          let xs_ = xs_.clone();
           RWVal::from(Arc::new(move |txn: Txn| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
             let mut guard = section.enter(conn.clone());
-            let x0 = inputs_[0].get(txn);
+            let x0 = xs_[0].get(txn);
             guard._wait(x0.async_state());
             let y = A::zeros_shape(x0.shape(), conn);
             guard._wait(y.async_state());
@@ -1286,7 +1295,7 @@ impl SumJoinOp {
       },
       apply: {
         let section = GPULazyAsyncSection::default();
-        let inputs_ = inputs_.clone();
+        let xs_ = xs_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<A>| {
           if let Some((cap, token)) = output.write(txn) {
             let ctx = implicit_ctx().gpu();
@@ -1299,7 +1308,7 @@ impl SumJoinOp {
               Some(y) => y,
             };
             guard._wait(y.async_state());
-            let x0 = match inputs_[0].get(txn).flat_view() {
+            let x0 = match xs_[0].get(txn).flat_view() {
               None => panic!(),
               Some(x) => x,
             };
@@ -1312,8 +1321,8 @@ impl SumJoinOp {
                 y.add(x0, conn.clone());
               }
             }
-            for i in 1 .. inputs_.len() {
-              let x = match inputs_[i].get(txn).flat_view() {
+            for i in 1 .. xs_.len() {
+              let x = match xs_[i].get(txn).flat_view() {
                 None => panic!(),
                 Some(x) => x,
               };
@@ -1332,21 +1341,70 @@ impl SumJoinOp {
       // TODO
       tangent: None,
       adjoint: Some({
-        let inputs_ = inputs_.clone();
+        let xs_ = xs_.clone();
         Box::new(move |_: Pass, y_: Val<A>, _state: RefMut<_>, sink: &mut Sink| {
           if let Some(adj_y_) = y_.adjoint(sink) {
-            for i in 0 .. inputs_.len() {
-              inputs_[i].put_adjoint(adj_y_.clone(), sink);
+            for i in 0 .. xs_.len() {
+              xs_[i].put_adjoint(adj_y_.clone(), sink);
             }
           }
         })
       }),
       inplace: None,
     };
-    Val::from(Rc::new(FJoinOp::new(SumJoinOp, ext, inputs_)))
+    Val::from(Rc::new(FJoinOp::new(SumJoinOp, ext, xs_)))
   }
 
-  pub fn build_device_batch_op<T, A>(inputs_: Vec<Val<A>>) -> Val<A>
+  pub fn build_inplace_device_op<T, A>(old_xs_: Vec<Val<A>>) -> Val<A>
+  where T: ZeroBits + 'static,
+        A: GPUDeviceAsync
+            + GPUDeviceZerosShape<T>
+            + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>>
+            + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>>
+            + 'static,
+  {
+    let mut new_xs_ = Vec::with_capacity(old_xs_.len());
+    new_xs_.push(old_xs_[0].accumulate());
+    for i in 1 .. old_xs_.len() {
+      new_xs_.push(old_xs_[i].accumulate_value(old_xs_[0]._static_value()));
+    }
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          unreachable!();
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        Box::new(move |_txn: Txn, _state: RefMut<_>, _output: OVal<A>| {
+          // Do nothing; the inputs did all the work.
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      // TODO
+      tangent: None,
+      adjoint: Some({
+        let xs_ = new_xs_.clone();
+        Box::new(move |_: Pass, y_: Val<A>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            for i in 0 .. xs_.len() {
+              xs_[i].put_adjoint(adj_y_.clone(), sink);
+            }
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::with_value(Rc::new(FJoinOp::new(SumJoinOp, ext, new_xs_)), old_xs_[0]._static_value())
+  }
+
+  /*pub fn build_device_batch_op<T, A>(inputs_: Vec<Val<A>>) -> Val<A>
   where T: Copy /*+ PseudoField*/ + 'static,
         //A: GPUDeviceBatchArrayZeros + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + 'static,
         A: GPUDeviceBatchArrayZeros<T> + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>> + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>> + 'static,
@@ -1429,7 +1487,7 @@ impl SumJoinOp {
       inplace: None,
     };
     Val::from(Rc::new(FJoinOp::new(SumJoinOp, ext, inputs_)))
-  }
+  }*/
 }
 
 impl ReduceSumOp {

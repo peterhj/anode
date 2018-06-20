@@ -229,6 +229,40 @@ impl<T> FlatIO<GPUDeviceArray1d<T>> where T: Copy {
   }
 }
 
+impl<T> IOVal for RWVal<GPUDeviceScalar<T>> where T: ZeroBits + 'static {
+  fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
+    if let Some(dst) = dst.downcast_mut::<T>() {
+      let ctx = implicit_ctx().gpu();
+      let mut pool = ctx.pool();
+      let conn = pool.conn();
+      let mut section = GPULazyAsyncSection::default();
+      let mut guard = section.enter(conn.clone());
+      let x = self.get(txn, rvar);
+      guard._wait(x.async_state());
+      let mut dst_arr = MemScalar::<T>::zeros(());
+      x.as_view().sync_dump_mem(dst_arr.as_view_mut(), conn);
+      *dst = dst_arr.flat_view().unwrap().as_slice()[0];
+      return;
+    }
+    unimplemented!();
+  }
+
+  fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any) {
+    // TODO
+    unimplemented!();
+  }
+
+  fn _serialize_vec(&self, txn: Txn, rvar: RVar, off: usize, dst: &mut Any) -> usize {
+    // TODO
+    unimplemented!();
+  }
+
+  fn _deserialize_vec(&self, txn: Txn, rvar: RVar, xvar: RWVar, off: usize, src: &mut Any) -> usize {
+    // TODO
+    unimplemented!();
+  }
+}
+
 impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
   fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
     if let Some(dst) = dst.downcast_mut::<MemArray1d<T>>() {

@@ -296,10 +296,19 @@ fn test_gpu_adj_sumjoin() {
     //GPUDeviceOuterBatchArray1d::<f32>::zeros(1024, 1, conn)
     GPUDeviceScalar::<f32>::zeros((), conn)
   }));
-  //let y = sum(vec![x.clone(), x.clone()]);
-  let y = x.clone() + x.clone();
+  //let y = x.clone() + x.clone();
+  let y = sum(vec![
+      x.clone(), x.clone(), x.clone(), x.clone(), x.clone(),
+      x.clone(), x.clone(), x.clone(), x.clone(), x.clone(),
+  ]);
   let mut y_sink = sink(y.clone());
-  let dx = x.adjoint(&mut y_sink);
+  let dx = x.adjoint(&mut y_sink).unwrap();
+  let t = txn();
+  dx.eval(t);
+  let mut z: f32 = -1.0;
+  dx.serialize(t, &mut z);
+  assert_eq!(z, 10.0);
+  println!("DEBUG: {:?}", z);
 }
 
 #[test]

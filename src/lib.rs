@@ -667,6 +667,19 @@ impl<V> Val<V> where V: 'static {
     }
   }
 
+  pub fn accumulate_value(&self, new_value: Option<RWVal<V>>) -> Val<V> {
+    let rvar = RVar::default();
+    Val{
+      node:     self.node.clone(),
+      op:       self.op.clone(),
+      value:    new_value,
+      mode:     WriteMode::Accumulate,
+      xvar:     RWVar(rvar),
+      rvar:     rvar,
+      name:     self.name.clone(),
+    }
+  }
+
   pub fn accumulate(&self) -> Val<V> {
     //self.op._value()._set_accumulate();
     let rvar = RVar::default();
@@ -1009,8 +1022,11 @@ impl Sink {
             }).collect();
             // TODO: if none of `adj_ops` are volatile (TODO: define volatile),
             // transform this join into an in-place/accumulate op.
-            let join = match <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build(adj_ops) {
-            //let join = match <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build_inplace(adj_ops) {
+            //let join = match <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build(adj_ops) {
+            for adj_op in adj_ops.iter() {
+              self.frozen.insert(adj_op.var());
+            }
+            let join = match <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build_inplace(adj_ops) {
               None => panic!("FATAL: Sink::get_adj(): failed to sum adjoints"),
               Some(join) => join,
             };
@@ -1630,8 +1646,7 @@ impl<T> RWVal<T> where T: 'static {
         "attempting a stale read (the value has been clobbered)");
     match buf.l_producers.len() {
       0 => panic!("attempting an invalid read (the value was never written)"),
-      1 => {}
-      _ => panic!("attempting an invalid read (too many live writes)"),
+      _ => {}
     }
     buf.l_consumers.lock().insert(rvar);
 
@@ -3205,7 +3220,7 @@ impl<F, V, W> FJoinOp<F, V, W> {
   //pub fn new(cfg: F, ext: OpExt<F, W>, xs_: Vec<Val<V>>, y: RWVal<W>) -> Self {
   pub fn new(cfg: F, ext: OpExt<F, W>, xs_: Vec<Val<V>>) -> Self {
     let state = RefCell::new(cfg);
-    let y = (ext.make_val)(state.borrow_mut());
+    //let y = (ext.make_val)(state.borrow_mut());
     FJoinOp{
       base: OpBase::default(),
       ext:  ext,
