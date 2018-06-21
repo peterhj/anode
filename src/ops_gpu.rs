@@ -1220,12 +1220,12 @@ impl FlattenOp {
 impl<T: ZeroBits + 'static> SumJoinOpExt<GPUDeviceScalar<T>> for SumJoinOp
 {
   fn build(xs_: Vec<Val<GPUDeviceScalar<T>>>) -> Val<GPUDeviceScalar<T>> {
-    println!("DEBUG: SumJoinOp: build");
+    //println!("DEBUG: SumJoinOp: build");
     SumJoinOp::build_device_op(xs_)
   }
 
-  fn build_inplace(xs_: Vec<Val<GPUDeviceScalar<T>>>) -> Val<GPUDeviceScalar<T>> {
-    println!("DEBUG: SumJoinOp: build inplace");
+  fn build_inplace(xs_: Vec<Val<GPUDeviceScalar<T>>>) -> (Val<GPUDeviceScalar<T>>, Vec<Val<GPUDeviceScalar<T>>>) {
+    //println!("DEBUG: SumJoinOp: build inplace");
     SumJoinOp::build_inplace_device_op(xs_)
   }
 }
@@ -1233,12 +1233,12 @@ impl<T: ZeroBits + 'static> SumJoinOpExt<GPUDeviceScalar<T>> for SumJoinOp
 impl<T: ZeroBits + 'static> SumJoinOpExt<GPUDeviceArray1d<T>> for SumJoinOp
 {
   fn build(xs_: Vec<Val<GPUDeviceArray1d<T>>>) -> Val<GPUDeviceArray1d<T>> {
-    println!("DEBUG: SumJoinOp: build");
+    //println!("DEBUG: SumJoinOp: build");
     SumJoinOp::build_device_op(xs_)
   }
 
-  fn build_inplace(xs_: Vec<Val<GPUDeviceArray1d<T>>>) -> Val<GPUDeviceArray1d<T>> {
-    println!("DEBUG: SumJoinOp: build inplace");
+  fn build_inplace(xs_: Vec<Val<GPUDeviceArray1d<T>>>) -> (Val<GPUDeviceArray1d<T>>, Vec<Val<GPUDeviceArray1d<T>>>) {
+    //println!("DEBUG: SumJoinOp: build inplace");
     SumJoinOp::build_inplace_device_op(xs_)
   }
 }
@@ -1355,7 +1355,7 @@ impl SumJoinOp {
     Val::from(Rc::new(FJoinOp::new(SumJoinOp, ext, xs_)))
   }
 
-  pub fn build_inplace_device_op<T, A>(old_xs_: Vec<Val<A>>) -> Val<A>
+  pub fn build_inplace_device_op<T, A>(old_xs_: Vec<Val<A>>) -> (Val<A>, Vec<Val<A>>)
   where T: ZeroBits + 'static,
         A: GPUDeviceAsync
             + GPUDeviceZerosShape<T>
@@ -1401,7 +1401,7 @@ impl SumJoinOp {
       }),
       inplace: None,
     };
-    Val::with_value(Rc::new(FJoinOp::new(SumJoinOp, ext, new_xs_)), old_xs_[0]._static_value())
+    (Val::with_value(Rc::new(FJoinOp::new(SumJoinOp, ext, new_xs_.clone())), old_xs_[0]._static_value()), new_xs_)
   }
 
   /*pub fn build_device_batch_op<T, A>(inputs_: Vec<Val<A>>) -> Val<A>

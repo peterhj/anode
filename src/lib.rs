@@ -1032,16 +1032,19 @@ impl Sink {
             // TODO: if none of `adj_ops` are volatile (TODO: define volatile),
             // transform this join into an in-place/accumulate op.
             // FIXME: also gate on an "explicitly allow non-volatile" flag.
-            let join = match if no_volatile_adjs {
+            let join = if no_volatile_adjs {
               for adj_op in adj_ops.iter() {
                 self.frozen.insert(adj_op.var());
               }
-              <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build_inplace(adj_ops)
+              match <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build_inplace(adj_ops) {
+                None => panic!("FATAL: Sink::get_adj(): failed to sum adjoints inplace"),
+                Some((join, _)) => join,
+              }
             } else {
-              <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build(adj_ops)
-            } {
-              None => panic!("FATAL: Sink::get_adj(): failed to sum adjoints"),
-              Some(join) => join,
+              match <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build(adj_ops) {
+                None => panic!("FATAL: Sink::get_adj(): failed to sum adjoints"),
+                Some(join) => join,
+              }
             };
             self.join_map.insert(var, (join.clone().into_node(), Rc::new(join.clone())));
             return Some(join);

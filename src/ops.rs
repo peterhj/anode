@@ -356,36 +356,36 @@ pub trait ConstantOpsExt<T, V> {
 
 pub trait SumJoinOpMaybeExt<V> {
   fn maybe_build(xs_: Vec<Val<V>>) -> Option<Val<V>>;
-  fn maybe_build_inplace(xs_: Vec<Val<V>>) -> Option<Val<V>>;
+  fn maybe_build_inplace(xs_: Vec<Val<V>>) -> Option<(Val<V>, Vec<Val<V>>)>;
 }
 
 impl<V> SumJoinOpMaybeExt<V> for SumJoinOp {
   default fn maybe_build(xs_: Vec<Val<V>>) -> Option<Val<V>> {
-    println!("DEBUG: SumJoinOpMaybeExt: maybe build: none");
+    //println!("DEBUG: SumJoinOpMaybeExt: maybe build: none");
     None
   }
 
-  default fn maybe_build_inplace(xs_: Vec<Val<V>>) -> Option<Val<V>> {
-    println!("DEBUG: SumJoinOpMaybeExt: maybe build inplace: none");
+  default fn maybe_build_inplace(xs_: Vec<Val<V>>) -> Option<(Val<V>, Vec<Val<V>>)> {
+    //println!("DEBUG: SumJoinOpMaybeExt: maybe build inplace: none");
     None
   }
 }
 
 impl<V> SumJoinOpMaybeExt<V> for SumJoinOp where SumJoinOp: SumJoinOpExt<V> {
   fn maybe_build(xs_: Vec<Val<V>>) -> Option<Val<V>> {
-    println!("DEBUG: SumJoinOpMaybeExt: maybe build: SOME");
+    //println!("DEBUG: SumJoinOpMaybeExt: maybe build: SOME");
     Some(<SumJoinOp as SumJoinOpExt<V>>::build(xs_))
   }
 
-  fn maybe_build_inplace(xs_: Vec<Val<V>>) -> Option<Val<V>> {
-    println!("DEBUG: SumJoinOpMaybeExt: maybe build inplace: SOME");
+  fn maybe_build_inplace(xs_: Vec<Val<V>>) -> Option<(Val<V>, Vec<Val<V>>)> {
+    //println!("DEBUG: SumJoinOpMaybeExt: maybe build inplace: SOME");
     Some(<SumJoinOp as SumJoinOpExt<V>>::build_inplace(xs_))
   }
 }
 
 pub trait SumJoinOpExt<V> {
   fn build(xs_: Vec<Val<V>>) -> Val<V>;
-  fn build_inplace(xs_: Vec<Val<V>>) -> Val<V>;
+  fn build_inplace(xs_: Vec<Val<V>>) -> (Val<V>, Vec<Val<V>>);
 }
 
 pub fn sum<V>(xs_: Vec<Val<V>>) -> Val<V> where Val<V>: SumExt<V> {
