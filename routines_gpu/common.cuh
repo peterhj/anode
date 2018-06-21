@@ -44,9 +44,9 @@ __device__ __forceinline__ uint32_t gblockcount() {
   return gridDim.x;
 }
 
-/*static bool check_power_of_2(uint32_t x) {
+static bool check_power_of_2(uint32_t x) {
   return x && !(x & (x - 1));
-}*/
+}
 
 struct KernelConfig {
   dim3 flat_grid_dim(uint32_t len) const {
@@ -165,6 +165,30 @@ struct MaxReduce<float> {
 
   __forceinline__ __device__ static void Reduce(float *dst, float val) {
     *dst = max(*dst, val);
+  }
+};
+
+template <typename T>
+struct AssignWrite {
+  __forceinline__ __device__ static void Write(T *dst, T val);
+};
+
+template <>
+struct AssignWrite<float> {
+  __forceinline__ __device__ static void Write(float *dst, float val) {
+    *dst = val;
+  }
+};
+
+template <typename T>
+struct AccumulateWrite {
+  __forceinline__ __device__ static void Write(T *dst, T val);
+};
+
+template <>
+struct AccumulateWrite<float> {
+  __forceinline__ __device__ static void Write(float *dst, float val) {
+    *dst = *dst + val;
   }
 };
 
