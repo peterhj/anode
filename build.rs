@@ -71,6 +71,8 @@ fn main() {
       .whitelist_function("anode_gpu_batch_norm_bwd_mean_3d1_packed_accumulate_f32")
       .whitelist_function("anode_gpu_batch_norm_bwd_var_3d1_packed_f32")
       .whitelist_function("anode_gpu_batch_norm_bwd_var_3d1_packed_accumulate_f32")
+      .whitelist_function("anode_gpu_batch_norm_bwd_var_v2_3d1_packed_f32")
+      .whitelist_function("anode_gpu_batch_norm_bwd_var_v2_3d1_packed_accumulate_f32")
       // "flat_map.cu"
       .whitelist_function("anode_gpu_copy_flat_map_f32")
       .whitelist_function("anode_gpu_modulus_flat_map_f32")

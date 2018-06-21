@@ -62,8 +62,9 @@ pub struct BatchMean2dOp;
 pub struct BatchMean2dBwdOp;
 pub struct BatchVariance2dOp;
 pub struct BatchVariance2dBwdOp;
+pub struct BatchVariance2dBwdMeanOp;
 pub struct BatchNormalize2dOp;
-pub struct BatchNormalize2dBwdXOp;
+pub struct BatchNormalize2dBwdOp;
 pub struct BatchNormalize2dBwdMeanOp;
 pub struct BatchNormalize2dBwdVarianceOp;
 pub struct OnlineAverageOp;
@@ -278,11 +279,17 @@ pub trait PassExt<V> {
 }
 
 pub trait FixExt<V> {
-  fn fix(&self) -> Val<V>;
+  fn fix(self) -> Val<V>;
 }
 
 pub trait FixOpExt<V> {
   fn build(x_: Val<V>) -> Val<V>;
+}
+
+impl<V> FixExt<V> for Val<V> where FixOp: FixOpExt<V> {
+  fn fix(self) -> Val<V> {
+    <FixOp as FixOpExt<V>>::build(self)
+  }
 }
 
 pub trait SerializeExt<V> {
@@ -476,7 +483,7 @@ where T: Copy,
     let avg_mean_ = zeros_like(mean_.clone()).online_average(avg_rate.clone(), mean_.clone());
     let avg_var_ = zeros_like(var_.clone()).online_average(avg_rate.clone(), var_.clone());
     let online_y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<T, X, M>>::build(axes, epsilon, self.clone(), mean_.clone(), var_.clone());
-    let avg_y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<T, X, M>>::build(axes, epsilon, self.clone(), avg_mean_.clone(), avg_var_.clone());
+    let avg_y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<T, X, M>>::build(axes, epsilon, self.clone(), avg_mean_.clone(), avg_var_.clone()).fix();
     let y_ = switch(online, avg_y_, online_y_);
     (y_, mean_, var_, avg_mean_, avg_var_)
   }
@@ -649,13 +656,14 @@ impl<A: 'static> FixOpExt<A> for FixOp {
         })
       }),
       tangent: None,
-      adjoint: Some({
+      adjoint: None,
+      /*adjoint: Some({
         Box::new(move |_: Pass, this: Val<A>, _state: RefMut<Self>, sink: &mut Sink| {
           if let Some(_) = this.adjoint(sink) {
             // Do nothing.
           }
         })
-      }),
+      }),*/
       inplace: None,
     };
     Val::from(Rc::new(F1Op::new(FixOp, ext, x_)))

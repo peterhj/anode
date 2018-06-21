@@ -102,6 +102,17 @@ void anode_gpu_batch_var_bwd_mean_3d1_packed_accumulate_f32(
     float *dmean,
     const struct KernelConfig *cfg,
     struct CUstream_st *stream);
+void anode_gpu_batch_norm_3d1_packed_f32(
+    uint32_t dim0,
+    uint32_t dim1,
+    uint32_t dim2,
+    float epsilon,
+    const float *x,
+    const float *mean,
+    const float *var,
+    float *y,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
 void anode_gpu_batch_norm_bwd_3d1_packed_f32(
     uint32_t dim0,
     uint32_t dim1,
@@ -148,12 +159,36 @@ void anode_gpu_batch_norm_bwd_var_3d1_packed_f32(
     uint32_t dim2,
     float epsilon,
     const float *dy,
-    const float *y,
+    const float *x,
+    const float *mean,
     const float *var,
     float *dvar,
     const struct KernelConfig *cfg,
     struct CUstream_st *stream);
 void anode_gpu_batch_norm_bwd_var_3d1_packed_accumulate_f32(
+    uint32_t dim0,
+    uint32_t dim1,
+    uint32_t dim2,
+    float epsilon,
+    const float *dy,
+    const float *x,
+    const float *mean,
+    const float *var,
+    float *dvar,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+void anode_gpu_batch_norm_bwd_var_v2_3d1_packed_f32(
+    uint32_t dim0,
+    uint32_t dim1,
+    uint32_t dim2,
+    float epsilon,
+    const float *dy,
+    const float *y,
+    const float *var,
+    float *dvar,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+void anode_gpu_batch_norm_bwd_var_v2_3d1_packed_accumulate_f32(
     uint32_t dim0,
     uint32_t dim1,
     uint32_t dim2,

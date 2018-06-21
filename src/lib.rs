@@ -18,6 +18,7 @@ limitations under the License.
 #![feature(core_intrinsics)]
 #![feature(fn_traits)]
 #![feature(get_type_id)]
+#![feature(nll)]
 #![feature(optin_builtin_traits)]
 #![feature(slice_patterns)]
 #![feature(specialization)]
@@ -216,11 +217,11 @@ pub trait ANode {
   fn _pred_fwd(&self, pred_buf: &mut Vec<Node>) { unimplemented!(); }
   fn _pred_rev(&self, pred_buf: &mut Vec<Node>) { unimplemented!(); }
 
-  fn _push(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode));
-  fn _pop(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode));
+  fn _push(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) { unimplemented!(); }
+  fn _pop(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) { unimplemented!(); }
 
   fn _push_fwd(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar));
-  fn _pop_rev(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) { unimplemented!(); }
+  fn _pop_rev(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar));
 
   //fn _txn(&self) -> Option<Txn>;
   //fn _reset(&self);
@@ -686,9 +687,7 @@ impl<V> Val<V> where V: 'static {
     Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
-      //value:    self.value._clone(),
-      //value:    self.value.as_ref().map(|v| v._clone()),
-      value:    self._clone_value(),
+      value:    Some(self._make_value()),
       mode:     WriteMode::Accumulate,
       xvar:     RWVar(rvar),
       rvar:     rvar,
@@ -702,9 +701,7 @@ impl<V> Val<V> where V: 'static {
     Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
-      //value:    self.value._clone(),
-      //value:    self.value.as_ref().map(|v| v._clone()),
-      value:    self._clone_value(),
+      value:    Some(self._make_value()),
       mode:     WriteMode::Clobber,
       xvar:     RWVar(rvar),
       rvar:     rvar,
@@ -1813,9 +1810,15 @@ impl<F, V> ANode for FSrcWrapOp<F, V> where RWVal<V>: IOVal + 'static {
 
   fn _push_fwd(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) {
     if self.base.stack.push(pass) {
-      // TODO: `stop_txn`?
       self.val_._push_fwd(stop_txn, pass, apply);
       apply(self, rvar, xvar);
+    }
+  }
+
+  fn _pop_rev(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) {
+    if self.base.stack.pop(pass) {
+      apply(self, rvar, xvar);
+      self.val_._pop_rev(stop_txn, pass, apply);
     }
   }
 
@@ -1910,8 +1913,13 @@ impl<F, V> AOp<V> for FSrcWrapOp<F, V> where RWVal<V>: IOVal + 'static {
   fn _pop_adjoint(&self, pass: Pass, this: Val<V>, sink: &mut Sink) {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
-        None => {}
-        Some(ref adjoint) => (adjoint)(pass, this, self.cfg.borrow_mut(), sink),
+        None => {
+          self.val_._pop_rev(None, pass, &mut |_, _, _| {});
+        }
+        Some(ref adjoint) => {
+          (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
+          self.val_._pop_adjoint(pass, sink);
+        }
       }
     }
   }
@@ -1983,6 +1991,12 @@ impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
 
   fn _push_fwd(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) {
     if self.base.stack.push(pass) {
+      apply(self, rvar, xvar);
+    }
+  }
+
+  fn _pop_rev(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) {
+    if self.base.stack.pop(pass) {
       apply(self, rvar, xvar);
     }
   }
@@ -2111,7 +2125,9 @@ impl<F, V> AOp<V> for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
         None => {}
-        Some(ref adjoint) => (adjoint)(pass, this, self.cfg.borrow_mut(), sink),
+        Some(ref adjoint) => {
+          (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
+        }
       }
     }
   }
@@ -2205,7 +2221,18 @@ impl<F, V, W> ANode for F1WrapOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 's
       //if stop_txn.is_none() || stop_txn != self._txn() {
         self.x_._push_fwd(stop_txn, pass, apply);
       //}
+      self.y_._push_fwd(stop_txn, pass, apply);
       apply(self, rvar, xvar);
+    }
+  }
+
+  fn _pop_rev(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) {
+    if self.base.stack.pop(pass) {
+      apply(self, rvar, xvar);
+      self.y_._pop_rev(stop_txn, pass, apply);
+      //if stop_txn.is_none() || stop_txn != self._txn() {
+        self.x_._pop_rev(stop_txn, pass, apply);
+      //}
     }
   }
 
@@ -2252,6 +2279,7 @@ impl<F, V, W> ANode for F1WrapOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 's
         node.eval(txn);
       }
       self.x_.eval(txn);
+      self.y_._eval_recursive(txn);
     //}
   }
 }
@@ -2297,12 +2325,16 @@ impl<F, V, W> AOp<W> for F1WrapOp<F, V, W> where V: 'static, RWVal<W>: IOVal + '
   fn _pop_adjoint(&self, pass: Pass, this: Val<W>, sink: &mut Sink) {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
-        None => {}
+        None => {
+          self.y_._pop_rev(None, pass, &mut |_, _, _| {});
+          self.x_._pop_rev(None, pass, &mut |_, _, _| {});
+        }
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
+          self.y_._pop_adjoint(pass, sink);
+          self.x_._pop_adjoint(pass, sink);
         }
       }
-      self.x_._pop_adjoint(pass, sink);
     }
   }
 
@@ -2382,6 +2414,15 @@ impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'st
         self.x_._push_fwd(stop_txn, pass, apply);
       //}
       apply(self, rvar, xvar);
+    }
+  }
+
+  fn _pop_rev(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) {
+    if self.base.stack.pop(pass) {
+      apply(self, rvar, xvar);
+      //if stop_txn.is_none() || stop_txn != self._txn() {
+        self.x_._pop_rev(stop_txn, pass, apply);
+      //}
     }
   }
 
@@ -2513,12 +2554,14 @@ impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 's
   fn _pop_adjoint(&self, pass: Pass, this: Val<W>, sink: &mut Sink) {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
-        None => {}
+        None => {
+          self.x_._pop_rev(None, pass, &mut |_, _, _| {});
+        }
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
+          self.x_._pop_adjoint(pass, sink);
         }
       }
-      self.x_._pop_adjoint(pass, sink);
     }
   }
 
@@ -2647,6 +2690,16 @@ impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, 
     }
   }
 
+  fn _pop_rev(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) {
+    if self.base.stack.pop(pass) {
+      apply(self, rvar, xvar);
+      //if stop_txn.is_none() || stop_txn != self._txn() {
+        self.x2_._pop_rev(stop_txn, pass, apply);
+        self.x1_._pop_rev(stop_txn, pass, apply);
+      //}
+    }
+  }
+
   /*fn _txn(&self) -> Option<Txn> {
     self.y.txn()
   }*/
@@ -2762,13 +2815,16 @@ impl<F, V1, V2, W> AOp<W> for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static,
   fn _pop_adjoint(&self, pass: Pass, this: Val<W>, sink: &mut Sink) {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
-        None => {}
+        None => {
+          self.x2_._pop_rev(None, pass, &mut |_, _, _| {});
+          self.x1_._pop_rev(None, pass, &mut |_, _, _| {});
+        }
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
+          self.x2_._pop_adjoint(pass, sink);
+          self.x1_._pop_adjoint(pass, sink);
         }
       }
-      self.x2_._pop_adjoint(pass, sink);
-      self.x1_._pop_adjoint(pass, sink);
     }
   }
 
@@ -2870,6 +2926,17 @@ impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: '
         self.x3_._push_fwd(stop_txn, pass, apply);
       //}
       apply(self, rvar, xvar);
+    }
+  }
+
+  fn _pop_rev(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) {
+    if self.base.stack.pop(pass) {
+      apply(self, rvar, xvar);
+      //if stop_txn.is_none() || stop_txn != self._txn() {
+        self.x3_._pop_rev(stop_txn, pass, apply);
+        self.x2_._pop_rev(stop_txn, pass, apply);
+        self.x1_._pop_rev(stop_txn, pass, apply);
+      //}
     }
   }
 
@@ -2991,14 +3058,18 @@ impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 
   fn _pop_adjoint(&self, pass: Pass, this: Val<W>, sink: &mut Sink) {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
-        None => {}
+        None => {
+          self.x3_._pop_rev(None, pass, &mut |_, _, _| {});
+          self.x2_._pop_rev(None, pass, &mut |_, _, _| {});
+          self.x1_._pop_rev(None, pass, &mut |_, _, _| {});
+        }
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
+          self.x3_._pop_adjoint(pass, sink);
+          self.x2_._pop_adjoint(pass, sink);
+          self.x1_._pop_adjoint(pass, sink);
         }
       }
-      self.x3_._pop_adjoint(pass, sink);
-      self.x2_._pop_adjoint(pass, sink);
-      self.x1_._pop_adjoint(pass, sink);
     }
   }
 
@@ -3009,6 +3080,163 @@ impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 
       Some(adj) => adj,
     }
   }*/
+
+  fn _apply_output(&self, txn: Txn, val: OVal<W>) {
+    (self.ext.apply)(txn, self.cfg.borrow_mut(), val);
+  }
+}
+
+pub struct F4Op<F, V1, V2, V3, V4, W> {
+  base: OpBase,
+  ext:  OpExt<F, W>,
+  cfg:  RefCell<F>,
+  ctrl: Vec<Node>,
+  x1_:  Val<V1>,
+  x2_:  Val<V2>,
+  x3_:  Val<V3>,
+  x4_:  Val<V4>,
+}
+
+impl<F, V1, V2, V3, V4, W> F4Op<F, V1, V2, V3, V4, W> {
+  pub fn new(cfg: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>, x3_: Val<V3>, x4_: Val<V4>) -> Self {
+    let cfg = RefCell::new(cfg);
+    F4Op{
+      base: OpBase::default(),
+      ext:  ext,
+      cfg:  cfg,
+      ctrl: vec![],
+      x1_:  x1_,
+      x2_:  x2_,
+      x3_:  x3_,
+      x4_:  x4_,
+    }
+  }
+}
+
+impl<F, V1, V2, V3, V4, W> ANode for F4Op<F, V1, V2, V3, V4, W> where V1: 'static, V2: 'static, V3: 'static, V4: 'static, RWVal<W>: IOVal + 'static {
+  fn _walk(&self) -> &Walk {
+    &self.base.stack
+  }
+
+  fn _analysis_tags(&self) -> &AnalysisTags {
+    &self.base
+  }
+
+  fn _pred_fwd(&self, pred_buf: &mut Vec<Node>) {
+    pred_buf.push(self.x1_._to_node());
+    pred_buf.push(self.x2_._to_node());
+    pred_buf.push(self.x3_._to_node());
+    pred_buf.push(self.x4_._to_node());
+  }
+
+  fn _pred_rev(&self, pred_buf: &mut Vec<Node>) {
+    pred_buf.push(self.x4_._to_node());
+    pred_buf.push(self.x3_._to_node());
+    pred_buf.push(self.x2_._to_node());
+    pred_buf.push(self.x1_._to_node());
+  }
+
+  fn _push_fwd(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) {
+    if self.base.stack.push(pass) {
+      self.x1_._push_fwd(stop_txn, pass, apply);
+      self.x2_._push_fwd(stop_txn, pass, apply);
+      self.x3_._push_fwd(stop_txn, pass, apply);
+      self.x4_._push_fwd(stop_txn, pass, apply);
+      apply(self, rvar, xvar);
+    }
+  }
+
+  fn _pop_rev(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) {
+    if self.base.stack.pop(pass) {
+      apply(self, rvar, xvar);
+      self.x4_._pop_rev(stop_txn, pass, apply);
+      self.x3_._pop_rev(stop_txn, pass, apply);
+      self.x2_._pop_rev(stop_txn, pass, apply);
+      self.x1_._pop_rev(stop_txn, pass, apply);
+    }
+  }
+
+  fn _io<'a>(&'a self, txn: Txn, static_any_value: &'a Any) -> &'a IOVal {
+    if let Some(static_value) = static_any_value.downcast_ref::<Option<RWVal<W>>>() {
+      if static_value.is_some() {
+        return static_value.as_ref().unwrap();
+      } else {
+        // FIXME
+        unimplemented!();
+      }
+    } else {
+      unreachable!();
+    }
+  }
+
+  fn _eval_recursive(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
+    for node in self.ctrl.iter() {
+      node.eval(txn);
+    }
+    self.x1_.eval(txn);
+    self.x2_.eval(txn);
+    self.x3_.eval(txn);
+    self.x4_.eval(txn);
+  }
+
+  fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) {
+    if let Some(value) = any_value.downcast_ref::<Option<RWVal<W>>>() {
+      self._apply_output(txn, OVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())));
+    } else {
+      unreachable!();
+    }
+  }
+}
+
+impl<F, V1, V2, V3, V4, W> AOp<W> for F4Op<F, V1, V2, V3, V4, W> where V1: 'static, V2: 'static, V3: 'static, V4: 'static, RWVal<W>: IOVal + 'static {
+  fn _value2(&self, txn: Txn, static_value: Option<RWVal<W>>) -> RWVal<W> {
+    if static_value.is_some() {
+      return static_value.as_ref().unwrap()._clone();
+    } else {
+      // FIXME
+      unimplemented!();
+    }
+  }
+
+  fn _value3<'a>(&'a self, txn: Txn, static_value: Option<&'a RWVal<W>>) -> &'a RWVal<W> {
+    if static_value.is_some() {
+      return static_value.unwrap();
+    } else {
+      // FIXME
+      unimplemented!();
+    }
+  }
+
+  fn _make_value(&self) -> RWVal<W> {
+    (self.ext.make_val)(self.cfg.borrow_mut())
+  }
+
+  fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<W> {
+    match self.ext.tangent {
+      None => unimplemented!(),
+      Some(ref tangent) => (tangent)(pass, self.cfg.borrow_mut(), feedfwd),
+    }
+  }
+
+  fn _pop_adjoint(&self, pass: Pass, this: Val<W>, sink: &mut Sink) {
+    if self.base.stack.pop(pass) {
+      match self.ext.adjoint {
+        None => {
+          self.x4_._pop_rev(None, pass, &mut |_, _, _| {});
+          self.x3_._pop_rev(None, pass, &mut |_, _, _| {});
+          self.x2_._pop_rev(None, pass, &mut |_, _, _| {});
+          self.x1_._pop_rev(None, pass, &mut |_, _, _| {});
+        }
+        Some(ref adjoint) => {
+          (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
+          self.x4_._pop_adjoint(pass, sink);
+          self.x3_._pop_adjoint(pass, sink);
+          self.x2_._pop_adjoint(pass, sink);
+          self.x1_._pop_adjoint(pass, sink);
+        }
+      }
+    }
+  }
 
   fn _apply_output(&self, txn: Txn, val: OVal<W>) {
     (self.ext.apply)(txn, self.cfg.borrow_mut(), val);
@@ -3096,6 +3324,16 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, RWVal<V>: IOVal + 'static
         self.x2_._push_fwd(stop_txn, pass, apply);
       //}
       apply(self, rvar, xvar);
+    }
+  }
+
+  fn _pop_rev(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) {
+    if self.base.stack.pop(pass) {
+      apply(self, rvar, xvar);
+      //if stop_txn.is_none() || stop_txn != self._txn() {
+        self.x2_._pop_rev(stop_txn, pass, apply);
+        self.x1_._pop_rev(stop_txn, pass, apply);
+      //}
     }
   }
 
@@ -3307,6 +3545,17 @@ impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'st
     }
   }
 
+  fn _pop_rev(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) {
+    if self.base.stack.pop(pass) {
+      apply(self, rvar, xvar);
+      //if stop_txn.is_none() || stop_txn != self._txn() {
+        for x_ in self.xs_.iter().rev() {
+          x_._pop_rev(stop_txn, pass, apply);
+        }
+      //}
+    }
+  }
+
   /*fn _txn(&self) -> Option<Txn> {
     self.y.txn()
   }*/
@@ -3432,13 +3681,17 @@ impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 's
   fn _pop_adjoint(&self, pass: Pass, this: Val<W>, sink: &mut Sink) {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
-        None => {}
+        None => {
+          for x_ in self.xs_.iter().rev() {
+            x_._pop_rev(None, pass, &mut |_, _, _| {});
+          }
+        }
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
+          for x_ in self.xs_.iter().rev() {
+            x_._pop_adjoint(pass, sink);
+          }
         }
-      }
-      for x_ in self.xs_.iter().rev() {
-        x_._pop_adjoint(pass, sink);
       }
     }
   }

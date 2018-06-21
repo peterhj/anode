@@ -473,6 +473,81 @@ __global__ void anode_gpu_batch_norm_bwd_var_3d1_packed_deterministic_kernel_f32
     uint32_t reduce_outer_dim,
     float epsilon,
     const float *dy,
+    const float *x,
+    const float *mean,
+    const float *var,
+    float *dvar)
+{
+  extern __shared__ float cache[];
+  uint32_t fused_inner_outer_dim = reduce_inner_dim * reduce_outer_dim;
+  uint32_t rdup_fused_inner_outer_dim = (fused_inner_outer_dim + blockDim.x - 1) / blockDim.x * blockDim.x;
+  for (uint32_t blk1 = gblock(); blk1 < mid_dim; blk1 += gblockcount()) {
+    float accumulator = 0.0f;
+    float m = mean[blk1];
+    float v = var[blk1];
+    for (uint32_t i = threadIdx.x; i < rdup_fused_inner_outer_dim; i += blockDim.x) {
+      if (i < fused_inner_outer_dim) {
+        uint32_t i0, i2;
+        Index2::Unpack(i, &i0, reduce_inner_dim, &i2);
+        uint32_t idx = Index3::Pack(i0, reduce_inner_dim, blk1, mid_dim, i2);
+        cache[threadIdx.x] = -dy[idx] * (x[idx] - m) * 0.5f * rsqrtf(v + epsilon) / (v + epsilon);
+      } else {
+        cache[threadIdx.x] = 0.0f;
+      }
+      __syncthreads();
+      threadblock_reduce_sync<float, AddReduce<float>>(cache);
+      if (0 == threadIdx.x) {
+        accumulator += cache[0];
+      }
+      __syncthreads();
+    }
+    Write::Write(&dvar[blk1], accumulator);
+  }
+}
+
+extern "C" void anode_gpu_batch_norm_bwd_var_3d1_packed_f32(
+    uint32_t dim0,
+    uint32_t dim1,
+    uint32_t dim2,
+    float epsilon,
+    const float *dy,
+    const float *x,
+    const float *mean,
+    const float *var,
+    float *dvar,
+    const KernelConfig *cfg,
+    cudaStream_t stream)
+{
+  assert(check_power_of_2(cfg->flat_block_dim().x));
+  anode_gpu_batch_norm_bwd_var_3d1_packed_deterministic_kernel_f32<AssignWrite<float>><<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
+      dim0, dim1, dim2, epsilon, dy, x, mean, var, dvar);
+}
+
+extern "C" void anode_gpu_batch_norm_bwd_var_3d1_packed_accumulate_f32(
+    uint32_t dim0,
+    uint32_t dim1,
+    uint32_t dim2,
+    float epsilon,
+    const float *dy,
+    const float *x,
+    const float *mean,
+    const float *var,
+    float *dvar,
+    const KernelConfig *cfg,
+    cudaStream_t stream)
+{
+  assert(check_power_of_2(cfg->flat_block_dim().x));
+  anode_gpu_batch_norm_bwd_var_3d1_packed_deterministic_kernel_f32<AccumulateWrite<float>><<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
+      dim0, dim1, dim2, epsilon, dy, x, mean, var, dvar);
+}
+
+template <typename Write>
+__global__ void anode_gpu_batch_norm_bwd_var_v2_3d1_packed_deterministic_kernel_f32(
+    uint32_t reduce_inner_dim,
+    uint32_t mid_dim,
+    uint32_t reduce_outer_dim,
+    float epsilon,
+    const float *dy,
     const float *y,
     const float *var,
     float *dvar)
@@ -503,7 +578,7 @@ __global__ void anode_gpu_batch_norm_bwd_var_3d1_packed_deterministic_kernel_f32
   }
 }
 
-extern "C" void anode_gpu_batch_norm_bwd_var_3d1_packed_f32(
+extern "C" void anode_gpu_batch_norm_bwd_var_v2_3d1_packed_f32(
     uint32_t dim0,
     uint32_t dim1,
     uint32_t dim2,
@@ -516,11 +591,11 @@ extern "C" void anode_gpu_batch_norm_bwd_var_3d1_packed_f32(
     cudaStream_t stream)
 {
   assert(check_power_of_2(cfg->flat_block_dim().x));
-  anode_gpu_batch_norm_bwd_var_3d1_packed_deterministic_kernel_f32<AssignWrite<float>><<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
+  anode_gpu_batch_norm_bwd_var_v2_3d1_packed_deterministic_kernel_f32<AssignWrite<float>><<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
       dim0, dim1, dim2, epsilon, dy, y, var, dvar);
 }
 
-extern "C" void anode_gpu_batch_norm_bwd_var_3d1_packed_accumulate_f32(
+extern "C" void anode_gpu_batch_norm_bwd_var_v2_3d1_packed_accumulate_f32(
     uint32_t dim0,
     uint32_t dim1,
     uint32_t dim2,
@@ -533,6 +608,6 @@ extern "C" void anode_gpu_batch_norm_bwd_var_3d1_packed_accumulate_f32(
     cudaStream_t stream)
 {
   assert(check_power_of_2(cfg->flat_block_dim().x));
-  anode_gpu_batch_norm_bwd_var_3d1_packed_deterministic_kernel_f32<AccumulateWrite<float>><<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
+  anode_gpu_batch_norm_bwd_var_v2_3d1_packed_deterministic_kernel_f32<AccumulateWrite<float>><<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
       dim0, dim1, dim2, epsilon, dy, y, var, dvar);
 }
