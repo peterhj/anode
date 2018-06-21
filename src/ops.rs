@@ -85,8 +85,9 @@ pub struct LeftTransposeConv3dLinearOp;
 pub struct OuterConv1dLinearOp;
 pub struct OuterConv2dLinearOp { pub conv_shape: Conv2dShape }
 pub struct OuterConv3dLinearOp;
-pub struct Pool2dOp;
-pub struct TransposePool2dOp;
+pub struct Pool2dOp<Pool> { pub pool_shape: Pool2dShape, pub pool: Pool }
+pub struct Pool2dBwdOp<Pool> { pub pool_shape: Pool2dShape, pub pool: Pool }
+pub struct TransposePool2dOp<Pool> { pub pool_shape: Pool2dShape, pub pool: Pool }
 pub struct Resample2dOp<ResampleF> { pub f: ResampleF }
 pub struct ReduceOp<ReduceF> { pub f: ReduceF, /*pub axes: _*/ }
 
@@ -118,6 +119,8 @@ pub struct Conv2dShape {
   pub src_feature_axis: isize,
   pub src_batch_axis:   isize,
   pub src_size:         [usize; 3],
+  //pub src_size:         [usize; 2],
+  //pub src_features:     usize,
   pub dst_space_axes:   [isize; 2],
   pub dst_feature_axis: isize,
   pub dst_batch_axis:   isize,
@@ -226,14 +229,41 @@ pub struct Pool2dShape {
   pub src_space_axes:   [isize; 2],
   pub src_feature_axis: isize,
   pub src_batch_axis:   isize,
+  pub src_size:         [usize; 2],
+  pub src_features:     usize,
   pub dst_space_axes:   [isize; 2],
   pub dst_feature_axis: isize,
   pub dst_batch_axis:   isize,
-  pub filter:           [usize; 2],
+  pub ker_size:         [usize; 2],
   pub dilation:         [usize; 2],
   pub stride:           [usize; 2],
   pub zero_pad:         [usize; 2],
 }
+
+impl Pool2dShape {
+  pub fn calculate_output_size(&self, x_size: [usize; 3]) -> [usize; 3] {
+    // TODO: this assumes NCHW layout.
+    assert!(self.ker_size[0] >= 1);
+    assert!(self.ker_size[1] >= 1);
+    assert!(self.stride[0] >= 1);
+    assert!(self.stride[1] >= 1);
+    let src_w = x_size[self.src_space_axes[0] as usize];
+    let src_h = x_size[self.src_space_axes[1] as usize];
+    // FIXME: this is a copy-paste of the conv calculation,
+    // but pooling might be different; double check this.
+    let dst_w = 1 + (src_w + 2 * self.zero_pad[0] - self.ker_size[0]) / self.stride[0];
+    let dst_h = 1 + (src_h + 2 * self.zero_pad[1] - self.ker_size[1]) / self.stride[1];
+    let dst_c = self.src_features;
+    let mut dst_size = [0, 0, 0];
+    dst_size[self.dst_space_axes[0] as usize] = dst_w;
+    dst_size[self.dst_space_axes[1] as usize] = dst_h;
+    dst_size[self.dst_feature_axis as usize] = dst_c;
+    dst_size
+  }
+}
+
+pub struct AveragePool;
+pub struct MaxPool;
 
 pub struct MaxPoolResample2dF;
 pub struct AvgPoolResample2dF;
@@ -567,12 +597,32 @@ pub trait OuterConvLinearExt<A, X, Y> {
 pub trait PoolExt<X> {
   type PoolShape;
 
-  fn pool(self, pool_shape: Self::PoolShape) -> Val<X>;
+  fn average_pool(self, pool_shape: Self::PoolShape) -> Val<X>;
+  fn max_pool(self, pool_shape: Self::PoolShape) -> Val<X>;
 }
 
-pub trait TransposePoolExt<X> {
-  type PoolShape;
+pub trait PoolBwdExt<X>: PoolExt<X> {
+  fn average_pool_bwd(self, pool_shape: Self::PoolShape, y: Val<X>, x: Val<X>) -> Val<X>;
+  fn max_pool_bwd(self, pool_shape: Self::PoolShape, y: Val<X>, x: Val<X>) -> Val<X>;
+}
 
+pub trait SomePoolBwdExt<Pool, X>: PoolBwdExt<X> {
+  fn pool_bwd(self, pool_shape: Self::PoolShape, y: Val<X>, x: Val<X>) -> Val<X>;
+}
+
+impl<X> SomePoolBwdExt<AveragePool, X> for Val<X> where Val<X>: PoolBwdExt<X> {
+  fn pool_bwd(self, pool_shape: Self::PoolShape, y: Val<X>, x: Val<X>) -> Val<X> {
+    self.average_pool_bwd(pool_shape, y, x)
+  }
+}
+
+impl<X> SomePoolBwdExt<MaxPool, X> for Val<X> where Val<X>: PoolBwdExt<X> {
+  fn pool_bwd(self, pool_shape: Self::PoolShape, y: Val<X>, x: Val<X>) -> Val<X> {
+    self.max_pool_bwd(pool_shape, y, x)
+  }
+}
+
+pub trait TransposePoolExt<X>: PoolExt<X> {
   fn transpose_pool(self, pool_shape: Self::PoolShape) -> Val<X>;
 }
 

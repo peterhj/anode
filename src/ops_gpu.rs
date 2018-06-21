@@ -28,6 +28,7 @@ use gpudevicemem::*;
 use gpudevicemem::array::*;
 use gpudevicemem::array::linalg::*;
 use gpudevicemem::array::tensor::conv::*;
+use gpudevicemem::array::tensor::pool::*;
 use memarray::*;
 use rand::prelude::{Rng};
 
@@ -1243,25 +1244,31 @@ impl<T: ZeroBits + 'static> SumJoinOpExt<GPUDeviceArray1d<T>> for SumJoinOp
   }
 }
 
-/*impl<T, A> SumJoinOpExt<A> for SumJoinOp
-where T: Copy + 'static,
-      A: GPUDeviceAsync
-          + GPUDeviceBatchArrayZeros<T>
-          + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>>
-          + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>>
-          + 'static,
+impl<T: ZeroBits + 'static> SumJoinOpExt<GPUDeviceOuterBatchArray1d<T>> for SumJoinOp
 {
-  fn build(xs_: Vec<Val<A>>) -> Val<A> {
-    println!("DEBUG: SumJoinOp: build device batch op");
-    SumJoinOp::build_device_batch_op::<T, A>(xs_)
+  fn build(xs_: Vec<Val<GPUDeviceOuterBatchArray1d<T>>>) -> Val<GPUDeviceOuterBatchArray1d<T>> {
+    //println!("DEBUG: SumJoinOp: build");
+    SumJoinOp::build_device_op(xs_)
   }
 
-  fn build_inplace(xs_: Vec<Val<A>>) -> Val<A> {
-    // TODO
-    unimplemented!();
-    //SumJoinOp::build_device_batch_op::<T, A>(xs_)
+  fn build_inplace(xs_: Vec<Val<GPUDeviceOuterBatchArray1d<T>>>) -> (Val<GPUDeviceOuterBatchArray1d<T>>, Vec<Val<GPUDeviceOuterBatchArray1d<T>>>) {
+    //println!("DEBUG: SumJoinOp: build inplace");
+    SumJoinOp::build_inplace_device_op(xs_)
   }
-}*/
+}
+
+impl<T: ZeroBits + 'static> SumJoinOpExt<GPUDeviceOuterBatchArray3d<T>> for SumJoinOp
+{
+  fn build(xs_: Vec<Val<GPUDeviceOuterBatchArray3d<T>>>) -> Val<GPUDeviceOuterBatchArray3d<T>> {
+    //println!("DEBUG: SumJoinOp: build");
+    SumJoinOp::build_device_op(xs_)
+  }
+
+  fn build_inplace(xs_: Vec<Val<GPUDeviceOuterBatchArray3d<T>>>) -> (Val<GPUDeviceOuterBatchArray3d<T>>, Vec<Val<GPUDeviceOuterBatchArray3d<T>>>) {
+    //println!("DEBUG: SumJoinOp: build inplace");
+    SumJoinOp::build_inplace_device_op(xs_)
+  }
+}
 
 impl SumJoinOp {
   pub fn build_device_op<T, A>(xs_: Vec<Val<A>>) -> Val<A>
@@ -1493,51 +1500,6 @@ impl SumJoinOp {
 impl ReduceSumOp {
   // TODO
 }
-
-/*impl<T, V> SumJoinOpExt<GPUDeviceArray1d<T>> for SumJoinOp
-where T: Copy + PseudoField + 'static,
-      V: RWVal<T=GPUDeviceArray1d<T>> + 'static,
-{
-  fn build(xs_: Vec<Rc<AOp<V>>>) -> Rc<FJoinOp<Self, V, V>> {
-    Self::build_device_op::<T, GPUDeviceArray1d<T>, V>(xs_)
-  }
-}
-
-impl<T, V> SumJoinOpExt<GPUDeviceOuterBatchArray1d<T>> for SumJoinOp
-where T: Copy + PseudoField,
-      V: RWVal<T=GPUDeviceOuterBatchArray1d<T>> + 'static,
-{
-  fn build(xs_: Vec<Rc<AOp<V>>>) -> Rc<FJoinOp<Self, V, V>> {
-    Self::build_device_batch_op::<T, GPUDeviceOuterBatchArray1d<T>, V>(xs_)
-  }
-}
-
-impl<A, V> SumExt<A, V> for Rc<AOp<V>>
-where SumJoinOp: SumJoinOpExt<A, V>,
-      V: RWVal<T=A> + 'static,
-{
-  fn sum(xs_: Vec<Rc<AOp<V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>> {
-    SumJoinOp::build(xs_)
-  }
-
-  fn add(self, x_: Rc<AOp<V>>) -> Rc<FJoinOp<SumJoinOp, V, V>> {
-    SumJoinOp::build(vec![self, x_])
-  }
-}
-
-impl<A, V, This> SumExt<A, V> for Rc<This>
-where SumJoinOp: SumJoinOpExt<A, V>,
-      V: RWVal<T=A> + 'static,
-      This: AOp<V> + 'static,
-{
-  fn sum(xs_: Vec<Rc<AOp<V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>> {
-    SumJoinOp::build(xs_)
-  }
-
-  fn add(self, x_: Rc<AOp<V>>) -> Rc<FJoinOp<SumJoinOp, V, V>> {
-    SumJoinOp::build(vec![self, x_])
-  }
-}*/
 
 // TODO: need more trait bounds.
 impl<V> ConstantOpsExt<f32, V> for Val<V> {
@@ -2646,7 +2608,7 @@ impl Conv2dAffineOp {
                   dst_feature_axis: conv_shape.dst_feature_axis,
                   dst_batch_axis:   conv_shape.dst_batch_axis,
                   dst_size: y.size(),
-                  filter:   conv_shape.ker_size,
+                  ker_size: conv_shape.ker_size,
                   dilation: conv_shape.dilation,
                   stride:   conv_shape.stride,
                   zero_pad: conv_shape.zero_pad,
@@ -2659,6 +2621,7 @@ impl Conv2dAffineOp {
                 };
                 let mut workspace = GPUDeviceArray1d::zeros_with_alloc(conn.burst_arena(), cfg.workspace_size(), conn.clone());
                 guard._wait(workspace.async_state());
+                // TODO: can use the fused operation.
                 y.batch_conv2d(
                     &cfg,
                     &mut state,
@@ -2668,6 +2631,15 @@ impl Conv2dAffineOp {
                     conn.clone(),
                 );
                 y.broadcast_add_1d_inplace(b, conv_shape.dst_feature_axis, conn.clone());
+                /*y.batch_conv2d_affine(
+                    &cfg,
+                    &mut state,
+                    w,
+                    x,
+                    b,
+                    workspace.as_view_mut(),
+                    conn.clone(),
+                );*/
               }
               WriteCap::Accumulate => unimplemented!(),
             }
@@ -2695,7 +2667,6 @@ impl Conv2dAffineOp {
         let b_ = b_.clone();
         Box::new(move |_: Pass, y_: Val<GPUDeviceOuterBatchArray3d<T>>, state: RefMut<_>, sink: &mut Sink| {
           if let Some(adj_y_) = y_.adjoint(sink) {
-            // FIXME
             let adj_w_ = adj_y_.clone().outer_conv(conv_shape, x_.clone());
             let adj_x_ = w_.clone().left_transpose_conv(conv_shape, adj_y_.clone());
             let adj_b_ = adj_y_.clone().conv_reduce_bwd(conv_shape);
@@ -2797,7 +2768,7 @@ impl LeftTransposeConv2dLinearOp {
                   dst_feature_axis: conv_shape.dst_feature_axis,
                   dst_batch_axis:   conv_shape.dst_batch_axis,
                   dst_size:         y.size(),
-                  filter:   conv_shape.ker_size,
+                  ker_size: conv_shape.ker_size,
                   dilation: conv_shape.dilation,
                   stride:   conv_shape.stride,
                   zero_pad: conv_shape.zero_pad,
@@ -2937,7 +2908,7 @@ impl OuterConv2dLinearOp {
                   dst_feature_axis: conv_shape.dst_feature_axis,
                   dst_batch_axis:   conv_shape.dst_batch_axis,
                   dst_size:         y.size(),
-                  filter:   conv_shape.ker_size,
+                  ker_size: conv_shape.ker_size,
                   dilation: conv_shape.dilation,
                   stride:   conv_shape.stride,
                   zero_pad: conv_shape.zero_pad,
@@ -3061,7 +3032,7 @@ impl Conv2dReduceBwdOp {
                   dst_feature_axis: conv_shape.dst_feature_axis,
                   dst_batch_axis:   conv_shape.dst_batch_axis,
                   dst_size:         x.size(),
-                  filter:   conv_shape.ker_size,
+                  ker_size: conv_shape.ker_size,
                   dilation: conv_shape.dilation,
                   stride:   conv_shape.stride,
                   zero_pad: conv_shape.zero_pad,
@@ -3107,21 +3078,301 @@ impl Conv2dReduceBwdOp {
   }
 }
 
-/*impl<A, V> SumExt<A, V> for Rc<AOp<V>>
-where SumJoinOp: SumJoinOpExt<A, V>,
-      V: RWVal<T=A> + 'static,
-{
-  fn sum(xs_: Vec<Rc<AOp<V>>>) -> Rc<FJoinOp<SumJoinOp, V, V>> {
-    SumJoinOp::build(xs_)
-  }
+pub trait PoolOp {
+  fn to_xop(&self) -> XPoolOp;
+}
 
-  fn add(self, x_: Rc<AOp<V>>) -> Rc<FJoinOp<SumJoinOp, V, V>> {
-    SumJoinOp::build(vec![self, x_])
+impl PoolOp for AveragePool {
+  fn to_xop(&self) -> XPoolOp {
+    XPoolOp::Average
   }
 }
 
-impl<A, V, This> SumExt<A, V> for Rc<This>
-where SumJoinOp: SumJoinOpExt<A, V>,
-      V: RWVal<T=A> + 'static,
-      This: AOp<V> + 'static,
-{*/
+impl PoolOp for MaxPool {
+  fn to_xop(&self) -> XPoolOp {
+    XPoolOp::Max
+  }
+}
+
+impl<T> PoolExt<GPUDeviceOuterBatchArray3d<T>> for Val<GPUDeviceOuterBatchArray3d<T>>
+where T: GPUDataTyped + CudnnDataTypeExt + PseudoField + ZeroBits + Copy + 'static,
+      CudnnHandle: CudnnPoolExt<T, HostScalar=T>,
+      GPUDeviceArrayViewMut4d<T>: GPUBatchPoolOps<T>,
+{
+  type PoolShape = Pool2dShape;
+
+  fn average_pool(self, pool_shape: Pool2dShape) -> Val<GPUDeviceOuterBatchArray3d<T>> {
+    Pool2dOp::<AveragePool>::build_device_obatch_val(AveragePool, pool_shape, self)
+  }
+
+  fn max_pool(self, pool_shape: Pool2dShape) -> Val<GPUDeviceOuterBatchArray3d<T>> {
+    Pool2dOp::<MaxPool>::build_device_obatch_val(MaxPool, pool_shape, self)
+  }
+}
+
+impl<T> PoolBwdExt<GPUDeviceOuterBatchArray3d<T>> for Val<GPUDeviceOuterBatchArray3d<T>>
+where T: GPUDataTyped + CudnnDataTypeExt + PseudoField + ZeroBits + Copy + 'static,
+      CudnnHandle: CudnnPoolExt<T, HostScalar=T>,
+      GPUDeviceArrayViewMut4d<T>: GPUBatchPoolOps<T>,
+{
+  fn average_pool_bwd(self, pool_shape: Pool2dShape, y_: Val<GPUDeviceOuterBatchArray3d<T>>, x_: Val<GPUDeviceOuterBatchArray3d<T>>) -> Val<GPUDeviceOuterBatchArray3d<T>> {
+    Pool2dBwdOp::<AveragePool>::build_device_obatch_val(AveragePool, pool_shape, self, y_, x_)
+  }
+
+  fn max_pool_bwd(self, pool_shape: Pool2dShape, y_: Val<GPUDeviceOuterBatchArray3d<T>>, x_: Val<GPUDeviceOuterBatchArray3d<T>>) -> Val<GPUDeviceOuterBatchArray3d<T>> {
+    Pool2dBwdOp::<MaxPool>::build_device_obatch_val(MaxPool, pool_shape, self, y_, x_)
+  }
+}
+
+impl<Pool: PoolOp + 'static> Pool2dOp<Pool> {
+  pub fn build_device_obatch_val<T>(
+      pool: Pool,
+      pool_shape: Pool2dShape,
+      x_: Val<GPUDeviceOuterBatchArray3d<T>>)
+  -> Val<GPUDeviceOuterBatchArray3d<T>>
+  // TODO: `ZeroBits` should not be necessary here.
+  where T: GPUDataTyped + CudnnDataTypeExt + PseudoField + ZeroBits + Copy + 'static,
+        CudnnHandle: CudnnPoolExt<T>,
+        GPUDeviceArrayViewMut4d<T>: GPUBatchPoolOps<T>,
+        Val<GPUDeviceOuterBatchArray3d<T>>: SomePoolBwdExt<Pool, GPUDeviceOuterBatchArray3d<T>, PoolShape=Pool2dShape>,
+  {
+    let xpool_op = pool.to_xop();
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            let x_max_bsz = x.max_batch_size();
+            let y_size = pool_shape.calculate_output_size(x.size());
+            let y = GPUDeviceOuterBatchArray3d::zeros(y_size, x_max_bsz, conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray3d<T>>| {
+          if let Some((cap, token)) = output.write(txn) {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            match cap {
+              WriteCap::Assign => {
+                let x = x_.get(txn).as_view();
+                let mut y = output.get_mut(txn, token).as_view_mut();
+                guard._wait(x.async_state());
+                guard._wait(y.async_state());
+                // TODO: assumes NCHW layout.
+                let y_size = pool_shape.calculate_output_size([
+                    pool_shape.src_size[0],
+                    pool_shape.src_size[1],
+                    pool_shape.src_features,
+                ]);
+                let xpool_shape = XPoolFullShape::Pool2d(Pool2dFullShape{
+                  src_space_axes:   pool_shape.src_space_axes,
+                  src_feature_axis: pool_shape.src_feature_axis,
+                  src_batch_axis:   pool_shape.src_batch_axis,
+                  // TODO: assumes NCHW layout.
+                  src_size:         [
+                    pool_shape.src_size[0],
+                    pool_shape.src_size[1],
+                    pool_shape.src_features,
+                    pool_shape.src_features,
+                  ],
+                  dst_space_axes:   pool_shape.dst_space_axes,
+                  dst_feature_axis: pool_shape.dst_feature_axis,
+                  dst_batch_axis:   pool_shape.dst_batch_axis,
+                  // TODO: assumes NCHW layout.
+                  dst_size:         [
+                    y_size[0],
+                    y_size[1],
+                    pool_shape.src_features,
+                    pool_shape.src_features,
+                  ],
+                  ker_size:         pool_shape.ker_size,
+                  stride:           pool_shape.stride,
+                  zero_pad:         pool_shape.zero_pad,
+                });
+                let mut state = match query_gpu_pool_state(conn.device(), xpool_op, xpool_shape, conn.clone()) {
+                  None => panic!("invalid pool2d config"),
+                  Some(state) => state,
+                };
+                y.batch_pool2d(
+                    &mut state,
+                    x,
+                    conn.clone(),
+                );
+              }
+              WriteCap::Accumulate => unimplemented!(),
+            }
+          }
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: Some({
+        Box::new(move |_: Pass, _state: RefMut<_>, _feedfwd: &mut FeedFwd| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      adjoint: Some({
+        let x_ = x_.clone();
+        Box::new(move |_: Pass, y_: Val<GPUDeviceOuterBatchArray3d<T>>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            let adj_x_ = adj_y_.pool_bwd(pool_shape, y_.clone(), x_.clone());
+            x_.put_adjoint(adj_x_, sink);
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F1Op::new(Pool2dOp{pool, pool_shape}, ext, x_)))
+  }
+}
+
+impl<Pool: PoolOp + 'static> Pool2dBwdOp<Pool> {
+  pub fn build_device_obatch_val<T>(
+      pool: Pool,
+      pool_shape: Pool2dShape,
+      dy_: Val<GPUDeviceOuterBatchArray3d<T>>,
+      y_: Val<GPUDeviceOuterBatchArray3d<T>>,
+      x_: Val<GPUDeviceOuterBatchArray3d<T>>)
+  -> Val<GPUDeviceOuterBatchArray3d<T>>
+  // TODO: `ZeroBits` should not be necessary here.
+  where T: GPUDataTyped + CudnnDataTypeExt + PseudoField + ZeroBits + Copy + 'static,
+        CudnnHandle: CudnnPoolExt<T>,
+        GPUDeviceArrayViewMut4d<T>: GPUBatchPoolOps<T>,
+  {
+    let xpool_op = pool.to_xop();
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            let x_shape = x.shape();
+            let dx = GPUDeviceOuterBatchArray3d::zeros_shape(x_shape, conn);
+            guard._wait(dx.async_state());
+            dx
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let dy_ = dy_.clone();
+        let y_ = y_.clone();
+        let x_ = x_.clone();
+        Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray3d<T>>| {
+          if let Some((cap, token)) = output.write(txn) {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            match cap {
+              WriteCap::Assign => {
+                let dy = dy_.get(txn).as_view();
+                let y = y_.get(txn).as_view();
+                let x = x_.get(txn).as_view();
+                let mut dx = output.get_mut(txn, token).as_view_mut();
+                guard._wait(dy.async_state());
+                guard._wait(y.async_state());
+                guard._wait(x.async_state());
+                guard._wait(dx.async_state());
+                // TODO: assumes NCHW layout.
+                let y_size = pool_shape.calculate_output_size([
+                    pool_shape.src_size[0],
+                    pool_shape.src_size[1],
+                    pool_shape.src_features,
+                ]);
+                let xpool_shape = XPoolFullShape::Pool2d(Pool2dFullShape{
+                  src_space_axes:   pool_shape.src_space_axes,
+                  src_feature_axis: pool_shape.src_feature_axis,
+                  src_batch_axis:   pool_shape.src_batch_axis,
+                  // TODO: assumes NCHW layout.
+                  src_size:         [
+                    pool_shape.src_size[0],
+                    pool_shape.src_size[1],
+                    pool_shape.src_features,
+                    pool_shape.src_features,
+                  ],
+                  dst_space_axes:   pool_shape.dst_space_axes,
+                  dst_feature_axis: pool_shape.dst_feature_axis,
+                  dst_batch_axis:   pool_shape.dst_batch_axis,
+                  // TODO: assumes NCHW layout.
+                  dst_size:         [
+                    y_size[0],
+                    y_size[1],
+                    pool_shape.src_features,
+                    pool_shape.src_features,
+                  ],
+                  ker_size:         pool_shape.ker_size,
+                  stride:           pool_shape.stride,
+                  zero_pad:         pool_shape.zero_pad,
+                });
+                let mut state = match query_gpu_pool_state(conn.device(), xpool_op, xpool_shape, conn.clone()) {
+                  None => panic!("invalid pool2d config"),
+                  Some(state) => state,
+                };
+                dx.batch_pool2d_bwd(
+                    &mut state,
+                    y,
+                    dy,
+                    x,
+                    conn.clone(),
+                );
+              }
+              WriteCap::Accumulate => unimplemented!(),
+            }
+          }
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: Some({
+        Box::new(move |_: Pass, _state: RefMut<_>, _feedfwd: &mut FeedFwd| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      adjoint: Some({
+        Box::new(move |_: Pass, _this: Val<GPUDeviceOuterBatchArray3d<T>>, _state: RefMut<_>, _sink: &mut Sink| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F3Op::new(Pool2dBwdOp{pool, pool_shape}, ext, dy_, y_, x_)))
+  }
+}
