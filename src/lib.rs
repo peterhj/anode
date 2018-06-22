@@ -491,6 +491,10 @@ impl Node {
     self.node._pop_rev(stop_txn, pass, self.rvar, self.xvar, apply);
   }
 
+  fn _io<'a>(&'a self, txn: Txn) -> &'a IOVal {
+    self.node._io(txn, &*self.value)
+  }
+
   pub fn _apply(&self, txn: Txn) {
     //self.node._apply(txn, self.rvar, self.xvar, self.mode);
     self.node._apply_any(txn, self.rvar, self.xvar, self.mode, self.value.clone());
@@ -806,6 +810,10 @@ impl<V> Val<V> where V: 'static {
     //self.op._set_output(txn, self.xvar, self.mode, self._clone_value());
     let xvalue = self.op._value3(txn, self.value.as_ref());
     xvalue.set(txn, self.xvar, self.mode, f);
+  }
+
+  fn _io<'a>(&'a self, txn: Txn) -> &'a IOVal {
+    self._value3(txn)
   }
 
   fn _value2(&self, txn: Txn) -> RWVal<V> {
@@ -3354,8 +3362,10 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, RWVal<V>: IOVal + 'static
       if static_value.is_some() {
         return static_value.as_ref().unwrap();
       } else {
-        // FIXME
-        unimplemented!();
+        match self.flag.get(txn) {
+          false => self.x1_._io(txn),
+          true  => self.x2_._io(txn),
+        }
       }
     } else {
       unreachable!();

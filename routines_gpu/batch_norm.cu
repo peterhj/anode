@@ -124,6 +124,7 @@ __global__ void anode_gpu_batch_var_3d1_packed_deterministic_kernel_f32(
     uint32_t reduce_inner_dim,
     uint32_t mid_dim,
     uint32_t reduce_outer_dim,
+    float epsilon,
     const float *x,
     const float *mean,
     float *var)
@@ -152,7 +153,7 @@ __global__ void anode_gpu_batch_var_3d1_packed_deterministic_kernel_f32(
       }
       __syncthreads();
     }
-    var[blk1] = accumulator / norm2;
+    var[blk1] = accumulator / norm2 + epsilon;
   }
 }
 
@@ -160,6 +161,7 @@ extern "C" void anode_gpu_batch_var_3d1_packed_f32(
     uint32_t dim0,
     uint32_t dim1,
     uint32_t dim2,
+    float epsilon,
     const float *x,
     const float *mean,
     float *var,
@@ -168,7 +170,7 @@ extern "C" void anode_gpu_batch_var_3d1_packed_f32(
 {
   assert(check_power_of_2(cfg->flat_block_dim().x));
   anode_gpu_batch_var_3d1_packed_deterministic_kernel_f32<<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
-      dim0, dim1, dim2, x, mean, var);
+      dim0, dim1, dim2, epsilon, x, mean, var);
 }
 
 template <typename Write>
@@ -304,7 +306,6 @@ __global__ void anode_gpu_batch_norm_3d1_packed_kernel_f32(
     uint32_t dim0,
     uint32_t dim1,
     uint32_t dim2,
-    float epsilon,
     const float *x,
     const float *mean,
     const float *var,
@@ -319,7 +320,7 @@ __global__ void anode_gpu_batch_norm_3d1_packed_kernel_f32(
         &i2
     );
     if (i0 < dim0 && i1 < dim1 && i2 < dim2) {
-      y[idx] = (x[idx] - mean[i1]) * rsqrtf(var[i1] + epsilon);
+      y[idx] = (x[idx] - mean[i1]) * rsqrtf(var[i1]);
     }
   }
 }
@@ -328,7 +329,6 @@ extern "C" void anode_gpu_batch_norm_3d1_packed_f32(
     uint32_t dim0,
     uint32_t dim1,
     uint32_t dim2,
-    float epsilon,
     const float *x,
     const float *mean,
     const float *var,
@@ -338,7 +338,7 @@ extern "C" void anode_gpu_batch_norm_3d1_packed_f32(
 {
   uint32_t len = dim0 * dim1 * dim2;
   anode_gpu_batch_norm_3d1_packed_kernel_f32<<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
-      len, dim0, dim1, dim2, epsilon, x, mean, var, y);
+      len, dim0, dim1, dim2, x, mean, var, y);
 }
 
 template <typename Write>
@@ -347,7 +347,6 @@ __global__ void anode_gpu_batch_norm_bwd_3d1_packed_kernel_f32(
     uint32_t dim0,
     uint32_t dim1,
     uint32_t dim2,
-    float epsilon,
     const float *dy,
     const float *var,
     float *dx)
@@ -361,7 +360,7 @@ __global__ void anode_gpu_batch_norm_bwd_3d1_packed_kernel_f32(
         &i2
     );
     if (i0 < dim0 && i1 < dim1 && i2 < dim2) {
-      Write::Write(&dx[idx], dy[idx] * rsqrtf(var[i1] + epsilon));
+      Write::Write(&dx[idx], dy[idx] * rsqrtf(var[i1]));
     }
   }
 }
@@ -370,7 +369,6 @@ extern "C" void anode_gpu_batch_norm_bwd_3d1_packed_f32(
     uint32_t dim0,
     uint32_t dim1,
     uint32_t dim2,
-    float epsilon,
     const float *dy,
     const float *var,
     float *dx,
@@ -379,14 +377,13 @@ extern "C" void anode_gpu_batch_norm_bwd_3d1_packed_f32(
 {
   uint32_t len = dim0 * dim1 * dim2;
   anode_gpu_batch_norm_bwd_3d1_packed_kernel_f32<AssignWrite<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
-      len, dim0, dim1, dim2, epsilon, dy, var, dx);
+      len, dim0, dim1, dim2, dy, var, dx);
 }
 
 extern "C" void anode_gpu_batch_norm_bwd_3d1_packed_accumulate_f32(
     uint32_t dim0,
     uint32_t dim1,
     uint32_t dim2,
-    float epsilon,
     const float *dy,
     const float *var,
     float *dx,
@@ -395,7 +392,7 @@ extern "C" void anode_gpu_batch_norm_bwd_3d1_packed_accumulate_f32(
 {
   uint32_t len = dim0 * dim1 * dim2;
   anode_gpu_batch_norm_bwd_3d1_packed_kernel_f32<AccumulateWrite<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
-      len, dim0, dim1, dim2, epsilon, dy, var, dx);
+      len, dim0, dim1, dim2, dy, var, dx);
 }
 
 template <typename Write>
@@ -403,7 +400,6 @@ __global__ void anode_gpu_batch_norm_bwd_mean_3d1_packed_deterministic_kernel_f3
     uint32_t reduce_inner_dim,
     uint32_t mid_dim,
     uint32_t reduce_outer_dim,
-    float epsilon,
     const float *dy,
     const float *var,
     float *dmean)
@@ -419,7 +415,7 @@ __global__ void anode_gpu_batch_norm_bwd_mean_3d1_packed_deterministic_kernel_f3
         uint32_t i0, i2;
         Index2::Unpack(i, &i0, reduce_inner_dim, &i2);
         uint32_t idx = Index3::Pack(i0, reduce_inner_dim, blk1, mid_dim, i2);
-        cache[threadIdx.x] = -dy[idx] * rsqrtf(v + epsilon);
+        cache[threadIdx.x] = -dy[idx] * rsqrtf(v);
       } else {
         cache[threadIdx.x] = 0.0f;
       }
@@ -438,7 +434,6 @@ extern "C" void anode_gpu_batch_norm_bwd_mean_3d1_packed_f32(
     uint32_t dim0,
     uint32_t dim1,
     uint32_t dim2,
-    float epsilon,
     const float *dy,
     const float *var,
     float *dmean,
@@ -447,14 +442,13 @@ extern "C" void anode_gpu_batch_norm_bwd_mean_3d1_packed_f32(
 {
   assert(check_power_of_2(cfg->flat_block_dim().x));
   anode_gpu_batch_norm_bwd_mean_3d1_packed_deterministic_kernel_f32<AssignWrite<float>><<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
-      dim0, dim1, dim2, epsilon, dy, var, dmean);
+      dim0, dim1, dim2, dy, var, dmean);
 }
 
 extern "C" void anode_gpu_batch_norm_bwd_mean_3d1_packed_accumulate_f32(
     uint32_t dim0,
     uint32_t dim1,
     uint32_t dim2,
-    float epsilon,
     const float *dy,
     const float *var,
     float *dmean,
@@ -463,7 +457,7 @@ extern "C" void anode_gpu_batch_norm_bwd_mean_3d1_packed_accumulate_f32(
 {
   assert(check_power_of_2(cfg->flat_block_dim().x));
   anode_gpu_batch_norm_bwd_mean_3d1_packed_deterministic_kernel_f32<AccumulateWrite<float>><<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
-      dim0, dim1, dim2, epsilon, dy, var, dmean);
+      dim0, dim1, dim2, dy, var, dmean);
 }
 
 template <typename Write>
@@ -471,7 +465,6 @@ __global__ void anode_gpu_batch_norm_bwd_var_3d1_packed_deterministic_kernel_f32
     uint32_t reduce_inner_dim,
     uint32_t mid_dim,
     uint32_t reduce_outer_dim,
-    float epsilon,
     const float *dy,
     const float *x,
     const float *mean,
@@ -490,7 +483,7 @@ __global__ void anode_gpu_batch_norm_bwd_var_3d1_packed_deterministic_kernel_f32
         uint32_t i0, i2;
         Index2::Unpack(i, &i0, reduce_inner_dim, &i2);
         uint32_t idx = Index3::Pack(i0, reduce_inner_dim, blk1, mid_dim, i2);
-        cache[threadIdx.x] = -dy[idx] * (x[idx] - m) * 0.5f * rsqrtf(v + epsilon) / (v + epsilon);
+        cache[threadIdx.x] = -dy[idx] * (x[idx] - m) * 0.5f * rsqrtf(v) / v;
       } else {
         cache[threadIdx.x] = 0.0f;
       }
@@ -509,7 +502,6 @@ extern "C" void anode_gpu_batch_norm_bwd_var_3d1_packed_f32(
     uint32_t dim0,
     uint32_t dim1,
     uint32_t dim2,
-    float epsilon,
     const float *dy,
     const float *x,
     const float *mean,
@@ -520,14 +512,13 @@ extern "C" void anode_gpu_batch_norm_bwd_var_3d1_packed_f32(
 {
   assert(check_power_of_2(cfg->flat_block_dim().x));
   anode_gpu_batch_norm_bwd_var_3d1_packed_deterministic_kernel_f32<AssignWrite<float>><<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
-      dim0, dim1, dim2, epsilon, dy, x, mean, var, dvar);
+      dim0, dim1, dim2, dy, x, mean, var, dvar);
 }
 
 extern "C" void anode_gpu_batch_norm_bwd_var_3d1_packed_accumulate_f32(
     uint32_t dim0,
     uint32_t dim1,
     uint32_t dim2,
-    float epsilon,
     const float *dy,
     const float *x,
     const float *mean,
@@ -538,7 +529,7 @@ extern "C" void anode_gpu_batch_norm_bwd_var_3d1_packed_accumulate_f32(
 {
   assert(check_power_of_2(cfg->flat_block_dim().x));
   anode_gpu_batch_norm_bwd_var_3d1_packed_deterministic_kernel_f32<AccumulateWrite<float>><<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
-      dim0, dim1, dim2, epsilon, dy, x, mean, var, dvar);
+      dim0, dim1, dim2, dy, x, mean, var, dvar);
 }
 
 template <typename Write>
@@ -546,7 +537,6 @@ __global__ void anode_gpu_batch_norm_bwd_var_v2_3d1_packed_deterministic_kernel_
     uint32_t reduce_inner_dim,
     uint32_t mid_dim,
     uint32_t reduce_outer_dim,
-    float epsilon,
     const float *dy,
     const float *y,
     const float *var,
@@ -563,7 +553,7 @@ __global__ void anode_gpu_batch_norm_bwd_var_v2_3d1_packed_deterministic_kernel_
         uint32_t i0, i2;
         Index2::Unpack(i, &i0, reduce_inner_dim, &i2);
         uint32_t idx = Index3::Pack(i0, reduce_inner_dim, blk1, mid_dim, i2);
-        cache[threadIdx.x] = -dy[idx] * y[idx] * 0.5f / (v + epsilon);
+        cache[threadIdx.x] = -dy[idx] * y[idx] * 0.5f / v;
       } else {
         cache[threadIdx.x] = 0.0f;
       }
@@ -582,7 +572,6 @@ extern "C" void anode_gpu_batch_norm_bwd_var_v2_3d1_packed_f32(
     uint32_t dim0,
     uint32_t dim1,
     uint32_t dim2,
-    float epsilon,
     const float *dy,
     const float *y,
     const float *var,
@@ -592,14 +581,13 @@ extern "C" void anode_gpu_batch_norm_bwd_var_v2_3d1_packed_f32(
 {
   assert(check_power_of_2(cfg->flat_block_dim().x));
   anode_gpu_batch_norm_bwd_var_v2_3d1_packed_deterministic_kernel_f32<AssignWrite<float>><<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
-      dim0, dim1, dim2, epsilon, dy, y, var, dvar);
+      dim0, dim1, dim2, dy, y, var, dvar);
 }
 
 extern "C" void anode_gpu_batch_norm_bwd_var_v2_3d1_packed_accumulate_f32(
     uint32_t dim0,
     uint32_t dim1,
     uint32_t dim2,
-    float epsilon,
     const float *dy,
     const float *y,
     const float *var,
@@ -609,5 +597,5 @@ extern "C" void anode_gpu_batch_norm_bwd_var_v2_3d1_packed_accumulate_f32(
 {
   assert(check_power_of_2(cfg->flat_block_dim().x));
   anode_gpu_batch_norm_bwd_var_v2_3d1_packed_deterministic_kernel_f32<AccumulateWrite<float>><<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
-      dim0, dim1, dim2, epsilon, dy, y, var, dvar);
+      dim0, dim1, dim2, dy, y, var, dvar);
 }

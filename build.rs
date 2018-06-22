@@ -50,6 +50,7 @@ fn main() {
       .file("routines_gpu/batch_norm.cu")
       .file("routines_gpu/flat_join.cu")
       .file("routines_gpu/flat_map.cu")
+      .file("routines_gpu/softmax.cu")
       .compile("libanode_routines_gpu.a");
 
     bindgen::Builder::default()

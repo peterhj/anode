@@ -46,6 +46,7 @@ pub struct NormalSrcOp;
 
 pub struct FlattenOp;
 pub struct ReshapeOp;
+pub struct ReshapeLikeOp;
 pub struct MapOp<MapF> { pub f: MapF, }
 pub struct TransposeOp;
 pub struct SumJoinOp;
@@ -68,6 +69,9 @@ pub struct BatchNormalize2dBwdOp;
 pub struct BatchNormalize2dBwdMeanOp;
 pub struct BatchNormalize2dBwdVarianceOp;
 pub struct OnlineAverageOp;
+pub struct SoftmaxOp;
+pub struct SoftmaxCategoricalNLLOp;
+pub struct SoftmaxCategoricalNLLBwdOp;
 pub struct LinearOp;
 pub struct AffineOp;
 pub struct LeftTransposeLinearOp;
@@ -451,16 +455,16 @@ pub trait ReduceSumExt<V, W> {
   fn reduce_sum(self, axis: isize) -> Val<W>;
 }
 
-pub trait BatchMean2dOpExt<X, M> {
+pub trait BatchMean2dOpExt<T, X, M> {
   fn build(axes: [isize; 2], x_: Val<X>) -> Val<M>;
 }
 
-pub trait BatchVariance2dOpExt<X, M> {
-  fn build(axes: [isize; 2], x_: Val<X>, mean_: Val<M>) -> Val<M>;
+pub trait BatchVariance2dOpExt<T, X, M> {
+  fn build(axes: [isize; 2], epsilon: T, x_: Val<X>, mean_: Val<M>) -> Val<M>;
 }
 
 pub trait BatchNormalize2dOpExt<T, X, M> {
-  fn build(axes: [isize; 2], epsilon: T, x_: Val<X>, mean_: Val<M>, var_: Val<M>) -> Val<X>;
+  fn build(axes: [isize; 2], x_: Val<X>, mean_: Val<M>, var_: Val<M>) -> Val<X>;
 }
 
 pub trait BatchNormalizeExt<T, X, M> where T: Copy {
@@ -471,19 +475,19 @@ impl<T, X, M> BatchNormalizeExt<T, X, M> for Val<X>
 where T: Copy,
       X: 'static,
       M: 'static,
-      BatchMean2dOp: BatchMean2dOpExt<X, M>,
-      BatchVariance2dOp: BatchVariance2dOpExt<X, M>,
+      BatchMean2dOp: BatchMean2dOpExt<T, X, M>,
+      BatchVariance2dOp: BatchVariance2dOpExt<T, X, M>,
       BatchNormalize2dOp: BatchNormalize2dOpExt<T, X, M>,
       OnlineAverageOp: OnlineAverageOpExt<T, M>,
       ZerosSrcOp: ZerosSrcOpLikeExt<M> + ZerosSrcOpLikeExt<X>,
 {
   fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, avg_rate: TCell<T>, epsilon: T) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>) {
-    let mean_ = <BatchMean2dOp as BatchMean2dOpExt<X, M>>::build(axes, self.clone());
-    let var_ = <BatchVariance2dOp as BatchVariance2dOpExt<X, M>>::build(axes, self.clone(), mean_.clone());
+    let mean_ = <BatchMean2dOp as BatchMean2dOpExt<T, X, M>>::build(axes, self.clone());
+    let var_ = <BatchVariance2dOp as BatchVariance2dOpExt<T, X, M>>::build(axes, epsilon, self.clone(), mean_.clone());
     let avg_mean_ = zeros_like(mean_.clone()).online_average(avg_rate.clone(), mean_.clone());
     let avg_var_ = zeros_like(var_.clone()).online_average(avg_rate.clone(), var_.clone());
-    let online_y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<T, X, M>>::build(axes, epsilon, self.clone(), mean_.clone(), var_.clone());
-    let avg_y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<T, X, M>>::build(axes, epsilon, self.clone(), avg_mean_.clone(), avg_var_.clone()).fix();
+    let online_y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<T, X, M>>::build(axes, self.clone(), mean_.clone(), var_.clone());
+    let avg_y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<T, X, M>>::build(axes, self.clone(), avg_mean_.clone(), avg_var_.clone()).fix();
     let y_ = switch(online, avg_y_, online_y_);
     (y_, mean_, var_, avg_mean_, avg_var_)
   }
@@ -503,6 +507,31 @@ where T: Copy,
 {
   fn online_average(self, avg_rate: TCell<T>, x_: Val<V>) -> Val<V> {
     <OnlineAverageOp as OnlineAverageOpExt<T, V>>::build(avg_rate, x_, self)
+  }
+}
+
+pub trait SoftmaxOpExt<T, X> {
+  fn build(x_: Val<X>) -> Val<X>;
+}
+
+pub trait SoftmaxCategoricalNLLOpExt<T, X, K, L> {
+  fn build(x_: Val<X>, softmax_: Val<X>, category_data_: Val<K>) -> Val<L>;
+}
+
+pub trait SoftmaxCategoricalNLLExt<T, X, K, L> where T: Copy {
+  fn softmax_categorical_nll(self, category_data_: Val<K>) -> (Val<L>, Val<X>);
+}
+
+impl<T, X, K, L> SoftmaxCategoricalNLLExt<T, X, K, L> for Val<X>
+where T: Copy,
+      X: 'static,
+      SoftmaxOp: SoftmaxOpExt<T, X>,
+      SoftmaxCategoricalNLLOp: SoftmaxCategoricalNLLOpExt<T, X, K, L>,
+{
+  fn softmax_categorical_nll(self, category_data_: Val<K>) -> (Val<L>, Val<X>) {
+    let softmax_ = <SoftmaxOp as SoftmaxOpExt<T, X>>::build(self.clone()).fix();
+    let nll_ = <SoftmaxCategoricalNLLOp as SoftmaxCategoricalNLLOpExt<T, X, K, L>>::build(self.clone(), softmax_.clone(), category_data_);
+    (nll_, softmax_)
   }
 }
 

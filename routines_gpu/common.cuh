@@ -44,7 +44,7 @@ __device__ __forceinline__ uint32_t gblockcount() {
   return gridDim.x;
 }
 
-static bool check_power_of_2(uint32_t x) {
+__attribute__((unused)) static bool check_power_of_2(uint32_t x) {
   return x && !(x & (x - 1));
 }
 

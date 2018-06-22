@@ -29,6 +29,7 @@ use gpudevicemem::array::*;
 use gpudevicemem::array::linalg::*;
 use gpudevicemem::array::tensor::conv::*;
 use gpudevicemem::array::tensor::pool::*;
+use gpudevicemem::array::tensor::softmax::*;
 use memarray::*;
 use rand::prelude::{Rng};
 
@@ -1207,15 +1208,191 @@ where T: PseudoField + Copy + 'static,
   }
 }
 
-impl<T: Copy> FlattenExt<GPUDeviceOuterBatchArray3d<T>, GPUDeviceOuterBatchArray1d<T>> for Val<GPUDeviceOuterBatchArray3d<T>> {
+impl<T: ZeroBits + Copy + 'static> FlattenExt<GPUDeviceOuterBatchArray3d<T>, GPUDeviceOuterBatchArray1d<T>> for Val<GPUDeviceOuterBatchArray3d<T>> {
   fn flatten(self) -> Val<GPUDeviceOuterBatchArray1d<T>> {
-    // TODO
-    unimplemented!();
+    ReshapeOp::build_device_obatch_3d_to_1d_op::<T>(self)
   }
 }
 
-impl FlattenOp {
-  // TODO
+impl ReshapeOp {
+  pub fn build_device_obatch_3d_to_1d_op<T>(x_: Val<GPUDeviceOuterBatchArray3d<T>>) -> Val<GPUDeviceOuterBatchArray1d<T>>
+  where T: ZeroBits + Copy + 'static,
+  {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn: Txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            let y = GPUDeviceOuterBatchArray1d::zeros(x.flat_size(), x.max_batch_size(), conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
+          if let Some((cap, token)) = output.write(txn) {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            guard._wait(x.async_state());
+            guard._wait(y.async_state());
+            assert_eq!(y.size(), x.flat_size());
+            assert_eq!(y.max_batch_size(), x.max_batch_size());
+            match cap {
+              WriteCap::Assign => {
+                if x.is_packed() && y.is_packed() {
+                  y.flat_view_mut().unwrap().copy(x.flat_view().unwrap(), conn);
+                } else {
+                  // TODO
+                  unimplemented!();
+                }
+              }
+              WriteCap::Accumulate => {
+                if x.is_packed() && y.is_packed() {
+                  y.flat_view_mut().unwrap().add(x.flat_view().unwrap(), conn);
+                } else {
+                  // TODO
+                  unimplemented!();
+                }
+              }
+            }
+          }
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      // TODO
+      tangent: None,
+      adjoint: Some({
+        let x_ = x_.clone();
+        Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            let adj_x_ = ReshapeLikeOp::build_device_obatch_1d_to_3d_op(adj_y_, x_.clone());
+            x_.put_adjoint(adj_x_, sink);
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F1Op::new(ReshapeOp, ext, x_)))
+  }
+}
+
+impl ReshapeLikeOp {
+  pub fn build_device_obatch_1d_to_3d_op<T>(x_: Val<GPUDeviceOuterBatchArray1d<T>>, target_: Val<GPUDeviceOuterBatchArray3d<T>>) -> Val<GPUDeviceOuterBatchArray3d<T>>
+  where T: ZeroBits + Copy + 'static,
+  {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        let target_ = target_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          let target_ = target_.clone();
+          RWVal::from(Arc::new(move |txn: Txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            let target = target_.get(txn);
+            guard._wait(x.async_state());
+            guard._wait(target.async_state());
+            assert_eq!(x.size(), target.flat_size());
+            assert_eq!(x.max_batch_size(), target.max_batch_size());
+            let y = GPUDeviceOuterBatchArray3d::zeros(target.size(), target.max_batch_size(), conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        let target_ = target_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
+          if let Some((cap, token)) = output.write(txn) {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            let target = target_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            guard._wait(x.async_state());
+            guard._wait(target.async_state());
+            guard._wait(y.async_state());
+            assert_eq!(y.flat_size(), x.flat_size());
+            assert_eq!(y.size(), target.size());
+            assert_eq!(y.max_batch_size(), x.max_batch_size());
+            assert_eq!(y.max_batch_size(), target.max_batch_size());
+            match cap {
+              WriteCap::Assign => {
+                if x.is_packed() && y.is_packed() {
+                  y.flat_view_mut().unwrap().copy(x.flat_view().unwrap(), conn);
+                } else {
+                  // TODO
+                  unimplemented!();
+                }
+              }
+              WriteCap::Accumulate => {
+                if x.is_packed() && y.is_packed() {
+                  y.flat_view_mut().unwrap().add(x.flat_view().unwrap(), conn);
+                } else {
+                  // TODO
+                  unimplemented!();
+                }
+              }
+            }
+          }
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      // TODO
+      tangent: None,
+      adjoint: Some({
+        let x_ = x_.clone();
+        Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            let adj_x_ = ReshapeOp::build_device_obatch_3d_to_1d_op(adj_y_);
+            x_.put_adjoint(adj_x_, sink);
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F2Op::new(ReshapeLikeOp, ext, x_, target_)))
+  }
 }
 
 impl<T: ZeroBits + 'static> SumJoinOpExt<GPUDeviceScalar<T>> for SumJoinOp
@@ -1502,6 +1679,24 @@ impl ReduceSumOp {
   // TODO
 }
 
+impl BatchMean2dOpExt<f32, GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> for BatchMean2dOp {
+  fn build(axes: [isize; 2], x_: Val<GPUDeviceOuterBatchArray3d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+    BatchMean2dOp::build_device_f32_op(axes, x_)
+  }
+}
+
+impl BatchVariance2dOpExt<f32, GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> for BatchVariance2dOp {
+  fn build(axes: [isize; 2], epsilon: f32, x_: Val<GPUDeviceOuterBatchArray3d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+    BatchVariance2dOp::build_device_f32_op(axes, epsilon, x_, mean_)
+  }
+}
+
+impl BatchNormalize2dOpExt<f32, GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> for BatchNormalize2dOp {
+  fn build(axes: [isize; 2], x_: Val<GPUDeviceOuterBatchArray3d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+    BatchNormalize2dOp::build_device_f32_op(axes, x_, mean_, var_)
+  }
+}
+
 impl BatchMean2dOp {
   pub fn build_device_f32_op(axes: [isize; 2], x_: Val<GPUDeviceOuterBatchArray3d<f32>>) -> Val<GPUDeviceArray1d<f32>>
   {
@@ -1572,10 +1767,10 @@ impl BatchMean2dOp {
       tangent: None,
       adjoint: Some({
         let x_ = x_.clone();
-        Box::new(move |_: Pass, y_: Val<GPUDeviceArray1d<f32>>, state: RefMut<_>, sink: &mut Sink| {
-          if let Some(adj_y_) = y_.adjoint(sink) {
-            // TODO
-            unimplemented!();
+        Box::new(move |_: Pass, mean_: Val<GPUDeviceArray1d<f32>>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_mean_) = mean_.adjoint(sink) {
+            let adj_x_ = BatchMean2dBwdOp::build_device_f32_op(axes, adj_mean_.clone(), x_.clone());
+            x_.put_adjoint(adj_x_, sink);
           }
         })
       }),
@@ -1681,7 +1876,7 @@ impl BatchMean2dBwdOp {
 }
 
 impl BatchVariance2dOp {
-  pub fn build_device_f32_op(axes: [isize; 2], x_: Val<GPUDeviceOuterBatchArray3d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>>
+  pub fn build_device_f32_op(axes: [isize; 2], epsilon: f32, x_: Val<GPUDeviceOuterBatchArray3d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>>
   {
     let ext = OpExt{
       make_val: {
@@ -1735,6 +1930,7 @@ impl BatchVariance2dOp {
                     sz2uint(x_size[0] * x_size[1]),
                     sz2uint(x_size[2]),
                     sz2uint(x_bsz),
+                    epsilon,
                     x.as_view().as_dptr(),
                     mean.as_view().as_dptr(),
                     var.as_view_mut().as_mut_dptr(),
@@ -1755,10 +1951,12 @@ impl BatchVariance2dOp {
       adjoint: Some({
         let x_ = x_.clone();
         let mean_ = mean_.clone();
-        Box::new(move |_: Pass, y_: Val<GPUDeviceArray1d<f32>>, state: RefMut<_>, sink: &mut Sink| {
-          if let Some(adj_y_) = y_.adjoint(sink) {
-            // TODO
-            unimplemented!();
+        Box::new(move |_: Pass, var_: Val<GPUDeviceArray1d<f32>>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_var_) = var_.adjoint(sink) {
+            let adj_x_ = BatchVariance2dBwdOp::build_device_f32_op(axes, adj_var_.clone(), x_.clone(), mean_.clone());
+            let adj_mean_ = BatchVariance2dBwdMeanOp::build_device_f32_op(axes, adj_var_.clone(), x_.clone(), mean_.clone());
+            x_.put_adjoint(adj_x_, sink);
+            mean_.put_adjoint(adj_mean_, sink);
           }
         })
       }),
@@ -1971,7 +2169,7 @@ impl BatchVariance2dBwdMeanOp {
 }
 
 impl BatchNormalize2dOp {
-  pub fn build_device_f32_op(axes: [isize; 2], epsilon: f32, x_: Val<GPUDeviceOuterBatchArray3d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray3d<f32>>
+  pub fn build_device_f32_op(axes: [isize; 2], x_: Val<GPUDeviceOuterBatchArray3d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray3d<f32>>
   {
     let ext = OpExt{
       make_val: {
@@ -2028,7 +2226,6 @@ impl BatchNormalize2dOp {
                     sz2uint(x_size[0] * x_size[1]),
                     sz2uint(x_size[2]),
                     sz2uint(x_bsz),
-                    epsilon,
                     x.as_view().as_dptr(),
                     mean.as_view().as_dptr(),
                     var.as_view().as_dptr(),
@@ -2049,10 +2246,16 @@ impl BatchNormalize2dOp {
       tangent: None,
       adjoint: Some({
         let x_ = x_.clone();
+        let mean_ = mean_.clone();
+        let var_ = var_.clone();
         Box::new(move |_: Pass, y_: Val<GPUDeviceOuterBatchArray3d<f32>>, state: RefMut<_>, sink: &mut Sink| {
           if let Some(adj_y_) = y_.adjoint(sink) {
-            // TODO
-            unimplemented!();
+            let adj_x_ = BatchNormalize2dBwdOp::build_device_f32_op(axes, adj_y_.clone(), var_.clone());
+            let adj_mean_ = BatchNormalize2dBwdMeanOp::build_device_f32_op(axes, adj_y_.clone(), var_.clone());
+            let adj_var_ = BatchNormalize2dBwdVarianceOp::build_device_f32_op(axes, adj_y_.clone(), x_.clone(), mean_.clone(), var_.clone());
+            x_.put_adjoint(adj_x_, sink);
+            mean_.put_adjoint(adj_mean_, sink);
+            var_.put_adjoint(adj_var_, sink);
           }
         })
       }),
@@ -2063,7 +2266,7 @@ impl BatchNormalize2dOp {
 }
 
 impl BatchNormalize2dBwdOp {
-  pub fn build_device_f32_op(axes: [isize; 2], epsilon: f32, dy_: Val<GPUDeviceOuterBatchArray3d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray3d<f32>>
+  pub fn build_device_f32_op(axes: [isize; 2], dy_: Val<GPUDeviceOuterBatchArray3d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray3d<f32>>
   {
     let ext = OpExt{
       make_val: {
@@ -2119,7 +2322,6 @@ impl BatchNormalize2dBwdOp {
                     sz2uint(x_size[0] * x_size[1]),
                     sz2uint(x_size[2]),
                     sz2uint(x_bsz),
-                    epsilon,
                     dy.as_view().as_dptr(),
                     var.as_view().as_dptr(),
                     dx.as_view_mut().as_mut_dptr(),
@@ -2133,7 +2335,6 @@ impl BatchNormalize2dBwdOp {
                     sz2uint(x_size[0] * x_size[1]),
                     sz2uint(x_size[2]),
                     sz2uint(x_bsz),
-                    epsilon,
                     dy.as_view().as_dptr(),
                     var.as_view().as_dptr(),
                     dx.as_view_mut().as_mut_dptr(),
@@ -2162,7 +2363,7 @@ impl BatchNormalize2dBwdOp {
 }
 
 impl BatchNormalize2dBwdMeanOp {
-  pub fn build_device_f32_op(axes: [isize; 2], epsilon: f32, dy_: Val<GPUDeviceOuterBatchArray3d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>>
+  pub fn build_device_f32_op(axes: [isize; 2], dy_: Val<GPUDeviceOuterBatchArray3d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>>
   {
     let ext = OpExt{
       make_val: {
@@ -2218,7 +2419,6 @@ impl BatchNormalize2dBwdMeanOp {
                     sz2uint(x_size[0] * x_size[1]),
                     sz2uint(x_size[2]),
                     sz2uint(x_bsz),
-                    epsilon,
                     dy.as_view().as_dptr(),
                     var.as_view().as_dptr(),
                     dmean.as_view_mut().as_mut_dptr(),
@@ -2232,7 +2432,6 @@ impl BatchNormalize2dBwdMeanOp {
                     sz2uint(x_size[0] * x_size[1]),
                     sz2uint(x_size[2]),
                     sz2uint(x_bsz),
-                    epsilon,
                     dy.as_view().as_dptr(),
                     var.as_view().as_dptr(),
                     dmean.as_view_mut().as_mut_dptr(),
@@ -2261,7 +2460,7 @@ impl BatchNormalize2dBwdMeanOp {
 }
 
 impl BatchNormalize2dBwdVarianceOp {
-  pub fn build_device_f32_op(axes: [isize; 2], epsilon: f32, dy_: Val<GPUDeviceOuterBatchArray3d<f32>>, x_: Val<GPUDeviceOuterBatchArray3d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>>
+  pub fn build_device_f32_op(axes: [isize; 2], dy_: Val<GPUDeviceOuterBatchArray3d<f32>>, x_: Val<GPUDeviceOuterBatchArray3d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>>
   {
     let ext = OpExt{
       make_val: {
@@ -2323,7 +2522,6 @@ impl BatchNormalize2dBwdVarianceOp {
                     sz2uint(x_size[0] * x_size[1]),
                     sz2uint(x_size[2]),
                     sz2uint(x_bsz),
-                    epsilon,
                     dy.as_view().as_dptr(),
                     x.as_view().as_dptr(),
                     mean.as_view().as_dptr(),
@@ -2339,7 +2537,6 @@ impl BatchNormalize2dBwdVarianceOp {
                     sz2uint(x_size[0] * x_size[1]),
                     sz2uint(x_size[2]),
                     sz2uint(x_bsz),
-                    epsilon,
                     dy.as_view().as_dptr(),
                     x.as_view().as_dptr(),
                     mean.as_view().as_dptr(),
@@ -2368,7 +2565,7 @@ impl BatchNormalize2dBwdVarianceOp {
     Val::from(Rc::new(F4Op::new(BatchNormalize2dBwdVarianceOp, ext, dy_, x_, mean_, var_)))
   }
 
-  pub fn build_device_f32_op_v2(axes: [isize; 2], epsilon: f32, dy_: Val<GPUDeviceOuterBatchArray3d<f32>>, y_: Val<GPUDeviceOuterBatchArray3d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>>
+  pub fn build_device_f32_op_v2(axes: [isize; 2], dy_: Val<GPUDeviceOuterBatchArray3d<f32>>, y_: Val<GPUDeviceOuterBatchArray3d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>>
   {
     let ext = OpExt{
       make_val: {
@@ -2427,7 +2624,6 @@ impl BatchNormalize2dBwdVarianceOp {
                     sz2uint(x_size[0] * x_size[1]),
                     sz2uint(x_size[2]),
                     sz2uint(x_bsz),
-                    epsilon,
                     dy.as_view().as_dptr(),
                     y.as_view().as_dptr(),
                     var.as_view().as_dptr(),
@@ -2442,7 +2638,6 @@ impl BatchNormalize2dBwdVarianceOp {
                     sz2uint(x_size[0] * x_size[1]),
                     sz2uint(x_size[2]),
                     sz2uint(x_bsz),
-                    epsilon,
                     dy.as_view().as_dptr(),
                     y.as_view().as_dptr(),
                     var.as_view().as_dptr(),
@@ -2468,6 +2663,237 @@ impl BatchNormalize2dBwdVarianceOp {
       inplace: None,
     };
     Val::from(Rc::new(F3Op::new(BatchNormalize2dBwdVarianceOp, ext, dy_, y_, var_)))
+  }
+}
+
+impl OnlineAverageOpExt<f32, GPUDeviceArray1d<f32>> for OnlineAverageOp {
+  fn build(avg_rate: TCell<f32>, x_: Val<GPUDeviceArray1d<f32>>, y_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          unreachable!();
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let avg_rate = avg_rate.clone();
+        let x_ = x_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<f32>>| {
+          output.set(txn, |mut y| {
+            println!("DEBUG: OnlineAverageOp: apply: writing...");
+            let mut pool = implicit_ctx().gpu().pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            guard._wait(y.async_state());
+            let r = avg_rate.get(txn);
+            y.as_view_mut().online_average(r, x.as_view(), conn);
+          });
+        })
+      },
+      build: Some({
+        Box::new(move |_args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: None,
+      adjoint: None,
+      inplace: None,
+    };
+    //Val::from(Rc::new(F1WrapOp::new(OnlineAverageOp, ext, x_, y_)))
+    let y = y_._static_value();
+    Val::with_value(Rc::new(F1WrapOp::new(OnlineAverageOp, ext, x_, y_)), y)
+  }
+}
+
+/*impl SoftmaxOpExt<f32, GPUDeviceOuterBatchArray1d<f32>> for SoftmaxOp {
+}*/
+
+impl SoftmaxOp {
+  fn build_device_obatch_1d_op(x_: Val<GPUDeviceOuterBatchArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            let y = GPUDeviceOuterBatchArray1d::zeros(x.size(), x.max_batch_size(), conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
+          if let Some((cap, token)) = output.write(txn) {
+            implicit_ctx()._debug_print();
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            guard._wait(x.async_state());
+            guard._wait(y.async_state());
+            // FIXME: size checks.
+            // FIXME: set batch size.
+            let x_size = x.size();
+            let x_bsz = x.batch_size();
+            match cap {
+              WriteCap::Assign => {
+                // TODO: assumes NCHW layout.
+                let xsoftmax_shape = XSoftmaxFullShape::Softmax0d(Softmax0dFullShape{
+                  src_feature_axis: 0,
+                  src_batch_axis:   1,
+                  src_size:         [x_size, x_bsz],
+                  dst_feature_axis: 0,
+                  dst_batch_axis:   1,
+                  dst_size:         [x_size, x_bsz],
+                });
+                let mut state = match query_gpu_softmax_state(conn.device(), xsoftmax_shape, conn.clone()) {
+                  None => panic!("invalid softmax config"),
+                  Some(state) => state,
+                };
+                y.as_view_mut().batch_softmax(
+                    &mut state,
+                    x.as_view(),
+                    conn.clone(),
+                );
+              }
+              WriteCap::Accumulate => {
+                // TODO
+                unimplemented!();
+              }
+            }
+          }
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, y_: Val<_>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // TODO
+            unimplemented!();
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F1Op::new(SoftmaxOp, ext, x_)))
+  }
+}
+
+impl SoftmaxCategoricalNLLOp {
+  fn build_device_obatch_1d_op(x_: Val<GPUDeviceOuterBatchArray1d<f32>>, fixed_softmax_: Val<GPUDeviceOuterBatchArray1d<f32>>, category_data_: Val<GPUDeviceOuterBatchScalar<u32>>) -> Val<GPUDeviceOuterBatchScalar<f32>> {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            let y = GPUDeviceOuterBatchScalar::zeros((), x.max_batch_size(), conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        let prob_ = fixed_softmax_.clone();
+        let data_ = category_data_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
+          if let Some((cap, token)) = output.write(txn) {
+            implicit_ctx()._debug_print();
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            let prob = prob_.get(txn);
+            let data = data_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            guard._wait(x.async_state());
+            guard._wait(prob.async_state());
+            guard._wait(data.async_state());
+            guard._wait(y.async_state());
+            // FIXME: size checks.
+            // FIXME: set batch size.
+            match cap {
+              WriteCap::Assign => {
+                let mut stream = conn.cuda_stream();
+                /*unsafe { anode_gpu_batch_norm_bwd_var_v2_3d1_packed_f32(
+                    sz2uint(x_size[0] * x_size[1]),
+                    sz2uint(x_size[2]),
+                    sz2uint(x_bsz),
+                    dy.as_view().as_dptr(),
+                    y.as_view().as_dptr(),
+                    var.as_view().as_dptr(),
+                    dvar.as_view_mut().as_mut_dptr(),
+                    conn.cuda_kernel_config() as *const _,
+                    stream.as_mut_ptr(),
+                ) };*/
+                // TODO
+                unimplemented!();
+              }
+              WriteCap::Accumulate => {
+                // TODO
+                unimplemented!();
+              }
+            }
+          }
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        let x_ = x_.clone();
+        let prob_ = fixed_softmax_.clone();
+        let data_ = category_data_.clone();
+        Box::new(move |_: Pass, y_: Val<_>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            let adj_x_ = SoftmaxCategoricalNLLBwdOp::build_device_obatch_1d_op(adj_y_, prob_.clone(), data_.clone());
+            x_.put_adjoint(adj_x_, sink);
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F3Op::new(SoftmaxCategoricalNLLOp, ext, x_, fixed_softmax_, category_data_)))
+  }
+}
+
+impl SoftmaxCategoricalNLLBwdOp {
+  fn build_device_obatch_1d_op(adj_y_: Val<GPUDeviceOuterBatchScalar<f32>>, fixed_softmax_: Val<GPUDeviceOuterBatchArray1d<f32>>, category_data_: Val<GPUDeviceOuterBatchScalar<u32>>) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
+    // TODO
+    unimplemented!();
   }
 }
 
@@ -2934,71 +3360,6 @@ impl<F> FlatJoinOp<F> where F: Clone + 'static {
       }),*/
     };
     Val::from(Rc::new(FJoinOp::new(FlatJoinOp{f: f_config}, ext, xs_)))
-  }
-}
-
-impl BatchMean2dOpExt<GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> for BatchMean2dOp {
-  fn build(axes: [isize; 2], x_: Val<GPUDeviceOuterBatchArray3d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
-    // TODO
-    unimplemented!();
-  }
-}
-
-impl BatchVariance2dOpExt<GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> for BatchVariance2dOp {
-  fn build(axes: [isize; 2], x_: Val<GPUDeviceOuterBatchArray3d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
-    // TODO
-    unimplemented!();
-  }
-}
-
-impl BatchNormalize2dOpExt<f32, GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> for BatchNormalize2dOp {
-  fn build(axes: [isize; 2], epsilon: f32, x_: Val<GPUDeviceOuterBatchArray3d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
-    // TODO
-    unimplemented!();
-  }
-}
-
-impl OnlineAverageOpExt<f32, GPUDeviceArray1d<f32>> for OnlineAverageOp {
-  fn build(avg_rate: TCell<f32>, x_: Val<GPUDeviceArray1d<f32>>, y_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
-    let ext = OpExt{
-      make_val: {
-        //Box::new(move || {
-        Box::new(move |state: RefMut<_>| {
-          unreachable!();
-        })
-      },
-      apply: {
-        let section = GPULazyAsyncSection::default();
-        let avg_rate = avg_rate.clone();
-        let x_ = x_.clone();
-        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<f32>>| {
-          output.set(txn, |mut y| {
-            println!("DEBUG: OnlineAverageOp: apply: writing...");
-            let mut pool = implicit_ctx().gpu().pool();
-            let conn = pool.conn();
-            let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
-            let x = x_.get(txn);
-            guard._wait(x.async_state());
-            guard._wait(y.async_state());
-            let r = avg_rate.get(txn);
-            y.as_view_mut().online_average(r, x.as_view(), conn);
-          });
-        })
-      },
-      build: Some({
-        Box::new(move |_args| {
-          // TODO
-          unimplemented!();
-        })
-      }),
-      tangent: None,
-      adjoint: None,
-      inplace: None,
-    };
-    //Val::from(Rc::new(F1WrapOp::new(OnlineAverageOp, ext, x_, y_)))
-    let y = y_._static_value();
-    Val::with_value(Rc::new(F1WrapOp::new(OnlineAverageOp, ext, x_, y_)), y)
   }
 }
 
