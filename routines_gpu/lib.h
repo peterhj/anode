@@ -346,6 +346,7 @@ void anode_gpu_softmax_cat_nll_packed_f32(
 void anode_gpu_softmax_cat_nll_bwd_packed_f32(
     uint32_t dim0,
     uint32_t dim1,
+    const float *dy,
     const float *softmax,
     const uint32_t *cat_data,
     float *dx,
@@ -354,6 +355,7 @@ void anode_gpu_softmax_cat_nll_bwd_packed_f32(
 void anode_gpu_softmax_cat_nll_bwd_packed_accumulate_f32(
     uint32_t dim0,
     uint32_t dim1,
+    const float *dy,
     const float *softmax,
     const uint32_t *cat_data,
     float *dx,

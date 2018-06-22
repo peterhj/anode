@@ -30,6 +30,7 @@ use gpudevicemem::array::linalg::*;
 use gpudevicemem::array::tensor::conv::*;
 use gpudevicemem::array::tensor::pool::*;
 use gpudevicemem::array::tensor::softmax::*;
+use gpudevicemem::ffi::routines_gpu::*;
 use memarray::*;
 use rand::prelude::{Rng};
 
@@ -1675,10 +1676,6 @@ impl SumJoinOp {
   }*/
 }
 
-impl ReduceSumOp {
-  // TODO
-}
-
 impl BatchMean2dOpExt<f32, GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> for BatchMean2dOp {
   fn build(axes: [isize; 2], x_: Val<GPUDeviceOuterBatchArray3d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
     BatchMean2dOp::build_device_f32_op(axes, x_)
@@ -2898,9 +2895,100 @@ impl SoftmaxCategoricalNLLOp {
 }
 
 impl SoftmaxCategoricalNLLBwdOp {
-  fn build_device_obatch_1d_op(adj_y_: Val<GPUDeviceOuterBatchScalar<f32>>, fixed_softmax_: Val<GPUDeviceOuterBatchArray1d<f32>>, category_data_: Val<GPUDeviceOuterBatchScalar<u32>>) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
-    // TODO
-    unimplemented!();
+  fn build_device_obatch_1d_op(adj_y_: Val<GPUDeviceOuterBatchScalar<f32>>, /*x_: Val<GPUDeviceOuterBatchArray1d<f32>>,*/ fixed_softmax_: Val<GPUDeviceOuterBatchArray1d<f32>>, category_data_: Val<GPUDeviceOuterBatchScalar<u32>>) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
+    let ext = OpExt{
+      make_val: {
+        let x_ = fixed_softmax_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            let y = GPUDeviceOuterBatchArray1d::zeros(x.size(), x.max_batch_size(), conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let dy_ = adj_y_.clone();
+        let prob_ = fixed_softmax_.clone();
+        let data_ = category_data_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
+          if let Some((cap, token)) = output.write(txn) {
+            implicit_ctx()._debug_print();
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let dy = dy_.get(txn);
+            let prob = prob_.get(txn);
+            let data = data_.get(txn);
+            let mut dx = output.get_mut(txn, token);
+            guard._wait(dy.async_state());
+            guard._wait(prob.async_state());
+            guard._wait(data.async_state());
+            guard._wait(dx.async_state());
+            // FIXME: size checks.
+            // FIXME: set batch size.
+            let x_size = prob.size();
+            let x_bsz = prob.batch_size();
+            match cap {
+              WriteCap::Assign => {
+                let mut stream = conn.cuda_stream();
+                unsafe { anode_gpu_softmax_cat_nll_bwd_packed_f32(
+                    sz2uint(x_size),
+                    sz2uint(x_bsz),
+                    dy.as_view().as_dptr(),
+                    prob.as_view().as_dptr(),
+                    data.as_view().as_dptr(),
+                    dx.as_view_mut().as_mut_dptr(),
+                    conn.cuda_kernel_config() as *const _,
+                    stream.as_mut_ptr(),
+                ) };
+              }
+              WriteCap::Accumulate => {
+                let mut stream = conn.cuda_stream();
+                unsafe { anode_gpu_softmax_cat_nll_bwd_packed_accumulate_f32(
+                    sz2uint(x_size),
+                    sz2uint(x_bsz),
+                    dy.as_view().as_dptr(),
+                    prob.as_view().as_dptr(),
+                    data.as_view().as_dptr(),
+                    dx.as_view_mut().as_mut_dptr(),
+                    conn.cuda_kernel_config() as *const _,
+                    stream.as_mut_ptr(),
+                ) };
+              }
+            }
+          }
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        //let dy_ = adj_y_.clone();
+        //let prob_ = fixed_softmax_.clone();
+        //let data_ = category_data_.clone();
+        Box::new(move |_: Pass, dx_: Val<_>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(_) = dx_.adjoint(sink) {
+            // TODO
+            unimplemented!();
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F3Op::new(SoftmaxCategoricalNLLBwdOp, ext, adj_y_, fixed_softmax_, category_data_)))
   }
 }
 
@@ -2971,12 +3059,186 @@ where T: Copy,
   }
 }
 
-/*impl BatchNormalizeExt<GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
-  fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, epsilon: TCell<f32>) -> (Val<GPUDeviceOuterBatchArray3d<f32>>, Val<GPUDeviceArray1d<f32>>, Val<GPUDeviceArray1d<f32>>, Val<GPUDeviceArray1d<f32>>, Val<GPUDeviceArray1d<f32>>) {
-    // TODO
-    unimplemented!();
+impl BatchSumOpExt<GPUDeviceOuterBatchScalar<f32>, GPUDeviceScalar<f32>> for BatchSumOp {
+  fn build(x_: Val<GPUDeviceOuterBatchScalar<f32>>) -> Val<GPUDeviceScalar<f32>> {
+    //println!("DEBUG: build batch sum op...");
+    BatchSumOp::build_device_f32_op(x_)
   }
-}*/
+}
+
+impl BatchSumOp {
+  pub fn build_device_f32_op(x_: Val<GPUDeviceOuterBatchScalar<f32>>) -> Val<GPUDeviceScalar<f32>> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          RWVal::from(Arc::new(move |txn: Txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let y = GPUDeviceScalar::zeros((), conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
+          if let Some((cap, token)) = output.write(txn) {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            guard._wait(x.async_state());
+            guard._wait(y.async_state());
+            match cap {
+              WriteCap::Assign => {
+                let mut stream = conn.cuda_stream();
+                // TODO: should use a higher level wrapper for this.
+                unsafe { gpudevicemem_sum_packed_deterministic_f32(
+                    sz2uint(x.batch_size()),
+                    x.as_view().as_dptr(),
+                    y.as_view_mut().as_mut_dptr(),
+                    conn.cuda_kernel_config() as *const _,
+                    stream.as_mut_ptr(),
+                ) };
+              }
+              WriteCap::Accumulate => {
+                // TODO
+                unimplemented!();
+              }
+            }
+          }
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      // TODO
+      tangent: None,
+      adjoint: Some({
+        let x_ = x_.clone();
+        Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            let adj_x_ = adj_y_.batch_broadcast_like(x_.clone());
+            x_.put_adjoint(adj_x_, sink);
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F1Op::new(BatchSumOp, ext, x_)))
+  }
+}
+
+impl BatchBroadcastLikeOpExt<GPUDeviceScalar<f32>, GPUDeviceOuterBatchScalar<f32>> for BatchBroadcastLikeOp {
+  fn build(x_: Val<GPUDeviceScalar<f32>>, target_: Val<GPUDeviceOuterBatchScalar<f32>>) -> Val<GPUDeviceOuterBatchScalar<f32>> {
+    //println!("DEBUG: build batch broadcast like op...");
+    BatchBroadcastLikeOp::build_device_f32_op(x_, target_)
+  }
+}
+
+impl BatchBroadcastLikeOp {
+  pub fn build_device_f32_op(x_: Val<GPUDeviceScalar<f32>>, target_: Val<GPUDeviceOuterBatchScalar<f32>>) -> Val<GPUDeviceOuterBatchScalar<f32>> {
+    let ext = OpExt{
+      make_val: {
+        let target_ = target_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let target_ = target_.clone();
+          RWVal::from(Arc::new(move |txn: Txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let target = target_.get(txn);
+            guard._wait(target.async_state());
+            let y = GPUDeviceOuterBatchScalar::zeros((), target.max_batch_size(), conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        let target_ = target_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
+          if let Some((cap, token)) = output.write(txn) {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            let target = target_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            guard._wait(x.async_state());
+            guard._wait(target.async_state());
+            guard._wait(y.async_state());
+            y.set_batch_size(target.batch_size());
+            match cap {
+              WriteCap::Assign => {
+                let mut stream = conn.cuda_stream();
+                // TODO: should use a higher level wrapper for this.
+                unsafe { gpudevicemem_bcast_packed_f32(
+                    sz2uint(y.batch_size()),
+                    x.as_view().as_dptr(),
+                    y.as_view_mut().as_mut_dptr(),
+                    conn.cuda_kernel_config() as *const _,
+                    stream.as_mut_ptr(),
+                ) };
+              }
+              WriteCap::Accumulate => {
+                let mut stream = conn.cuda_stream();
+                // TODO: should use a higher level wrapper for this.
+                unsafe { gpudevicemem_bcast_packed_accumulate_f32(
+                    sz2uint(y.batch_size()),
+                    x.as_view().as_dptr(),
+                    y.as_view_mut().as_mut_dptr(),
+                    conn.cuda_kernel_config() as *const _,
+                    stream.as_mut_ptr(),
+                ) };
+              }
+            }
+          }
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      // TODO
+      tangent: None,
+      adjoint: Some({
+        let x_ = x_.clone();
+        Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            let adj_x_ = adj_y_.batch_sum();
+            x_.put_adjoint(adj_x_, sink);
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F2Op::new(BatchBroadcastLikeOp, ext, x_, target_)))
+  }
+}
 
 impl PositiveClipFlatMapExt<GPUDeviceOuterBatchArray1d<f32>> for Val<GPUDeviceOuterBatchArray1d<f32>> {
   fn positive_clip(self) -> Val<GPUDeviceOuterBatchArray1d<f32>> {

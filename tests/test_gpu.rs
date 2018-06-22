@@ -447,3 +447,41 @@ fn test_gpu_op_softmax_cat_nll() {
   println!("DEBUG: {:?}", &nll_h.as_view().flat_slice().unwrap()[..]);
   println!("DEBUG: {:?}", &data_h.as_view().flat_slice().unwrap()[..]);
 }
+
+#[test]
+fn test_gpu_op_softmax_cat_nll_adj() {
+  println!();
+  let x = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceOuterBatchArray1d::<f32>::zeros(32, 2, conn)
+  }));
+  let data = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceOuterBatchScalar::<u32>::zeros((), 2, conn)
+  }));
+  let (nll, y) = x.clone().softmax_categorical_nll(data.clone());
+  let loss = nll.clone().batch_sum();
+
+  let mut loss_sink = sink(loss.clone());
+  let nll_adj = nll.adjoint(&mut loss_sink).unwrap();
+  let dx = x.adjoint(&mut loss_sink).unwrap();
+
+  let mut target = MemArray1d::<u32>::zeros(2);
+  target.as_view_mut().flat_slice_mut().unwrap()
+    .copy_from_slice(&[12, 17]);
+
+  let mut nll_h = MemArray1d::<f32>::zeros(2);
+  let mut nll_adj_h = MemArray1d::<f32>::zeros(2);
+  let mut z = MemArray2d::<f32>::zeros([32, 2]);
+  let mut dz = MemArray2d::<f32>::zeros([32, 2]);
+
+  let t = txn();
+  data.deserialize(t, &mut target);
+  dx.eval(t);
+  nll.serialize(t, &mut nll_h);
+  nll_adj.serialize(t, &mut nll_adj_h);
+  x.serialize(t, &mut z);
+  dx.serialize(t, &mut dz);
+  println!("DEBUG: {:?}", &nll_h.as_view().flat_slice().unwrap()[..]);
+  println!("DEBUG: {:?}", &nll_adj_h.as_view().flat_slice().unwrap()[..]);
+  println!("DEBUG: {:?}", &z.as_view().flat_slice().unwrap()[..]);
+  println!("DEBUG: {:?}", &dz.as_view().flat_slice().unwrap()[..]);
+}

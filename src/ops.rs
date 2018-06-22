@@ -55,6 +55,7 @@ pub struct SumJoinOp;
 pub struct FlatSumOp;
 pub struct ReduceSumOp;
 pub struct BatchSumOp;
+pub struct BatchBroadcastLikeOp;
 pub struct FlatMapOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatMapInplaceOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatJoinOp<FlatJoin> { pub f: FlatJoin }
@@ -453,6 +454,34 @@ impl<V> Add<Val<V>> for Val<V> where Val<V>: SumExt<V> {
 
 pub trait ReduceSumExt<V, W> {
   fn reduce_sum(self, axis: isize) -> Val<W>;
+}
+
+pub trait BatchSumOpExt<V, W> {
+  fn build(x_: Val<V>) -> Val<W>;
+}
+
+pub trait BatchSumExt<V, W> {
+  fn batch_sum(self) -> Val<W>;
+}
+
+impl<V, W> BatchSumExt<V, W> for Val<V> where BatchSumOp: BatchSumOpExt<V, W> {
+  fn batch_sum(self) -> Val<W> {
+    <BatchSumOp as BatchSumOpExt<V, W>>::build(self)
+  }
+}
+
+pub trait BatchBroadcastLikeOpExt<V, W> {
+  fn build(x_: Val<V>, target_: Val<W>) -> Val<W>;
+}
+
+pub trait BatchBroadcastLikeExt<V, W> {
+  fn batch_broadcast_like(self, target: Val<W>) -> Val<W>;
+}
+
+impl<V, W> BatchBroadcastLikeExt<V, W> for Val<V> where BatchBroadcastLikeOp: BatchBroadcastLikeOpExt<V, W> {
+  fn batch_broadcast_like(self, target: Val<W>) -> Val<W> {
+    <BatchBroadcastLikeOp as BatchBroadcastLikeOpExt<V, W>>::build(self, target)
+  }
 }
 
 pub trait BatchMean2dOpExt<T, X, M> {

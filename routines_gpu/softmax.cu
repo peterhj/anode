@@ -61,6 +61,7 @@ __global__ void anode_gpu_softmax_cat_nll_bwd_packed_kernel_f32(
     uint32_t len,
     uint32_t dim0,
     uint32_t dim1,
+    const float *dy,
     const float *softmax,
     const uint32_t *cat_data,
     float *dx)
@@ -69,16 +70,9 @@ __global__ void anode_gpu_softmax_cat_nll_bwd_packed_kernel_f32(
     uint32_t k0, i1;
     Index2::Unpack(idx, &k0, dim0, &i1);
     if (k0 < dim0 && i1 < dim1) {
-      float p_i = softmax[idx];
       uint32_t cat_k = cat_data[i1];
-      float dx_i;
       // TODO: check sign.
-      if (cat_k == k0) {
-        dx_i = p_i - 1.0f;
-      } else {
-        dx_i = p_i;
-      }
-      Write::Write(&dx[idx], dx_i);
+      Write::Write(&dx[idx], dy[i1] * (softmax[idx] - ((float)(cat_k == k0))));
     }
   }
 }
@@ -86,6 +80,7 @@ __global__ void anode_gpu_softmax_cat_nll_bwd_packed_kernel_f32(
 extern "C" void anode_gpu_softmax_cat_nll_bwd_packed_f32(
     uint32_t dim0,
     uint32_t dim1,
+    const float *dy,
     const float *softmax,
     const uint32_t *cat_data,
     float *dx,
@@ -94,12 +89,13 @@ extern "C" void anode_gpu_softmax_cat_nll_bwd_packed_f32(
 {
   uint32_t len = dim0 * dim1;
   anode_gpu_softmax_cat_nll_bwd_packed_kernel_f32<AssignWrite<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
-      len, dim0, dim1, softmax, cat_data, dx);
+      len, dim0, dim1, dy, softmax, cat_data, dx);
 }
 
 extern "C" void anode_gpu_softmax_cat_nll_bwd_packed_accumulate_f32(
     uint32_t dim0,
     uint32_t dim1,
+    const float *dy,
     const float *softmax,
     const uint32_t *cat_data,
     float *dx,
@@ -108,5 +104,5 @@ extern "C" void anode_gpu_softmax_cat_nll_bwd_packed_accumulate_f32(
 {
   uint32_t len = dim0 * dim1;
   anode_gpu_softmax_cat_nll_bwd_packed_kernel_f32<AccumulateWrite<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
-      len, dim0, dim1, softmax, cat_data, dx);
+      len, dim0, dim1, dy, softmax, cat_data, dx);
 }
