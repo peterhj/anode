@@ -50,7 +50,9 @@ __global__ void anode_gpu_batch_mean_3d1_packed_deterministic_kernel_f32(
       }
       __syncthreads();
     }
-    mean[blk1] = accumulator / norm1;
+    if (0 == threadIdx.x) {
+      mean[blk1] = accumulator / norm1;
+    }
   }
 }
 
@@ -153,7 +155,9 @@ __global__ void anode_gpu_batch_var_3d1_packed_deterministic_kernel_f32(
       }
       __syncthreads();
     }
-    var[blk1] = accumulator / norm2 + epsilon;
+    if (0 == threadIdx.x) {
+      var[blk1] = accumulator / norm2 + epsilon;
+    }
   }
 }
 
@@ -265,7 +269,9 @@ __global__ void anode_gpu_batch_var_bwd_mean_3d1_packed_deterministic_kernel_f32
       }
       __syncthreads();
     }
-    Write::Write(&dmean[blk1], accumulator / norm2);
+    if (0 == threadIdx.x) {
+      Write::Write(&dmean[blk1], accumulator / norm2);
+    }
   }
 }
 
@@ -426,7 +432,9 @@ __global__ void anode_gpu_batch_norm_bwd_mean_3d1_packed_deterministic_kernel_f3
       }
       __syncthreads();
     }
-    Write::Write(&dmean[blk1], accumulator);
+    if (0 == threadIdx.x) {
+      Write::Write(&dmean[blk1], accumulator);
+    }
   }
 }
 
@@ -494,7 +502,9 @@ __global__ void anode_gpu_batch_norm_bwd_var_3d1_packed_deterministic_kernel_f32
       }
       __syncthreads();
     }
-    Write::Write(&dvar[blk1], accumulator);
+    if (0 == threadIdx.x) {
+      Write::Write(&dvar[blk1], accumulator);
+    }
   }
 }
 
@@ -564,7 +574,9 @@ __global__ void anode_gpu_batch_norm_bwd_var_v2_3d1_packed_deterministic_kernel_
       }
       __syncthreads();
     }
-    Write::Write(&dvar[blk1], accumulator);
+    if (0 == threadIdx.x) {
+      Write::Write(&dvar[blk1], accumulator);
+    }
   }
 }
 
