@@ -1580,22 +1580,30 @@ impl<T> RWVal<T> where T: 'static {
 
   pub fn write(&self, txn: Txn, xvar: RWVar, mode: WriteMode) -> Option<(WriteCap, WriteToken)> {
     let mut buf = self.buf.write();
+    let &mut RWValBuf{
+        ref mut curr_txn,
+        ref l_consumers,
+        ref mut d_consumers,
+        ref mut l_producers,
+        ref mut d_producers,
+        ..} = &mut *buf;
+    let mut l_consumers = l_consumers.lock();
 
-    let new_txn = buf.curr_txn.is_none() || buf.curr_txn.unwrap() != txn;
+    let new_txn = curr_txn.is_none() || curr_txn.unwrap() != txn;
     if new_txn {
-      buf.curr_txn = Some(txn);
-      buf.l_consumers.lock().clear();
-      buf.d_consumers.clear();
-      buf.l_producers.clear();
-      buf.d_producers.clear();
+      *curr_txn = Some(txn);
+      l_consumers.clear();
+      d_consumers.clear();
+      l_producers.clear();
+      d_producers.clear();
     }
 
     match mode {
       WriteMode::Exclusive => {
-        match (buf.l_producers.len(), buf.d_producers.len()) {
+        match (l_producers.len(), d_producers.len()) {
           (0, 0) => {}
           (1, 0) => {
-            if buf.l_producers.contains(&xvar) {
+            if l_producers.contains(&xvar) {
               return None;
             }
             panic!("attempting second write to `Exclusive` val");
@@ -1603,51 +1611,44 @@ impl<T> RWVal<T> where T: 'static {
           (_, 0) => panic!("attempting multiple writes to `Exclusive` val"),
           (_, _) => panic!("all writes to `Exclusive` val must be live"),
         }
-        assert!(buf.l_consumers.lock().is_empty(),
+        assert!(l_consumers.is_empty(),
             "attempting write to `Exclusive` val after read");
       }
       WriteMode::Accumulate => {
-        match (buf.l_producers.len(), buf.d_producers.len()) {
+        match (l_producers.len(), d_producers.len()) {
           (0, 0) => {}
           (_, 0) => {
-            if buf.l_producers.contains(&xvar) {
+            if l_producers.contains(&xvar) {
               return None;
             }
           }
           (_, _) => panic!("all writes to `Accumulate` val must be live"),
         }
-        assert!(buf.l_consumers.lock().is_empty(),
+        assert!(l_consumers.is_empty(),
             "attempting write to `Accumulate` val after read");
       }
       WriteMode::Clobber => {
-        match (buf.l_producers.len(), buf.d_producers.len()) {
+        match (l_producers.len(), d_producers.len()) {
           (0, 0) => {}
           (1, _) => {
-            if buf.l_producers.contains(&xvar) {
+            if l_producers.contains(&xvar) {
               return None;
             }
           }
           (_, _) => panic!("attempting multiple live writes to `Clobber` val"),
         }
-        let &mut RWValBuf{
-            ref l_consumers,
-            ref mut d_consumers,
-            ref mut l_producers,
-            ref mut d_producers,
-            ..} = &mut *buf;
-        let mut l_consumers = l_consumers.lock();
         d_consumers.extend(l_consumers.drain());
         d_producers.extend(l_producers.drain());
       }
     }
 
-    let first = buf.l_producers.is_empty();
+    let first = l_producers.is_empty();
     let cap = match (mode, first) {
       (WriteMode::Accumulate, false) => WriteCap::Accumulate,
       (_, true) => WriteCap::Assign,
       _ => unreachable!(),
     };
-    buf.l_producers.insert(xvar);
+    l_producers.insert(xvar);
     Some((cap, WriteToken{xvar: xvar, first: first, borrow: &self.borrow}))
   }
 
@@ -1789,7 +1790,7 @@ impl<F, V> FSrcWrapOp<F, V> {
   }
 }
 
-impl<F, V> ANode for FSrcWrapOp<F, V> where RWVal<V>: IOVal + 'static {
+impl<F, V> ANode for FSrcWrapOp<F, V> where V: 'static {
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
@@ -1880,7 +1881,7 @@ impl<F, V> ANode for FSrcWrapOp<F, V> where RWVal<V>: IOVal + 'static {
   }
 }
 
-impl<F, V> AOp<V> for FSrcWrapOp<F, V> where RWVal<V>: IOVal + 'static {
+impl<F, V> AOp<V> for FSrcWrapOp<F, V> where V: 'static {
   fn _value2(&self, txn: Txn, static_value: Option<RWVal<V>>) -> RWVal<V> {
     if static_value.is_some() {
       return static_value.as_ref().unwrap()._clone();
@@ -1966,7 +1967,7 @@ impl<F, V> FSrcOp<F, V> {
   }*/
 }
 
-impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
+impl<F, V> ANode for FSrcOp<F, V> where V: 'static {
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
@@ -2094,7 +2095,7 @@ impl<F, V> ANode for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
   }*/
 }
 
-impl<F, V> AOp<V> for FSrcOp<F, V> where RWVal<V>: IOVal + 'static {
+impl<F, V> AOp<V> for FSrcOp<F, V> where V: 'static {
   fn _value2(&self, txn: Txn, static_value: Option<RWVal<V>>) -> RWVal<V> {
     if static_value.is_some() {
       return static_value.as_ref().unwrap()._clone();
@@ -2185,7 +2186,7 @@ impl<F, V, W> F1WrapOp<F, V, W> {
   }
 }
 
-impl<F, V, W> ANode for F1WrapOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'static {
+impl<F, V, W> ANode for F1WrapOp<F, V, W> where V: 'static, W: 'static {
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
@@ -2292,7 +2293,7 @@ impl<F, V, W> ANode for F1WrapOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 's
   }
 }
 
-impl<F, V, W> AOp<W> for F1WrapOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'static {
+impl<F, V, W> AOp<W> for F1WrapOp<F, V, W> where V: 'static, W: 'static {
   fn _value2(&self, txn: Txn, static_value: Option<RWVal<W>>) -> RWVal<W> {
     if static_value.is_some() {
       return static_value.as_ref().unwrap()._clone();
@@ -2377,7 +2378,7 @@ impl<F, V1, W> F1Op<F, V1, W> {
   }
 }
 
-impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'static {
+impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, W: 'static {
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
@@ -2502,7 +2503,7 @@ impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'st
   }
 }
 
-impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 'static {
+impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, W: 'static {
   fn _value2(&self, txn: Txn, static_value: Option<RWVal<W>>) -> RWVal<W> {
     if static_value.is_some() {
       return static_value.as_ref().unwrap()._clone();
@@ -2602,7 +2603,7 @@ impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, RWVal<W>: IOVal + 's
   }
 }
 
-impl<F, V> AOp<V> for F1Op<F, V, V> where V: 'static, RWVal<V>: IOVal + 'static {
+impl<F, V> AOp<V> for F1Op<F, V, V> where V: 'static, V: 'static {
   fn _inplace(&self) -> Option<Val<V>> {
     match self.ext.inplace {
       None => None,
@@ -2645,7 +2646,7 @@ impl<F, V1, V2, W> F2Op<F, V1, V2, W> {
   }
 }
 
-impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, RWVal<W>: IOVal + 'static {
+impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, W: 'static {
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
@@ -2775,7 +2776,7 @@ impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, 
   }
 }
 
-impl<F, V1, V2, W> AOp<W> for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, RWVal<W>: IOVal + 'static {
+impl<F, V1, V2, W> AOp<W> for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, W: 'static {
   fn _value2(&self, txn: Txn, static_value: Option<RWVal<W>>) -> RWVal<W> {
     if static_value.is_some() {
       return static_value.as_ref().unwrap()._clone();
@@ -2879,7 +2880,7 @@ impl<F, V1, V2, V3, W> F3Op<F, V1, V2, V3, W> {
   }
 }
 
-impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 'static, V3: 'static, RWVal<W>: IOVal + 'static {
+impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 'static, V3: 'static, W: 'static {
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
@@ -3017,7 +3018,7 @@ impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: '
   }
 }
 
-impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 'static, V3: 'static, RWVal<W>: IOVal + 'static {
+impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 'static, V3: 'static, W: 'static {
   fn _value2(&self, txn: Txn, static_value: Option<RWVal<W>>) -> RWVal<W> {
     if static_value.is_some() {
       return static_value.as_ref().unwrap()._clone();
@@ -3121,7 +3122,7 @@ impl<F, V1, V2, V3, V4, W> F4Op<F, V1, V2, V3, V4, W> {
   }
 }
 
-impl<F, V1, V2, V3, V4, W> ANode for F4Op<F, V1, V2, V3, V4, W> where V1: 'static, V2: 'static, V3: 'static, V4: 'static, RWVal<W>: IOVal + 'static {
+impl<F, V1, V2, V3, V4, W> ANode for F4Op<F, V1, V2, V3, V4, W> where V1: 'static, V2: 'static, V3: 'static, V4: 'static, W: 'static {
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
@@ -3196,7 +3197,7 @@ impl<F, V1, V2, V3, V4, W> ANode for F4Op<F, V1, V2, V3, V4, W> where V1: 'stati
   }
 }
 
-impl<F, V1, V2, V3, V4, W> AOp<W> for F4Op<F, V1, V2, V3, V4, W> where V1: 'static, V2: 'static, V3: 'static, V4: 'static, RWVal<W>: IOVal + 'static {
+impl<F, V1, V2, V3, V4, W> AOp<W> for F4Op<F, V1, V2, V3, V4, W> where V1: 'static, V2: 'static, V3: 'static, V4: 'static, W: 'static {
   fn _value2(&self, txn: Txn, static_value: Option<RWVal<W>>) -> RWVal<W> {
     if static_value.is_some() {
       return static_value.as_ref().unwrap()._clone();
@@ -3278,7 +3279,7 @@ impl<F, V> FSwitchOp<F, V> {
   }
 }
 
-impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, RWVal<V>: IOVal + 'static {
+impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, V: 'static {
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
@@ -3401,7 +3402,7 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, RWVal<V>: IOVal + 'static
   }
 }
 
-impl<F, V> AOp<V> for FSwitchOp<F, V> where V: 'static, RWVal<V>: IOVal + 'static {
+impl<F, V> AOp<V> for FSwitchOp<F, V> where V: 'static, V: 'static {
   fn _value2(&self, txn: Txn, static_value: Option<RWVal<V>>) -> RWVal<V> {
     if static_value.is_some() {
       return static_value.as_ref().unwrap()._clone();
@@ -3497,7 +3498,7 @@ impl<F, V, W> FJoinOp<F, V, W> {
   }
 }
 
-impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'static {
+impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, W: 'static {
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
@@ -3635,7 +3636,7 @@ impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'st
   }
 }
 
-impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 'static {
+impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, W: 'static {
   fn _value2(&self, txn: Txn, static_value: Option<RWVal<W>>) -> RWVal<W> {
     if static_value.is_some() {
       return static_value.as_ref().unwrap()._clone();
@@ -3723,7 +3724,7 @@ impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, RWVal<W>: IOVal + 's
   }
 }
 
-impl<F, V> AOp<V> for FJoinOp<F, V, V> where RWVal<V>: IOVal + 'static {
+impl<F, V> AOp<V> for FJoinOp<F, V, V> where V: 'static {
   fn _inplace(&self) -> Option<Val<V>> {
     match self.ext.inplace {
       None => {}

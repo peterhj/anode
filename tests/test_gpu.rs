@@ -215,7 +215,7 @@ fn test_gpu_mux_2() {
 }
 
 #[test]
-fn test_gpu_switch() {
+fn test_gpu_op_switch() {
   println!();
   let flag = TCell::new(false);
   let x1 = zeros(Rc::new(|_, conn: GPUDeviceConn| {
@@ -237,7 +237,7 @@ fn test_gpu_switch() {
 }
 
 #[test]
-fn test_gpu_switch_get() {
+fn test_gpu_op_switch_get() {
   println!();
   let flag = TCell::new(false);
   let x1 = zeros(Rc::new(|_, conn: GPUDeviceConn| {
@@ -312,7 +312,7 @@ fn test_gpu_adj_sumjoin() {
 }
 
 #[test]
-fn test_gpu_switch_adj() {
+fn test_gpu_op_switch_adj() {
   println!();
   let flag = TCell::default();
   let x1 = zeros(Rc::new(|_, conn: GPUDeviceConn| {
@@ -362,7 +362,7 @@ fn test_gpu_adj_fail() {
 }
 
 #[test]
-fn test_gpu_online_avg() {
+fn test_gpu_op_online_avg() {
   println!();
   let x = ones(Rc::new(|_, conn: GPUDeviceConn| {
     GPUDeviceArray1d::<f32>::zeros(1024, conn)
@@ -390,4 +390,60 @@ fn test_gpu_online_avg() {
     assert_eq!(z.as_view().as_slice()[k], 0.4375);
   }
   println!("DEBUG: {:?}", &z.as_view().as_slice()[.. 10]);
+}
+
+#[test]
+fn test_gpu_op_softmax() {
+  println!();
+  let x = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceOuterBatchArray1d::<f32>::zeros(32, 1, conn)
+  }));
+  let y = x.softmax();
+
+  let mut z = MemArray2d::<f32>::zeros([32, 1]);
+
+  let t = txn();
+  y.eval(t);
+  println!("DEBUG: {:?}", &z.as_view().flat_slice().unwrap()[..]);
+  y.serialize(t, &mut z);
+  for k in 0 .. 32 {
+    assert_eq!(z.as_view().flat_slice().unwrap()[k], 1.0 / 32.0);
+  }
+  println!("DEBUG: {:?}", &z.as_view().flat_slice().unwrap()[..]);
+}
+
+#[test]
+fn test_gpu_op_softmax_cat_nll() {
+  println!();
+  let x = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceOuterBatchArray1d::<f32>::zeros(32, 2, conn)
+  }));
+  let data = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceOuterBatchScalar::<u32>::zeros((), 2, conn)
+  }));
+  let (nll, y) = x.softmax_categorical_nll(data.clone());
+
+  let mut target = MemArray1d::<u32>::zeros(2);
+  target.as_view_mut().flat_slice_mut().unwrap()
+    .copy_from_slice(&[12, 17]);
+
+  let mut z = MemArray2d::<f32>::zeros([32, 2]);
+  let mut nll_h = MemArray1d::<f32>::zeros(2);
+  let mut data_h = MemArray1d::<u32>::zeros(2);
+
+  let t = txn();
+  data.deserialize(t, &mut target);
+  nll.eval(t);
+  println!("DEBUG: {:?}", &z.as_view().flat_slice().unwrap()[..]);
+  println!("DEBUG: {:?}", &nll_h.as_view().flat_slice().unwrap()[..]);
+  println!("DEBUG: {:?}", &data_h.as_view().flat_slice().unwrap()[..]);
+  y.serialize(t, &mut z);
+  nll.serialize(t, &mut nll_h);
+  data.serialize(t, &mut data_h);
+  for k in 0 .. 32 {
+    assert_eq!(z.as_view().flat_slice().unwrap()[k], 1.0 / 32.0);
+  }
+  println!("DEBUG: {:?}", &z.as_view().flat_slice().unwrap()[..]);
+  println!("DEBUG: {:?}", &nll_h.as_view().flat_slice().unwrap()[..]);
+  println!("DEBUG: {:?}", &data_h.as_view().flat_slice().unwrap()[..]);
 }

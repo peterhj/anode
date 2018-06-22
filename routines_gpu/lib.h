@@ -333,6 +333,33 @@ void anode_gpu_square_sum_Iabc_Ob_packed_deterministic_f32(
     const struct KernelConfig *cfg,
     struct CUstream_st *stream);*/
 
+// "softmax.cu"
+
+void anode_gpu_softmax_cat_nll_packed_f32(
+    uint32_t dim0,
+    uint32_t dim1,
+    const float *softmax,
+    const uint32_t *cat_data,
+    float *nll,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+void anode_gpu_softmax_cat_nll_bwd_packed_f32(
+    uint32_t dim0,
+    uint32_t dim1,
+    const float *softmax,
+    const uint32_t *cat_data,
+    float *dx,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+void anode_gpu_softmax_cat_nll_bwd_packed_accumulate_f32(
+    uint32_t dim0,
+    uint32_t dim1,
+    const float *softmax,
+    const uint32_t *cat_data,
+    float *dx,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

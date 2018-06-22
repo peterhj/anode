@@ -2710,8 +2710,11 @@ impl OnlineAverageOpExt<f32, GPUDeviceArray1d<f32>> for OnlineAverageOp {
   }
 }
 
-/*impl SoftmaxOpExt<f32, GPUDeviceOuterBatchArray1d<f32>> for SoftmaxOp {
-}*/
+impl SoftmaxOpExt<GPUDeviceOuterBatchArray1d<f32>> for SoftmaxOp {
+  fn build(x_: Val<GPUDeviceOuterBatchArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
+    SoftmaxOp::build_device_obatch_1d_op(x_)
+  }
+}
 
 impl SoftmaxOp {
   fn build_device_obatch_1d_op(x_: Val<GPUDeviceOuterBatchArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
@@ -2800,6 +2803,12 @@ impl SoftmaxOp {
   }
 }
 
+impl SoftmaxCategoricalNLLOpExt<f32, GPUDeviceOuterBatchArray1d<f32>, GPUDeviceOuterBatchScalar<u32>, GPUDeviceOuterBatchScalar<f32>> for SoftmaxCategoricalNLLOp {
+  fn build(x_: Val<GPUDeviceOuterBatchArray1d<f32>>, fixed_softmax_: Val<GPUDeviceOuterBatchArray1d<f32>>, category_data_: Val<GPUDeviceOuterBatchScalar<u32>>) -> Val<GPUDeviceOuterBatchScalar<f32>> {
+    SoftmaxCategoricalNLLOp::build_device_obatch_1d_op(x_, fixed_softmax_, category_data_)
+  }
+}
+
 impl SoftmaxCategoricalNLLOp {
   fn build_device_obatch_1d_op(x_: Val<GPUDeviceOuterBatchArray1d<f32>>, fixed_softmax_: Val<GPUDeviceOuterBatchArray1d<f32>>, category_data_: Val<GPUDeviceOuterBatchScalar<u32>>) -> Val<GPUDeviceOuterBatchScalar<f32>> {
     let ext = OpExt{
@@ -2825,7 +2834,7 @@ impl SoftmaxCategoricalNLLOp {
       },
       apply: {
         let section = GPULazyAsyncSection::default();
-        let x_ = x_.clone();
+        //let x_ = x_.clone();
         let prob_ = fixed_softmax_.clone();
         let data_ = category_data_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
@@ -2836,32 +2845,30 @@ impl SoftmaxCategoricalNLLOp {
             let conn = pool.conn();
             let mut section = section.clone();
             let mut guard = section.enter(conn.clone());
-            let x = x_.get(txn);
+            //let x = x_.get(txn);
             let prob = prob_.get(txn);
             let data = data_.get(txn);
             let mut y = output.get_mut(txn, token);
-            guard._wait(x.async_state());
+            //guard._wait(x.async_state());
             guard._wait(prob.async_state());
             guard._wait(data.async_state());
             guard._wait(y.async_state());
             // FIXME: size checks.
             // FIXME: set batch size.
+            let x_size = prob.size();
+            let x_bsz = prob.batch_size();
             match cap {
               WriteCap::Assign => {
                 let mut stream = conn.cuda_stream();
-                /*unsafe { anode_gpu_batch_norm_bwd_var_v2_3d1_packed_f32(
-                    sz2uint(x_size[0] * x_size[1]),
-                    sz2uint(x_size[2]),
+                unsafe { anode_gpu_softmax_cat_nll_packed_f32(
+                    sz2uint(x_size),
                     sz2uint(x_bsz),
-                    dy.as_view().as_dptr(),
-                    y.as_view().as_dptr(),
-                    var.as_view().as_dptr(),
-                    dvar.as_view_mut().as_mut_dptr(),
+                    prob.as_view().as_dptr(),
+                    data.as_view().as_dptr(),
+                    y.as_view_mut().as_mut_dptr(),
                     conn.cuda_kernel_config() as *const _,
                     stream.as_mut_ptr(),
-                ) };*/
-                // TODO
-                unimplemented!();
+                ) };
               }
               WriteCap::Accumulate => {
                 // TODO
