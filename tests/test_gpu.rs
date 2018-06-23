@@ -293,6 +293,9 @@ fn test_gpu_adj() {
 #[test]
 fn test_gpu_adj_sumjoin() {
   println!();
+  println!("DEBUG: enable graph log...");
+  enable_static_graph_logging();
+  enable_dynamic_graph_logging();
   let x = zeros(Rc::new(|_, conn: GPUDeviceConn| {
     //GPUDeviceOuterBatchArray1d::<f32>::zeros(1024, 1, conn)
     GPUDeviceScalar::<f32>::zeros((), conn)
@@ -311,8 +314,8 @@ fn test_gpu_adj_sumjoin() {
   dx.eval(t);
   let mut z: f32 = -1.0;
   dx.serialize(t, &mut z);
-  assert_eq!(z, 10.0);
   println!("DEBUG: {:?}", z);
+  assert_eq!(z, 10.0);
 }
 
 #[test]
@@ -333,6 +336,7 @@ fn test_gpu_adj_failure_case() {
   let tmp2 = tmp.clone().batch_sum().named("tmp2");
   let y = sum(vec![x.clone(), tmp2.clone()]).named("y");
   //let y = sum(vec![tmp2.clone(), x.clone()]).named("y");
+  let y = y.batch_broadcast(16).batch_sum();
   println!("DEBUG: build adjoint...");
   let mut y_sink = sink(y.clone());
   println!("DEBUG: done building adjoint");
@@ -367,8 +371,8 @@ fn test_gpu_adj_failure_case() {
   dx.eval(t);
   let mut z: f32 = -1.0;
   dx.serialize(t, &mut z);
-  //assert_eq!(z, 10.0);
   println!("DEBUG: {:?}", z);
+  assert_eq!(z, 272.0);
 }
 
 #[test]
@@ -553,6 +557,9 @@ fn test_gpu_op_softmax_cat_nll_out_of_bounds_nan() {
 #[test]
 fn test_gpu_op_softmax_cat_nll_sum_adj() {
   println!();
+  println!("DEBUG: enable graph log...");
+  enable_static_graph_logging();
+  enable_dynamic_graph_logging();
   let x = zeros(Rc::new(|_, conn: GPUDeviceConn| {
     GPUDeviceOuterBatchArray1d::<f32>::zeros(32, 2, conn)
   })).named("x");

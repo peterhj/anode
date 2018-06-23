@@ -783,23 +783,24 @@ impl<A: 'static> WriteSectionExt<A> for WriteSection {
   }
 }
 
-pub fn pass_apply<F, A: 'static>(x_: Val<A>) -> Box<Fn(Txn, RefMut<F>, OVal<A>)> {
+pub fn pass_apply<F, A: 'static>(x_: Val<A>) -> Box<Fn(Txn, RefMut<F>, OVal<A>) -> bool> {
   let section = match <WriteSection as WriteSectionExt<A>>::maybe() {
     None => unimplemented!("PassOp: missing WriteSection impl for data type '{}'", unsafe { type_name::<A>() }),
     Some(section) => section,
   };
   Box::new(move |txn: Txn, _state: RefMut<_>, output: OVal<A>| {
-    if x_._graph_key() == (67, "BatchSumOp".to_owned()) {
+    /*if x_._graph_key() == (67, "BatchSumOp".to_owned()) {
       println!("DEBUG: pass_apply: src is (67, \"BatchSumOp\"), this is {}", output.xvar._raw());
-    }
+    }*/
     if output._valref().is_some() && x_._valref() != output._valref() {
-      if x_._graph_key() == (67, "BatchSumOp".to_owned()) {
+      /*if x_._graph_key() == (67, "BatchSumOp".to_owned()) {
         println!("DEBUG: pass_apply:   nontrivial output");
-      }
-      if let Some((cap, token)) = output.write(txn) {
-        if x_._graph_key() == (67, "BatchSumOp".to_owned()) {
+      }*/
+      //if let Some((cap, token)) = output.write(txn) {
+      output.write_v2(txn, |cap, token| {
+        /*if x_._graph_key() == (67, "BatchSumOp".to_owned()) {
           println!("DEBUG: pass_apply:   nontrivial write");
-        }
+        }*/
         let mut section = section.clone();
         let x = x_.get(txn);
         let mut y = output.get_mut(txn, token);
@@ -811,7 +812,9 @@ pub fn pass_apply<F, A: 'static>(x_: Val<A>) -> Box<Fn(Txn, RefMut<F>, OVal<A>)>
             section.add(&mut *y, &*x);
           }
         }
-      }
+      })
+    } else {
+      false
     }
   })
 }
@@ -886,7 +889,7 @@ impl<A: 'static> FixOpExt<A> for FixOp {
   }
 }
 
-pub fn switch_apply<F, A: 'static>(flag: TCell<bool>, off_: Val<A>, on_: Val<A>) -> Box<Fn(Txn, RefMut<F>, OVal<A>)> {
+pub fn switch_apply<F, A: 'static>(flag: TCell<bool>, off_: Val<A>, on_: Val<A>) -> Box<Fn(Txn, RefMut<F>, OVal<A>) -> bool> {
   let section = match <WriteSection as WriteSectionExt<A>>::maybe() {
     None => unimplemented!("PassOp: missing WriteSection impl for data type '{}'", unsafe { type_name::<A>() }),
     Some(section) => section,
@@ -897,7 +900,8 @@ pub fn switch_apply<F, A: 'static>(flag: TCell<bool>, off_: Val<A>, on_: Val<A>)
       true  => &on_,
     };
     if !output._valref().is_none() && x_._valref() != output._valref() {
-      if let Some((cap, token)) = output.write(txn) {
+      //if let Some((cap, token)) = output.write(txn) {
+      output.write_v2(txn, |cap, token| {
         let mut section = section.clone();
         let x = x_.get(txn);
         let mut y = output.get_mut(txn, token);
@@ -909,7 +913,9 @@ pub fn switch_apply<F, A: 'static>(flag: TCell<bool>, off_: Val<A>, on_: Val<A>)
             section.add(&mut *y, &*x);
           }
         }
-      }
+      })
+    } else {
+      false
     }
   })
 }

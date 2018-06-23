@@ -192,7 +192,7 @@ impl<A> GPUMuxOp<A> where A: 'static {
           println!("DEBUG: GPUMuxOp: ext: apply");
           let ctx = implicit_ctx().multi_gpu().gpu(state.dev);
           let guard = push_ctx(ctx);
-          state.val._apply(txn);
+          state.val._apply(txn)
         })
       },
       build: Some({
@@ -252,8 +252,9 @@ impl DequantizeOp<f32> {
         let section = GPULazyAsyncSection::default();
         let x_ = x_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
-          if let Some((cap, token)) = output.write(txn) {
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -285,7 +286,7 @@ impl DequantizeOp<f32> {
                 unimplemented!();
               }
             }
-          }
+          })
         })
       },
       build: None,
@@ -324,9 +325,10 @@ where A: GPUDeviceAsync + 'static,
       },
       apply: {
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<A>| {
-          if let Some(_) = output.write(txn) {
+          //if let Some(_) = output.write(txn) {
+          output.write_v2(txn, |_, _| {
             panic!("WARNING: SrcOpExt: should never write");
-          }
+          })
         })
       },
       build: Some({
@@ -380,10 +382,11 @@ where A: GPUDeviceAsync + 'static,
       },
       apply: {
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<A>| {
-          if let Some((_, token)) = output.write(txn) {
+          //if let Some((_, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             // No-op, do nothing.
             let _ = output.get_mut(txn, token);
-          }
+          })
         })
       },
       build: Some({
@@ -447,7 +450,8 @@ where T: Copy,
         let rng_offset = TCell::new(0_u64);
         let rng = LazyCurandGenerator::default_shared_local();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<A>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             println!("DEBUG: RandomBitsSrcOpExt: apply: writing...");
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
@@ -471,7 +475,7 @@ where T: Copy,
               }
               _ => unimplemented!(),
             }
-          }
+          })
         })
       },
       build: Some({
@@ -529,12 +533,12 @@ where T: ZeroBits + Copy + 'static,
       make_val: {
         //Box::new(move || {
         Box::new(move |state: RefMut<_>| {
-          println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceScalar>: init...");
+          //println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceScalar>: init...");
           let section = GPULazyAsyncSection::default();
           let init_val = init_val.clone();
           RWVal::from(Arc::new(move |txn: Txn| {
-            println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceScalar>: make_val: allocating...");
-            implicit_ctx()._debug_print();
+            //println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceScalar>: make_val: allocating...");
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -550,9 +554,10 @@ where T: ZeroBits + Copy + 'static,
       apply: {
         let section = GPULazyAsyncSection::default();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceScalar<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
-            println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceScalar>: apply: writing...");
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceScalar>: apply: writing...");
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -566,7 +571,7 @@ where T: ZeroBits + Copy + 'static,
               }
               _ => unimplemented!(),
             }
-          }
+          })
         })
       },
       build: Some({
@@ -627,12 +632,12 @@ where T: ZeroBits + Copy + 'static,
       make_val: {
         //Box::new(move || {
         Box::new(move |state: RefMut<_>| {
-          println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: init...");
+          //println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: init...");
           let section = GPULazyAsyncSection::default();
           let init_val = init_val.clone();
           RWVal::from(Arc::new(move |txn: Txn| {
-            println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: make_val: allocating...");
-            implicit_ctx()._debug_print();
+            //println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: make_val: allocating...");
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -648,9 +653,10 @@ where T: ZeroBits + Copy + 'static,
       apply: {
         let section = GPULazyAsyncSection::default();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
-            println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: apply: writing...");
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //println!("DEBUG: ZerosSrcOpExt<|| GPUDeviceArray1d>: apply: writing...");
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -664,7 +670,7 @@ where T: ZeroBits + Copy + 'static,
               }
               _ => unimplemented!(),
             }
-          }
+          })
         })
       },
       build: Some({
@@ -742,7 +748,8 @@ where T: ZeroBits + Copy + 'static,
       apply: {
         let section = GPULazyAsyncSection::default();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray2d<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -758,7 +765,7 @@ where T: ZeroBits + Copy + 'static,
               }
               _ => unreachable!(),
             }
-          }
+          })
         })
       },
       build: Some({
@@ -836,7 +843,8 @@ where T: ZeroBits + Copy + 'static,
       apply: {
         let section = GPULazyAsyncSection::default();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray4d<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -852,7 +860,7 @@ where T: ZeroBits + Copy + 'static,
               }
               WriteCap::Accumulate => {}
             }
-          }
+          })
         })
       },
       build: Some({
@@ -940,8 +948,9 @@ where T: ZeroBits + Copy + 'static,
       apply: {
         let section = GPULazyAsyncSection::default();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceOuterBatchScalar<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -957,7 +966,7 @@ where T: ZeroBits + Copy + 'static,
               }
               WriteCap::Accumulate => {}
             }
-          }
+          })
         })
       },
       build: Some({
@@ -1045,8 +1054,9 @@ where T: ZeroBits + Copy + 'static,
       apply: {
         let section = GPULazyAsyncSection::default();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray1d<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -1062,7 +1072,7 @@ where T: ZeroBits + Copy + 'static,
               }
               WriteCap::Accumulate => {}
             }
-          }
+          })
         })
       },
       build: Some({
@@ -1150,7 +1160,8 @@ where T: ZeroBits + Copy + 'static,
       apply: {
         let section = GPULazyAsyncSection::default();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray3d<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -1166,7 +1177,7 @@ where T: ZeroBits + Copy + 'static,
               }
               WriteCap::Accumulate => {}
             }
-          }
+          })
         })
       },
       build: Some({
@@ -1235,12 +1246,12 @@ where T: PseudoField + Copy + 'static,
       make_val: {
         //Box::new(move || {
         Box::new(move |state: RefMut<_>| {
-          println!("DEBUG: OnesSrcOpExt<|| GPUDeviceScalar>: init...");
+          //println!("DEBUG: OnesSrcOpExt<|| GPUDeviceScalar>: init...");
           let section = GPULazyAsyncSection::default();
           let init_val = init_val.clone();
           RWVal::from(Arc::new(move |txn: Txn| {
-            println!("DEBUG: OnesSrcOpExt<|| GPUDeviceScalar>: make_val: allocating...");
-            implicit_ctx()._debug_print();
+            //println!("DEBUG: OnesSrcOpExt<|| GPUDeviceScalar>: make_val: allocating...");
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -1256,9 +1267,10 @@ where T: PseudoField + Copy + 'static,
       apply: {
         let section = GPULazyAsyncSection::default();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceScalar<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
-            println!("DEBUG: OnesSrcOpExt<|| GPUDeviceScalar>: apply: writing...");
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //println!("DEBUG: OnesSrcOpExt<|| GPUDeviceScalar>: apply: writing...");
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -1278,7 +1290,7 @@ where T: PseudoField + Copy + 'static,
                 y.as_view_mut().add_constant_inplace(T::one(), conn);
               }
             }
-          }
+          })
         })
       },
       build: Some({
@@ -1324,12 +1336,12 @@ where T: PseudoField + Copy + 'static,
       make_val: {
         //Box::new(move || {
         Box::new(move |state: RefMut<_>| {
-          println!("DEBUG: OnesSrcOpExt<|| GPUDeviceArray1d>: init...");
+          //println!("DEBUG: OnesSrcOpExt<|| GPUDeviceArray1d>: init...");
           let section = GPULazyAsyncSection::default();
           let init_val = init_val.clone();
           RWVal::from(Arc::new(move |txn: Txn| {
-            println!("DEBUG: OnesSrcOpExt<|| GPUDeviceArray1d>: make_val: allocating...");
-            implicit_ctx()._debug_print();
+            //println!("DEBUG: OnesSrcOpExt<|| GPUDeviceArray1d>: make_val: allocating...");
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -1345,9 +1357,10 @@ where T: PseudoField + Copy + 'static,
       apply: {
         let section = GPULazyAsyncSection::default();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
-            println!("DEBUG: OnesSrcOpExt<|| GPUDeviceArray1d>: apply: writing...");
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //println!("DEBUG: OnesSrcOpExt<|| GPUDeviceArray1d>: apply: writing...");
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -1366,7 +1379,7 @@ where T: PseudoField + Copy + 'static,
               }
               _ => unimplemented!(),
             }
-          }
+          })
         })
       },
       build: Some({
@@ -1433,7 +1446,8 @@ where T: PseudoField + Copy + 'static,
       apply: {
         let section = GPULazyAsyncSection::default();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray3d<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             //println!("DEBUG: OnesSrcOpExt<|| GPUDeviceOuterBatchArray3d>: apply: writing...");
             //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
@@ -1454,7 +1468,7 @@ where T: PseudoField + Copy + 'static,
               }
               _ => unimplemented!(),
             }
-          }
+          })
         })
       },
       build: Some({
@@ -1518,7 +1532,8 @@ impl ReshapeOp {
         let section = GPULazyAsyncSection::default();
         let x_ = x_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -1548,7 +1563,7 @@ impl ReshapeOp {
                 }
               }
             }
-          }
+          })
         })
       },
       build: Some({
@@ -1610,7 +1625,8 @@ impl ReshapeLikeOp {
         let x_ = x_.clone();
         let target_ = target_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -1644,7 +1660,7 @@ impl ReshapeLikeOp {
                 }
               }
             }
-          }
+          })
         })
       },
       build: Some({
@@ -1756,7 +1772,8 @@ impl SumJoinOp {
         let section = GPULazyAsyncSection::default();
         let xs_ = xs_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<A>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -1788,7 +1805,7 @@ impl SumJoinOp {
               guard._wait(x.async_state());
               y.add(x, conn.clone());
             }
-          }
+          })
         })
       },
       build: Some({
@@ -1847,9 +1864,10 @@ impl SumJoinOp {
               println!("WARNING: SumJoinAccumulateOp: apply: possibly incorrect result");
             }
           }
-          if let Some((_, token)) = output.write(txn) {
+          //if let Some((_, token)) = output.write(txn) {
+          output.write_v2(txn, |_, token| {
             output.finish_write(txn, token);
-          }
+          })
         })
         //pass_apply(new_x0_.clone())
       },
@@ -2008,8 +2026,9 @@ impl BatchMean2dOp {
         let section = GPULazyAsyncSection::default();
         let x_ = x_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<f32>>| {
-          if let Some((cap, token)) = output.write(txn) {
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -2043,7 +2062,7 @@ impl BatchMean2dOp {
                 unimplemented!();
               }
             }
-          }
+          })
         })
       },
       build: None,
@@ -2094,8 +2113,9 @@ impl BatchMean2dBwdOp {
         let dmean_ = dmean_.clone();
         let x_ = x_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray3d<f32>>| {
-          if let Some((cap, token)) = output.write(txn) {
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -2139,7 +2159,7 @@ impl BatchMean2dBwdOp {
                 ) };
               }
             }
-          }
+          })
         })
       },
       build: None,
@@ -2187,8 +2207,9 @@ impl BatchVariance2dOp {
         let x_ = x_.clone();
         let mean_ = mean_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<f32>>| {
-          if let Some((cap, token)) = output.write(txn) {
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -2226,7 +2247,7 @@ impl BatchVariance2dOp {
                 unimplemented!();
               }
             }
-          }
+          })
         })
       },
       build: None,
@@ -2281,8 +2302,9 @@ impl BatchVariance2dBwdOp {
         let x_ = x_.clone();
         let mean_ = mean_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray3d<f32>>| {
-          if let Some((cap, token)) = output.write(txn) {
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -2332,7 +2354,7 @@ impl BatchVariance2dBwdOp {
                 ) };
               }
             }
-          }
+          })
         })
       },
       build: None,
@@ -2381,8 +2403,9 @@ impl BatchVariance2dBwdMeanOp {
         let x_ = x_.clone();
         let mean_ = mean_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<f32>>| {
-          if let Some((cap, token)) = output.write(txn) {
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -2432,7 +2455,7 @@ impl BatchVariance2dBwdMeanOp {
                 ) };
               }
             }
-          }
+          })
         })
       },
       build: None,
@@ -2481,8 +2504,9 @@ impl BatchNormalize2dOp {
         let mean_ = mean_.clone();
         let var_ = var_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray3d<f32>>| {
-          if let Some((cap, token)) = output.write(txn) {
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -2522,7 +2546,7 @@ impl BatchNormalize2dOp {
                 unimplemented!();
               }
             }
-          }
+          })
         })
       },
       build: None,
@@ -2579,8 +2603,9 @@ impl BatchNormalize2dBwdOp {
         let dy_ = dy_.clone();
         let var_ = var_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray3d<f32>>| {
-          if let Some((cap, token)) = output.write(txn) {
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -2626,7 +2651,7 @@ impl BatchNormalize2dBwdOp {
                 ) };
               }
             }
-          }
+          })
         })
       },
       build: None,
@@ -2676,8 +2701,9 @@ impl BatchNormalize2dBwdMeanOp {
         let dy_ = dy_.clone();
         let var_ = var_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<f32>>| {
-          if let Some((cap, token)) = output.write(txn) {
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -2723,7 +2749,7 @@ impl BatchNormalize2dBwdMeanOp {
                 ) };
               }
             }
-          }
+          })
         })
       },
       build: None,
@@ -2775,8 +2801,9 @@ impl BatchNormalize2dBwdVarianceOp {
         let mean_ = mean_.clone();
         let var_ = var_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<f32>>| {
-          if let Some((cap, token)) = output.write(txn) {
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -2830,7 +2857,7 @@ impl BatchNormalize2dBwdVarianceOp {
                 ) };
               }
             }
-          }
+          })
         })
       },
       build: None,
@@ -2879,8 +2906,9 @@ impl BatchNormalize2dBwdVarianceOp {
         let y_ = y_.clone();
         let var_ = var_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<f32>>| {
-          if let Some((cap, token)) = output.write(txn) {
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -2930,7 +2958,7 @@ impl BatchNormalize2dBwdVarianceOp {
                 ) };
               }
             }
-          }
+          })
         })
       },
       build: None,
@@ -2974,7 +3002,7 @@ impl OnlineAverageOpExt<f32, GPUDeviceArray1d<f32>> for OnlineAverageOp {
             guard._wait(y.async_state());
             let r = avg_rate.get(txn);
             y.as_view_mut().online_average(r, x.as_view(), conn);
-          });
+          })
         })
       },
       build: Some({
@@ -3026,8 +3054,9 @@ impl SoftmaxOp {
         let section = GPULazyAsyncSection::default();
         let x_ = x_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
-          if let Some((cap, token)) = output.write(txn) {
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -3067,7 +3096,7 @@ impl SoftmaxOp {
                 unimplemented!();
               }
             }
-          }
+          })
         })
       },
       build: None,
@@ -3121,8 +3150,9 @@ impl SoftmaxCategoricalNLLOp {
         let prob_ = fixed_softmax_.clone();
         let data_ = category_data_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
-          if let Some((cap, token)) = output.write(txn) {
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -3158,7 +3188,7 @@ impl SoftmaxCategoricalNLLOp {
                 unimplemented!();
               }
             }
-          }
+          })
         })
       },
       build: None,
@@ -3209,8 +3239,9 @@ impl SoftmaxCategoricalNLLBwdOp {
         let prob_ = fixed_softmax_.clone();
         let data_ = category_data_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
-          if let Some((cap, token)) = output.write(txn) {
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -3256,7 +3287,7 @@ impl SoftmaxCategoricalNLLBwdOp {
                 ) };
               }
             }
-          }
+          })
         })
       },
       build: None,
@@ -3375,10 +3406,10 @@ impl BatchSumOp {
         let section = GPULazyAsyncSection::default();
         let x_ = x_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
-          println!("DEBUG: BatchSumOp: apply: this is {}", output.xvar._raw());
-          if let Some((cap, token)) = output.write(txn) {
-            println!("DEBUG: BatchSumOp: apply:   nontrivial write");
-            //println!("DEBUG: BatchSumOp: apply");
+          //println!("DEBUG: BatchSumOp: apply: this is {}", output.xvar._raw());
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //println!("DEBUG: BatchSumOp: apply:   nontrivial write");
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -3412,7 +3443,7 @@ impl BatchSumOp {
                 ) };
               }
             }
-          }
+          })
         })
       },
       build: Some({
@@ -3476,7 +3507,8 @@ impl BatchBroadcastOp {
         let x_ = x_.clone();
         //let target_ = target_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             //println!("DEBUG: BatchBroadcastOp: apply");
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
@@ -3514,7 +3546,7 @@ impl BatchBroadcastOp {
                 ) };
               }
             }
-          }
+          })
         })
       },
       build: Some({
@@ -3575,7 +3607,8 @@ impl BatchBroadcastLikeOp {
         let x_ = x_.clone();
         let target_ = target_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             //println!("DEBUG: BatchBroadcastLikeOp: apply");
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
@@ -3613,7 +3646,7 @@ impl BatchBroadcastLikeOp {
                 ) };
               }
             }
-          }
+          })
         })
       },
       build: Some({
@@ -3871,8 +3904,9 @@ impl<F> FlatMapOp<F> where F: Clone + 'static {
         let f_config = f_config.clone();
         let x_ = x_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray<Idx, T>>| {
-          if let Some((cap, token)) = output.write(txn) {
-            implicit_ctx()._debug_print();
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
+            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -3890,7 +3924,7 @@ impl<F> FlatMapOp<F> where F: Clone + 'static {
               }
               _ => unimplemented!(),
             }
-          }
+          })
         })
       },
       build: Some({
@@ -3984,7 +4018,8 @@ impl<F> FlatJoinOp<F> where F: Clone + 'static {
         let f_config = f_config.clone();
         let xs_ = xs_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<A>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             let mut pool = implicit_ctx().gpu().pool();
             let conn = pool.conn();
             let mut section = section.clone();
@@ -4005,7 +4040,7 @@ impl<F> FlatJoinOp<F> where F: Clone + 'static {
               }
               _ => unimplemented!(),
             }
-          }
+          })
         })
       },
       build: Some({
@@ -4123,7 +4158,8 @@ impl LinearOp {
         let input_ = input_.clone();
         let map_ = map_.clone();
         Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceArray1d<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -4136,7 +4172,7 @@ impl LinearOp {
               }
               WriteCap::Accumulate => unimplemented!(),
             }
-          }
+          })
         })
       },
       build: Some({
@@ -4205,7 +4241,8 @@ impl LinearOp {
         let w_ = w_.clone();
         let x_ = x_.clone();
         Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray1d<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -4223,7 +4260,7 @@ impl LinearOp {
               }
               WriteCap::Accumulate => unimplemented!(),
             }
-          }
+          })
         })
       },
       build: Some({
@@ -4285,7 +4322,8 @@ impl LinearOp {
         let w_ = w_.clone();
         let x_ = x_.clone();
         Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray1d<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -4303,7 +4341,7 @@ impl LinearOp {
               }
               WriteCap::Accumulate => unimplemented!(),
             }
-          }
+          })
         })
       },
       build: Some({
@@ -4363,7 +4401,8 @@ impl LinearOp {
         let w_ = w_.clone();
         let x_ = x_.clone();
         Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceArray2d<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -4381,7 +4420,7 @@ impl LinearOp {
               }
               WriteCap::Accumulate => unimplemented!(),
             }
-          }
+          })
         })
       },
       build: Some({
@@ -4444,7 +4483,8 @@ impl AffineOp {
         let x_ = x_.clone();
         let b_ = b_.clone();
         Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray1d<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -4465,7 +4505,7 @@ impl AffineOp {
               }
               WriteCap::Accumulate => unimplemented!(),
             }
-          }
+          })
         })
       },
       build: Some({
@@ -4581,7 +4621,8 @@ impl Conv2dAffineOp {
         let x_ = x_.clone();
         let b_ = b_.clone();
         Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray3d<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -4651,7 +4692,7 @@ impl Conv2dAffineOp {
               }
               WriteCap::Accumulate => unimplemented!(),
             }
-          }
+          })
         })
       },
       build: Some({
@@ -4742,7 +4783,8 @@ impl LeftTransposeConv2dLinearOp {
         let w_ = w_.clone();
         let y_ = y_.clone();
         Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray3d<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -4800,7 +4842,7 @@ impl LeftTransposeConv2dLinearOp {
               }
               WriteCap::Accumulate => unimplemented!(),
             }
-          }
+          })
         })
       },
       build: Some({
@@ -4882,7 +4924,8 @@ impl OuterConv2dLinearOp {
         let x_ = x_.clone();
         let y_ = y_.clone();
         Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceArray4d<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -4940,7 +4983,7 @@ impl OuterConv2dLinearOp {
               }
               WriteCap::Accumulate => unimplemented!(),
             }
-          }
+          })
         })
       },
       build: Some({
@@ -5010,7 +5053,8 @@ impl Conv2dReduceBwdOp {
         let section = GPULazyAsyncSection::default();
         let x_ = x_.clone();
         Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceArray1d<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -5059,7 +5103,7 @@ impl Conv2dReduceBwdOp {
               }
               WriteCap::Accumulate => unimplemented!(),
             }
-          }
+          })
         })
       },
       build: Some({
@@ -5171,7 +5215,8 @@ impl<Pool: PoolOp + 'static> Pool2dOp<Pool> {
         let section = GPULazyAsyncSection::default();
         let x_ = x_.clone();
         Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray3d<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -5226,7 +5271,7 @@ impl<Pool: PoolOp + 'static> Pool2dOp<Pool> {
               }
               WriteCap::Accumulate => unimplemented!(),
             }
-          }
+          })
         })
       },
       build: Some({
@@ -5297,7 +5342,8 @@ impl<Pool: PoolOp + 'static> Pool2dBwdOp<Pool> {
         let y_ = y_.clone();
         let x_ = x_.clone();
         Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray3d<T>>| {
-          if let Some((cap, token)) = output.write(txn) {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write_v2(txn, |cap, token| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -5358,7 +5404,7 @@ impl<Pool: PoolOp + 'static> Pool2dBwdOp<Pool> {
               }
               WriteCap::Accumulate => unimplemented!(),
             }
-          }
+          })
         })
       },
       build: Some({
