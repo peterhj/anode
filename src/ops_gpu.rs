@@ -122,10 +122,81 @@ impl<A> GPUMuxOp<A> where A: 'static {
   }
 }
 
-impl DequantizeExt<GPUDeviceOuterBatchArray3d<u8>, GPUDeviceOuterBatchArray3d<f32>, f32> for Val<GPUDeviceOuterBatchArray3d<u8>> {
-  fn dequantize(&self, lo: f32, hi: f32) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
-    // TODO
-    unimplemented!();
+impl DequantizeOpExt<f32, GPUDeviceOuterBatchArray3d<u8>, GPUDeviceOuterBatchArray3d<f32>> for DequantizeOp<f32> {
+  fn build(lo: f32, hi: f32, x_: Val<GPUDeviceOuterBatchArray3d<u8>>) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+    DequantizeOp::<f32>::build_device_u8_to_f32_obatch_3d_op(lo, hi, x_)
+  }
+}
+
+impl DequantizeOp<f32> {
+  pub fn build_device_u8_to_f32_obatch_3d_op(lo: f32, hi: f32, x_: Val<GPUDeviceOuterBatchArray3d<u8>>) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            let y = GPUDeviceOuterBatchArray3d::zeros(x.size(), x.max_batch_size(), conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
+          if let Some((cap, token)) = output.write(txn) {
+            implicit_ctx()._debug_print();
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            guard._wait(x.async_state());
+            guard._wait(y.async_state());
+            let x_len = x.flat_size();
+            assert_eq!(y.flat_size(), x_len);
+            assert_eq!(y.size(), x.size());
+            y.set_batch_size(x.batch_size());
+            match cap {
+              WriteCap::Assign => {
+                let mut stream = conn.cuda_stream();
+                unsafe { anode_gpu_dequantize_u8_packed_f32(
+                    sz2uint(x_len),
+                    lo,
+                    hi,
+                    x.as_view().as_dptr(),
+                    y.as_view_mut().as_mut_dptr(),
+                    conn.cuda_kernel_config() as *const _,
+                    stream.as_mut_ptr(),
+                ) };
+              }
+              WriteCap::Accumulate => {
+                // TODO
+                unimplemented!();
+              }
+            }
+          }
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: None,
+      inplace: None,
+    };
+    Val::from(Rc::new(F1Op::new(DequantizeOp{lo, hi}, ext, x_)))
   }
 }
 
@@ -1200,6 +1271,92 @@ where T: PseudoField + Copy + 'static,
       }),*/
       adjoint: Some({
         Box::new(move |_: Pass, this: Val<GPUDeviceArray1d<T>>, state: RefMut<_>, sink: &mut Sink| {
+          // Do nothing.
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(FSrcOp::new(OnesSrcOp, ext)))
+  }
+}
+
+impl<T, F> OnesSrcOpExt<GPUDeviceOuterBatchArray3d<T>, Rc<F>> for OnesSrcOp
+where T: PseudoField + Copy + 'static,
+      F: (Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray3d<T>) + 'static,
+{
+  fn build(init_val: Rc<F>) -> Val<GPUDeviceOuterBatchArray3d<T>> {
+    <Self as OnesSrcOpExt<GPUDeviceOuterBatchArray3d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray3d<T>>>>::build(init_val)
+  }
+}
+
+impl<T> OnesSrcOpExt<GPUDeviceOuterBatchArray3d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray3d<T>>> for OnesSrcOp
+where T: PseudoField + Copy + 'static,
+{
+  fn build(init_val: Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray3d<T>>) -> Val<GPUDeviceOuterBatchArray3d<T>> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          //println!("DEBUG: OnesSrcOpExt<|| GPUDeviceOuterBatchArray3d>: init...");
+          let section = GPULazyAsyncSection::default();
+          let init_val = init_val.clone();
+          RWVal::from(Arc::new(move |txn: Txn| {
+            //println!("DEBUG: OnesSrcOpExt<|| GPUDeviceOuterBatchArray3d>: make_val: allocating...");
+            //implicit_ctx()._debug_print();
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            // FIXME: this part really requires auto-wait and auto-registration.
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let y = init_val(txn, conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray3d<T>>| {
+          if let Some((cap, token)) = output.write(txn) {
+            //println!("DEBUG: OnesSrcOpExt<|| GPUDeviceOuterBatchArray3d>: apply: writing...");
+            //implicit_ctx()._debug_print();
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            match cap {
+              WriteCap::Assign => {
+                let mut y = output.get_mut(txn, token);
+                guard._wait(y.async_state());
+                y.flat_view_mut().unwrap().set_constant(T::one(), conn);
+              }
+              WriteCap::Accumulate => {
+                let mut y = output.get_mut(txn, token);
+                guard._wait(y.async_state());
+                y.flat_view_mut().unwrap().add_constant_inplace(T::one(), conn);
+              }
+              _ => unimplemented!(),
+            }
+          }
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: None,
+      /*tangent: Some({
+        Box::new(move || {
+          // TODO
+          unimplemented!();
+        })
+      }),*/
+      adjoint: Some({
+        Box::new(move |_: Pass, this: Val<GPUDeviceOuterBatchArray3d<T>>, state: RefMut<_>, sink: &mut Sink| {
           // Do nothing.
         })
       }),

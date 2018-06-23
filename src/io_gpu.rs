@@ -915,6 +915,17 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray1d<T>> where T: Copy + 'static {
 
 impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray3d<T>> where T: Copy + 'static {
   fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
+    if let Some(dst) = dst.downcast_mut::<MemArray4d<T>>() {
+      let ctx = implicit_ctx().gpu();
+      let mut pool = ctx.pool();
+      let conn = pool.conn();
+      let mut section = GPULazyAsyncSection::default();
+      let mut guard = section.enter(conn.clone());
+      let x = self.get(txn, rvar);
+      guard._wait(x.async_state());
+      x.as_view().sync_dump_mem(dst.as_view_mut(), conn);
+      return;
+    }
     if let Some(dst) = dst.downcast_mut::<ArrayIO<MemArray4d<T>>>() {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();

@@ -241,12 +241,31 @@ pub struct Pool2dShape {
   pub dst_feature_axis: isize,
   pub dst_batch_axis:   isize,
   pub ker_size:         [usize; 2],
-  pub dilation:         [usize; 2],
   pub stride:           [usize; 2],
   pub zero_pad:         [usize; 2],
 }
 
 impl Pool2dShape {
+  pub fn default_nchw() -> Self {
+    Self::default_space_major()
+  }
+
+  pub fn default_space_major() -> Self {
+    Pool2dShape{
+      src_space_axes:   [0, 1],
+      src_feature_axis: 2,
+      src_batch_axis:   3,
+      src_size:         [0, 0],
+      src_features:     0,
+      dst_space_axes:   [0, 1],
+      dst_feature_axis: 2,
+      dst_batch_axis:   3,
+      ker_size:         [0, 0],
+      stride:           [1, 1],
+      zero_pad:         [0, 0],
+    }
+  }
+
   pub fn calculate_output_size(&self, x_size: [usize; 3]) -> [usize; 3] {
     // TODO: this assumes NCHW layout.
     assert!(self.ker_size[0] >= 1);
@@ -305,11 +324,18 @@ pub trait DeserializeExt<V> {
   fn deserialize(&self, src: Val<V>) -> Node;
 }
 
-pub struct LinearScale;
+pub trait DequantizeOpExt<T, V, W> {
+  fn build(lo: T, hi: T, x_: Val<V>) -> Val<W>;
+}
 
-pub trait DequantizeExt<V, W, T, /*Scale=LinearScale*/> {
-  //fn dequantize(&self, base: T, range: T) -> Rc<F1Op<DequantizeFun<T, Scale>, V, W>>;
-  fn dequantize(&self, lo: T, hi: T) -> Val<W>;
+pub trait DequantizeExt<T, V, W> {
+  fn dequantize(self, lo: T, hi: T) -> Val<W>;
+}
+
+impl<T, V, W> DequantizeExt<T, V, W> for Val<V> where DequantizeOp<T>: DequantizeOpExt<T, V, W> {
+  fn dequantize(self, lo: T, hi: T) -> Val<W> {
+    <DequantizeOp<T> as DequantizeOpExt<T, V, W>>::build(lo, hi, self)
+  }
 }
 
 pub trait SwitchOpExt<V> {

@@ -32,7 +32,7 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   let avg_rate = TCell::new(0.0);
   let epsilon: f32 = 1.0e-6;
 
-  let x = image_var.dequantize(0.0_f32, 1.0_f32);
+  let x = image_var.clone().dequantize(0.0_f32, 1.0_f32);
 
   let mut conv1 = Conv2dShape::default_nchw();
   conv1.src_size = [28, 28, 3];

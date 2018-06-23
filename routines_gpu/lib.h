@@ -307,6 +307,17 @@ void anode_gpu_rcosh2_flat_map_f32(
     const struct KernelConfig *cfg,
     struct CUstream_st *stream);
 
+// "quantize.cu"
+
+void anode_gpu_dequantize_u8_packed_f32(
+    uint32_t len,
+    float lo,
+    float hi,
+    const uint8_t *x,
+    float *y,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+
 // "reduce.cu"
 
 /*void anode_gpu_sum_Iab_Ob_packed_deterministic_f32(

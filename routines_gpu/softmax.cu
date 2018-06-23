@@ -16,7 +16,6 @@ limitations under the License.
 
 #include "lib.h"
 #include "common.cuh"
-#include "common_reduce.cuh"
 #include <cassert>
 #include <cuda_runtime.h>
 #include <math_constants.h>

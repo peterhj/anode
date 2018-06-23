@@ -1576,6 +1576,10 @@ impl<T> RWVal<T> where T: 'static {
     assert!(buf.l_consumers.lock().is_empty(),
         "`persist` should be called before reads");
     buf.l_producers.insert(xvar);
+
+    if buf.data.is_none() {
+      buf.data = Some((self.alloc)(txn));
+    }
   }
 
   pub fn write(&self, txn: Txn, xvar: RWVar, mode: WriteMode) -> Option<(WriteCap, WriteToken)> {

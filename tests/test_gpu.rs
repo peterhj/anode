@@ -530,3 +530,26 @@ fn test_gpu_op_softmax_cat_nll_sum_adj() {
   println!("DEBUG: {:?}", &dz.as_view().flat_slice().unwrap()[..]);
   println!("DEBUG: {:?}", loss_h);
 }
+
+
+#[test]
+fn test_gpu_op_dequantize() {
+  println!();
+  let x = ones(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceOuterBatchArray3d::<u8>::zeros([32, 32, 3], 1, conn)
+  }));
+  let y = x.dequantize(0.0_f32, 1.0_f32);
+
+  let t = txn();
+  y.eval(t);
+
+  let mut z = MemArray4d::<f32>::zeros([32, 32, 3, 1]);
+  println!("DEBUG: {:?}", &z.as_view().flat_slice().unwrap()[.. 10]);
+  println!("DEBUG: {:?}", &z.as_view().flat_slice().unwrap()[32 * 32 * 3 - 10 ..]);
+  y.serialize(t, &mut z);
+  for k in 0 .. 32 * 32 * 3 {
+    assert_eq!(z.as_view().flat_slice().unwrap()[k], 1.0 / 255.0);
+  }
+  println!("DEBUG: {:?}", &z.as_view().flat_slice().unwrap()[.. 10]);
+  println!("DEBUG: {:?}", &z.as_view().flat_slice().unwrap()[32 * 32 * 3 - 10 ..]);
+}

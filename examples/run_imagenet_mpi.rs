@@ -111,23 +111,123 @@ impl<Data: RandomAccess<Item=(SharedMem<u8>, u32)>> RandomAccess for JoinShardsM
   }
 }*/
 
-fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GPUDeviceOuterBatchScalar<u32>>, TCell<bool>, TCell<f32>, NodeVec, NodeVec, NodeVec) {
+fn build_linear(x: Val<GPUDeviceOuterBatchArray1d<f32>>, src: usize, dst: usize, params: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
+  // TODO
+  unimplemented!();
+}
+
+fn build_batch_norm_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, conv_shape: Conv2dShape, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+  // TODO
+  unimplemented!();
+}
+
+fn build_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, conv_shape: Conv2dShape, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+  // TODO
+  unimplemented!();
+}
+
+fn build_proj_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, conv_shape: Conv2dShape, src_size: [usize; 2], src_features: usize, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+  // TODO
+  unimplemented!();
+}
+
+fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GPUDeviceOuterBatchScalar<u32>>, Val<GPUDeviceOuterBatchArray1d<f32>>, Val<GPUDeviceScalar<f32>>, TCell<bool>, TCell<f32>, NodeVec, NodeVec, NodeVec) {
   let mut params = NodeVec::default();
   let mut online_stats = NodeVec::default();
   let mut avg_stats = NodeVec::default();
 
-  /*
-  let image_var = zeros(([224, 224, 3], batch_sz));
-  let label_var = zeros(batch_sz);
-  let online = TCell::default();
-  let epsilon = TCell::new(0.0);
+  let image_var = src(GPUDeviceOuterBatchArray3d::<u8>::zeros_init(([224, 224, 3], batch_sz)));
+  let label_var = src(GPUDeviceOuterBatchScalar::<u32>::zeros_init(batch_sz));
+  let online = TCell::new(false);
+  let avg_rate = TCell::new(0.0_f32);
+  let epsilon: f32 = 1.0e-6;
 
-  let x = image_var.dequantize(0.0_f32, 1.0_f32);
-  //let x = x.transpose_pixels_to_planes();
+  let x = image_var.clone().dequantize(0.0_f32, 1.0_f32);
+
+  let mut conv1 = Conv2dShape::default_nchw();
+  conv1.src_size = [224, 224, 3];
+  conv1.ker_size = [3, 3];
+  conv1.features = 64;
+  conv1.stride = [2, 2];
+  conv1.zero_pad = [1, 1];
+
+  let x = build_batch_norm_conv(x, conv1, &mut params, &mut online_stats, &mut avg_stats);
+  let x = x.positive_clip();
+
+  let mut pool1 = Pool2dShape::default_nchw();
+  pool1.src_size = [112, 112];
+  pool1.src_features = 64;
+  pool1.ker_size = [3, 3];
+  pool1.stride = [2, 2];
+  pool1.zero_pad = [1, 1];
+
+  let x = x.max_pool(pool1);
+
+  let mut conv2 = Conv2dShape::default_nchw();
+  conv2.src_size = [56, 56, 128];
+  conv2.ker_size = [3, 3];
+  conv2.features = 128;
+  conv2.stride = [1, 1];
+  conv2.zero_pad = [0, 0];
+
+  let mut x = x;
+  x = build_proj_residual3_conv(x, conv2, [56, 56], 64, &mut params, &mut online_stats, &mut avg_stats);
+  for _ in 1 .. 2 {
+    x = build_residual3_conv(x, conv2, &mut params, &mut online_stats, &mut avg_stats);
+  }
+
+  let mut conv3 = Conv2dShape::default_nchw();
+  conv3.src_size = [28, 28, 256];
+  conv3.ker_size = [3, 3];
+  conv3.features = 256;
+  conv3.stride = [1, 1];
+  conv3.zero_pad = [0, 0];
+
+  let mut x = x;
+  x = build_proj_residual3_conv(x, conv3, [56, 56], 128, &mut params, &mut online_stats, &mut avg_stats);
+  for _ in 1 .. 2 {
+    x = build_residual3_conv(x, conv3, &mut params, &mut online_stats, &mut avg_stats);
+  }
+
+  // FIXME
+  /*
+  let mut x = x;
+  x = build_proj_residual3_conv(x, conv4, [28, 28], 256, &mut params, &mut online_stats, &mut avg_stats);
+  for _ in 1 .. _ {
+    x = build_residual3_conv(x, conv4, &mut params, &mut online_stats, &mut avg_stats);
+  }
   */
 
-  // TODO
-  unimplemented!();
+  // FIXME
+  /*
+  let mut x = x;
+  x = build_proj_residual3_conv(x, conv5, [14, 14], 512, &mut params, &mut online_stats, &mut avg_stats);
+  for _ in 1 .. _ {
+    x = build_residual3_conv(x, conv5, &mut params, &mut online_stats, &mut avg_stats);
+  }
+  */
+
+  let mut avg_pool = Pool2dShape::default_nchw();
+  pool1.src_size = [7, 7];
+  pool1.src_features = 512;
+  pool1.ker_size = [7, 7];
+  pool1.stride = [7, 7];
+  pool1.zero_pad = [0, 0];
+
+  let x = x.average_pool(avg_pool);
+  let x = x.flatten();
+
+  // FIXME
+  /*
+  let x = build_linear(x, 512, 1000, &mut params);
+  */
+
+  let logit_var = x.clone();
+
+  let (nll, _) = x.softmax_categorical_nll(label_var.clone());
+  let loss_var = nll.batch_sum();
+
+  (image_var, label_var, logit_var, loss_var, online, avg_rate, params, online_stats, avg_stats)
 }
 
 #[cfg(not(feature = "mpi"))]
