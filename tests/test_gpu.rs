@@ -295,19 +295,58 @@ fn test_gpu_adj_sumjoin() {
   let x = zeros(Rc::new(|_, conn: GPUDeviceConn| {
     //GPUDeviceOuterBatchArray1d::<f32>::zeros(1024, 1, conn)
     GPUDeviceScalar::<f32>::zeros((), conn)
-  }));
+  })).named("x");
   //let y = x.clone() + x.clone();
+  //let y = sum(vec![x.clone()]).named("y");
+  //let y = sum(vec![x.clone(), x.clone()]).named("y");
   let y = sum(vec![
       x.clone(), x.clone(), x.clone(), x.clone(), x.clone(),
       x.clone(), x.clone(), x.clone(), x.clone(), x.clone(),
-  ]);
+  ]).named("y");
   let mut y_sink = sink(y.clone());
   let dx = x.adjoint(&mut y_sink).unwrap();
   let t = txn();
+  y.eval(t);
   dx.eval(t);
   let mut z: f32 = -1.0;
   dx.serialize(t, &mut z);
   assert_eq!(z, 10.0);
+  println!("DEBUG: {:?}", z);
+}
+
+#[test]
+#[should_panic]
+fn test_gpu_adj_failure_case() {
+  println!();
+  let target = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceOuterBatchScalar::<f32>::zeros((), 16, conn)
+  })).named("target");
+  let x = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceScalar::<f32>::zeros((), conn)
+  })).named("x");
+  let tmp = x.clone().batch_broadcast_like(target.clone().fix()).named("tmp");
+  let tmp2 = tmp.clone().batch_sum().named("tmp2");
+  let y = sum(vec![x.clone(), tmp2.clone()]).named("y");
+  //let y = sum(vec![tmp2.clone(), x.clone()]).named("y");
+  let mut y_sink = sink(y.clone());
+  let dy = y.adjoint(&mut y_sink).unwrap();
+  let dx = x.adjoint(&mut y_sink).unwrap();
+  let dt = tmp.adjoint(&mut y_sink).unwrap();
+  let dt2 = tmp2.adjoint(&mut y_sink).unwrap();
+  let t = txn();
+  target.eval(t);
+  //tmp.eval(t);
+  //tmp2.eval(t);
+  //y.eval(t);
+  //dy.eval(t);
+  //dt2.eval(t);
+  // FIXME: why is `dt` not correctly eval'd?
+  // FIXME: has to do with the use of inplace sum-join in adjoint building.
+  //dt.eval(t);
+  dx.eval(t);
+  let mut z: f32 = -1.0;
+  dx.serialize(t, &mut z);
+  //assert_eq!(z, 10.0);
   println!("DEBUG: {:?}", z);
 }
 
@@ -317,13 +356,14 @@ fn test_gpu_op_switch_adj() {
   let flag = TCell::default();
   let x1 = zeros(Rc::new(|_, conn: GPUDeviceConn| {
     GPUDeviceScalar::<f32>::zeros((), conn)
-  }));
+  })).named("x1");
   let x2 = zeros(Rc::new(|_, conn: GPUDeviceConn| {
     GPUDeviceScalar::<f32>::zeros((), conn)
-  }));
-  let y = switch(flag.clone(), x1.clone(), x2.clone());
+  })).named("x2");
+  let y = switch(flag.clone(), x1.clone(), x2.clone()).named("y");
   println!("DEBUG: building adjoint");
   let mut y_sink = sink(y.clone());
+  println!("DEBUG: getting adjoints");
   let dy = y.adjoint(&mut y_sink).unwrap();
   let dx1 = x1.adjoint(&mut y_sink).unwrap();
   let dx2 = x2.adjoint(&mut y_sink).unwrap();
@@ -494,12 +534,13 @@ fn test_gpu_op_softmax_cat_nll_sum_adj() {
   println!();
   let x = zeros(Rc::new(|_, conn: GPUDeviceConn| {
     GPUDeviceOuterBatchArray1d::<f32>::zeros(32, 2, conn)
-  }));
+  })).named("x");
   let data = zeros(Rc::new(|_, conn: GPUDeviceConn| {
     GPUDeviceOuterBatchScalar::<u32>::zeros((), 2, conn)
-  }));
+  })).named("data");
   let (nll, _) = x.clone().softmax_categorical_nll(data.clone());
-  let loss = nll.clone().batch_sum();
+  let nll = nll.named("nll");
+  let loss = nll.clone().batch_sum().named("sum");
 
   let mut loss_sink = sink(loss.clone());
   let nll_adj = nll.adjoint(&mut loss_sink).unwrap();

@@ -16,6 +16,7 @@ limitations under the License.
 
 use ::*;
 
+use std::intrinsics::{type_name};
 use std::marker::{PhantomData};
 use std::ops::{Add, Mul};
 use std::rc::{Rc};
@@ -298,16 +299,26 @@ pub struct BicubicResample2dF;
 #[derive(Clone)] pub struct MeanReduceF;
 #[derive(Clone)] pub struct VarianceReduceF;
 
-pub trait PassExt<V> {
-  fn pass(&self) -> Val<V>;
+pub trait PassOpExt<V> {
+  fn build(x_: Val<V>) -> Val<V>;
 }
 
-pub trait FixExt<V> {
-  fn fix(self) -> Val<V>;
+pub trait PassExt<V> {
+  fn pass(self) -> Val<V>;
+}
+
+impl<V> PassExt<V> for Val<V> where PassOp: PassOpExt<V> {
+  fn pass(self) -> Val<V> {
+    <PassOp as PassOpExt<V>>::build(self)
+  }
 }
 
 pub trait FixOpExt<V> {
   fn build(x_: Val<V>) -> Val<V>;
+}
+
+pub trait FixExt<V> {
+  fn fix(self) -> Val<V>;
 }
 
 impl<V> FixExt<V> for Val<V> where FixOp: FixOpExt<V> {
@@ -727,21 +738,107 @@ pub trait TransposePoolExt<X>: PoolExt<X> {
   fn transpose_pool(self, pool_shape: Self::PoolShape) -> Val<X>;
 }
 
+pub struct WriteSection;
+
+pub trait WriteSectionImpl<A: 'static>: Clone {
+  fn copy(&mut self, dst: &mut A, src: &A) {
+    unimplemented!("WriteSectionImpl: impl type '{}' missing copy for data type '{}'", unsafe { type_name::<Self>() }, unsafe { type_name::<A>() });
+  }
+
+  fn add(&mut self, dst: &mut A, src: &A) {
+    //unimplemented!("WriteSectionImpl: missing add");
+    unimplemented!("WriteSectionImpl: impl type '{}' missing add for data type '{}'", unsafe { type_name::<Self>() }, unsafe { type_name::<A>() });
+  }
+}
+
+pub trait WriteSectionExt<A: 'static> {
+  type Section: WriteSectionImpl<A>;
+
+  fn maybe() -> Option<Self::Section>;
+}
+
+impl<A: 'static> WriteSectionImpl<A> for () {
+}
+
+impl<A: 'static> WriteSectionExt<A> for WriteSection {
+  default type Section = ();
+
+  default fn maybe() -> Option<Self::Section> {
+    None
+  }
+}
+
+pub fn pass_apply<F, A: 'static>(x_: Val<A>) -> Box<Fn(Txn, RefMut<F>, OVal<A>)> {
+  let section = match <WriteSection as WriteSectionExt<A>>::maybe() {
+    None => unimplemented!("PassOp: missing WriteSection impl for data type '{}'", unsafe { type_name::<A>() }),
+    Some(section) => section,
+  };
+  Box::new(move |txn: Txn, _state: RefMut<_>, output: OVal<A>| {
+    if !output._valref().is_none() && x_._valref() != output._valref() {
+      if let Some((cap, token)) = output.write(txn) {
+        let mut section = section.clone();
+        let x = x_.get(txn);
+        let mut y = output.get_mut(txn, token);
+        match cap {
+          WriteCap::Assign => {
+            section.copy(&mut *y, &*x);
+          }
+          WriteCap::Accumulate => {
+            section.add(&mut *y, &*x);
+          }
+        }
+      }
+    }
+  })
+}
+
+impl<A: 'static> PassOpExt<A> for PassOp {
+  fn build(x_: Val<A>) -> Val<A> {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          x_._make_value()
+        })
+      },
+      apply: {
+        pass_apply::<_, A>(x_.clone())
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: None,
+      adjoint: Some({
+        let x_ = x_.clone();
+        Box::new(move |_: Pass, this: Val<A>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(this_adj) = this.adjoint(sink) {
+            x_.put_adjoint(this_adj, sink);
+          }
+        })
+      }),
+      inplace: None,
+    };
+    let x_value = x_._static_value();
+    Val::with_value(Rc::new(F1Op::new(PassOp, ext, x_)), x_value)
+  }
+}
+
 impl<A: 'static> FixOpExt<A> for FixOp {
   fn build(x_: Val<A>) -> Val<A> {
     let ext = OpExt{
       make_val: {
         let x_ = x_.clone();
         //Box::new(move || {
-        Box::new(move |state: RefMut<Self>| {
-          unreachable!();
+        Box::new(move |_state: RefMut<_>| {
+          x_._make_value()
         })
       },
       apply: {
-        Box::new(move |_: Txn, _state: RefMut<_>, _output: OVal<A>| {
-          // The output should be a simple clone of the input,
-          // so don't want to actually touch it.
-        })
+        pass_apply::<_, A>(x_.clone())
       },
       build: Some({
         Box::new(move |args| {
@@ -765,6 +862,34 @@ impl<A: 'static> FixOpExt<A> for FixOp {
   }
 }
 
+pub fn switch_apply<F, A: 'static>(flag: TCell<bool>, off_: Val<A>, on_: Val<A>) -> Box<Fn(Txn, RefMut<F>, OVal<A>)> {
+  let section = match <WriteSection as WriteSectionExt<A>>::maybe() {
+    None => unimplemented!("PassOp: missing WriteSection impl for data type '{}'", unsafe { type_name::<A>() }),
+    Some(section) => section,
+  };
+  Box::new(move |txn: Txn, _state: RefMut<_>, output: OVal<A>| {
+    let x_ = match flag.get(txn) {
+      false => &off_,
+      true  => &on_,
+    };
+    if !output._valref().is_none() && x_._valref() != output._valref() {
+      if let Some((cap, token)) = output.write(txn) {
+        let mut section = section.clone();
+        let x = x_.get(txn);
+        let mut y = output.get_mut(txn, token);
+        match cap {
+          WriteCap::Assign => {
+            section.copy(&mut *y, &*x);
+          }
+          WriteCap::Accumulate => {
+            section.add(&mut *y, &*x);
+          }
+        }
+      }
+    }
+  })
+}
+
 impl<A> SwitchOpExt<A> for SwitchOp
 where A: 'static,
       ZerosSrcOp: ZerosSrcOpLikeExt<A>,
@@ -773,15 +898,16 @@ where A: 'static,
     let ext = OpExt{
       make_val: {
         //Box::new(move || {
-        Box::new(move |_state: RefMut<Self>| {
+        Box::new(move |_state: RefMut<_>| {
           unreachable!();
         })
       },
       apply: {
-        Box::new(move |_: Txn, _state: RefMut<_>, _output: OVal<A>| {
+        /*Box::new(move |_: Txn, _state: RefMut<_>, _output: OVal<A>| {
           // The output should be a simple clone of one of the inputs,
           // so don't want to actually touch it.
-        })
+        })*/
+        switch_apply::<_, A>(flag.clone(), off_.clone(), on_.clone())
       },
       build: Some({
         let flag = flag.clone();

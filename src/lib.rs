@@ -43,7 +43,7 @@ extern crate time;
 extern crate typemap;
 
 use analysis::{LivenessAnalysis};
-use ops::{OnesSrcOp, OnesSrcOpMaybeExt, SumJoinOp, SumJoinOpMaybeExt};
+use ops::{OnesSrcOp, OnesSrcOpMaybeExt, SumJoinOp, SumJoinOpMaybeExt, PassExt};
 #[cfg(feature = "gpu")] use ops_gpu::{GPUMuxOp};
 
 use arrayidx::{ArrayIndex};
@@ -104,6 +104,9 @@ pub struct RWVar(RVar);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeRef(u64);
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct RWValRef(u64);
+
 pub fn txn() -> Txn {
   Txn::default()
 }
@@ -136,11 +139,11 @@ impl Default for NodeRef {
   }
 }
 
-/*impl Default for ValRef {
+impl Default for RWValRef {
   fn default() -> Self {
-    ValRef(gen_thread_local_uid())
+    RWValRef(gen_thread_local_uid())
   }
-}*/
+}
 
 pub struct WalkStackEntry {
   pass:         Pass,
@@ -324,7 +327,11 @@ pub struct GPUMuxWrap {
 
 pub trait WrapValExt<V> {
   //fn substitute(&self) -> Option<Val<V>>;
-  fn inplace(&self) -> Option<Val<V>>;
+  fn inplace_at(&self, arg_idx: Option<usize>) -> Option<Val<V>>;
+
+  fn inplace(&self) -> Option<Val<V>> {
+    self.inplace_at(None)
+  }
 }
 
 #[cfg(feature = "gpu")]
@@ -333,7 +340,8 @@ pub trait GPUWrapValExt<V> {
 }
 
 impl<V> WrapValExt<V> for Val<V> where V: 'static {
-  fn inplace(&self) -> Option<Val<V>> {
+  fn inplace_at(&self, arg_idx: Option<usize>) -> Option<Val<V>> {
+    // TODO
     self._op()._inplace()
   }
 }
@@ -545,6 +553,7 @@ pub struct Val<V> {
   op:       Rc<AOp<V>>,
   value:    Option<RWVal<V>>,
   mode:     WriteMode,
+  xref:     Rc<()>,
   xvar:     RWVar,
   rvar:     RVar,
   name:     Option<String>,
@@ -559,6 +568,7 @@ impl<V> Clone for Val<V> where V: 'static {
       //value:    self.value.as_ref().map(|v| v._clone()),
       value:    self._clone_value(),
       mode:     self.mode,
+      xref:     self.xref.clone(),
       xvar:     self.xvar,
       rvar:     rvar,
       name:     self.name.clone(),
@@ -574,6 +584,8 @@ impl<V> Val<V> where V: 'static {
       op:       op.clone(),
       value:    Some(op._make_value()),
       mode:     WriteMode::Exclusive,
+      // FIXME
+      xref:     Rc::new(()),
       xvar:     xvar,
       rvar:     rvar,
       name:     None,
@@ -587,6 +599,7 @@ impl<V> Val<V> where V: 'static {
       op:       op.clone(),
       value:    Some(op._make_value()),
       mode:     WriteMode::Exclusive,
+      xref:     Rc::new(()),
       xvar:     RWVar(rvar),
       rvar:     rvar,
       name:     None,
@@ -618,6 +631,7 @@ impl<V> Val<V> where V: 'static {
       op:       op.clone(),
       value:    value,
       mode:     WriteMode::Exclusive,
+      xref:     Rc::new(()),
       xvar:     RWVar(rvar),
       rvar:     rvar,
       name:     None,
@@ -631,6 +645,7 @@ impl<V> Val<V> where V: 'static {
       mode:     self.mode,
       //value:    Rc::new(self.value.as_ref().map(|v| v._clone())),
       value:    Rc::new(self._clone_value()),
+      //xref:     self.xref.clone(),
       xvar:     self.xvar,
       // NOTE: Should the node corresponding to a val share the same varkeys?
       rvar:     self.rvar,
@@ -644,6 +659,7 @@ impl<V> Val<V> where V: 'static {
       mode:     self.mode,
       //value:    Rc::new(self.value.as_ref().map(|v| v._clone())),
       value:    Rc::new(self._clone_value()),
+      //xref:     self.xref.clone(),
       xvar:     self.xvar,
       rvar:     self.rvar,
       name:     self.name.clone(),
@@ -658,7 +674,7 @@ impl<V> Val<V> where V: 'static {
     }
   }*/
 
-  pub fn _exact_clone(&self) -> Val<V> {
+  fn _exact_clone(&self) -> Val<V> {
     Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
@@ -666,9 +682,24 @@ impl<V> Val<V> where V: 'static {
       //value:    self.value.as_ref().map(|v| v._clone()),
       value:    self._clone_value(),
       mode:     self.mode,
+      xref:     self.xref.clone(),
       xvar:     self.xvar,
       rvar:     self.rvar,
       name:     self.name.clone(),
+    }
+  }
+
+  pub fn duplicate(&self) -> Val<V> {
+    let rvar = RVar::default();
+    Val{
+      node:     self.node.clone(),
+      op:       self.op.clone(),
+      value:    Some(self._make_value()),
+      mode:     self.mode,
+      xref:     Rc::new(()),
+      xvar:     RWVar(rvar),
+      rvar:     rvar,
+      name:     None,
     }
   }
 
@@ -679,37 +710,38 @@ impl<V> Val<V> where V: 'static {
       op:       self.op.clone(),
       value:    new_value,
       mode:     WriteMode::Accumulate,
+      xref:     Rc::new(()),
       xvar:     RWVar(rvar),
       rvar:     rvar,
-      name:     self.name.clone(),
+      name:     None,
     }
   }
 
   pub fn accumulate(&self) -> Val<V> {
-    //self.op._value()._set_accumulate();
     let rvar = RVar::default();
     Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
       value:    Some(self._make_value()),
       mode:     WriteMode::Accumulate,
+      xref:     Rc::new(()),
       xvar:     RWVar(rvar),
       rvar:     rvar,
-      name:     self.name.clone(),
+      name:     None,
     }
   }
 
   pub fn clobber(&self) -> Val<V> {
-    //self.op._value()._set_clobber();
     let rvar = RVar::default();
     Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
       value:    Some(self._make_value()),
       mode:     WriteMode::Clobber,
+      xref:     Rc::new(()),
       xvar:     RWVar(rvar),
       rvar:     rvar,
-      name:     self.name.clone(),
+      name:     None,
     }
   }
 
@@ -722,10 +754,15 @@ impl<V> Val<V> where V: 'static {
       //value:    self.value.as_ref().map(|v| v._clone()),
       value:    self._clone_value(),
       mode:     self.mode,
+      xref:     self.xref.clone(),
       xvar:     self.xvar,
       rvar:     rvar,
       name:     Some(name.to_owned()),
     }
+  }
+
+  pub fn name(&self) -> Option<String> {
+    self.name.clone()
   }
 
   pub fn _node(&self) -> &ANode {
@@ -760,8 +797,18 @@ impl<V> Val<V> where V: 'static {
     self._apply(txn);
   }
 
+  pub fn _valref(&self) -> Option<RWValRef> {
+    self.value.as_ref().map(|v| v._ref())
+  }
+
   pub fn var(&self) -> RWVar {
     self.xvar
+  }
+
+  pub fn ref_count(&self) -> usize {
+    // FIXME: this is not the refcount we want.
+    //Rc::strong_count(&self.op)
+    Rc::strong_count(&self.xref)
   }
 
   pub fn reset(&self) {
@@ -794,7 +841,8 @@ impl<V> Val<V> where V: 'static {
     //self.op._get_output(txn, self.rvar, self._clone_value());
     //let xvalue = self.op._value2(txn, self._static_value());
     let xvalue = self.op._value3(txn, self.value.as_ref());
-    xvalue.get(txn, self.rvar)
+    //xvalue.get(txn, self.rvar)
+    xvalue._get_debug(txn, self.rvar, self.name.as_ref().map(|s| s.as_ref()))
   }
 
   pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwLockWriteGuard<V> {
@@ -856,6 +904,16 @@ impl<V> Val<V> where V: 'static {
   }
 
   pub fn put_adjoint(&self, adj: Val<V>, sink: &mut Sink) {
+    // FIXME: for debugging.
+    let adj = match self.name {
+      None => adj,
+      Some(ref name) => {
+        match adj.name() {
+          None => adj.named(&format!("adj.{}", name)),
+          Some(ref prev_name) => adj.named(&format!("adj.{} (was: {})", name, prev_name)),
+        }
+      }
+    };
     sink.put_adj::<V>(self.var(), adj);
   }
 }
@@ -906,6 +964,10 @@ impl<V> OVal<V> where V: 'static {
     }
   }
 
+  pub fn _valref(&self) -> Option<RWValRef> {
+    self.value.as_ref().map(|v| v._ref())
+  }
+
   pub fn var(&self) -> RWVar {
     self.xvar
   }
@@ -945,10 +1007,12 @@ pub fn sink<V: 'static>(sink_: Val<V>) -> Sink {
 }
 
 pub struct Sink {
-  volatile: HashSet<RWVar>,
-  frozen:   HashSet<RWVar>,
   adj_map:  HashMap<RWVar, Vec<(Node, Rc<Any>)>>,
   join_map: HashMap<RWVar, (Node, Rc<Any>)>,
+  frozen:   HashSet<RWVar>,
+  volatile: HashSet<RWVar>,
+  nopass:   HashSet<RWVar>,
+  pass:     HashSet<RWVar>,
 }
 
 impl Sink {
@@ -962,10 +1026,12 @@ impl Sink {
 
   pub fn with_adj<V>(sink_: Val<V>, sink_adj: Val<V>) -> Self where V: 'static {
     let mut sink = Sink{
-      volatile: HashSet::new(),
-      frozen:   HashSet::new(),
       adj_map:  HashMap::new(),
       join_map: HashMap::new(),
+      frozen:   HashSet::new(),
+      volatile: HashSet::new(),
+      nopass:   HashSet::new(),
+      pass:     HashSet::new(),
     };
     let p = pass();
     sink_._push_fwd(None, p, &mut |_node, _rvar, _xvar| {});
@@ -1002,44 +1068,73 @@ impl Sink {
   }
 
   pub fn get_adj<V>(&mut self, var: RWVar) -> Option<Val<V>> where V: 'static {
-    self.frozen.insert(var);
-    if self.adj_map.contains_key(&var) {
-      let adjs = self.adj_map.get(&var).unwrap();
+    let &mut Sink{
+      ref mut adj_map,
+      ref mut join_map,
+      ref mut frozen,
+      ref mut volatile,
+      ref mut nopass,
+      ref mut pass,
+    } = self;
+    frozen.insert(var);
+    if adj_map.contains_key(&var) {
+      let adjs = adj_map.get(&var).unwrap();
       match adjs.len() {
         0 => {}
         1 => {
           match (adjs[0].1).downcast_ref::<Val<V>>() {
             None => panic!(),
-            Some(adj_op) => return Some(adj_op.clone()),
+            Some(adj_op) => {
+              //println!("DEBUG: Sink: single:   adjoint ref count: {} ({:?})", adj_op.ref_count(), adj_op.name());
+              return Some(adj_op.clone());
+            }
           }
         }
         _ => {
-          if self.join_map.contains_key(&var) {
-            let &(_, ref join_any_op) = self.join_map.get(&var).unwrap();
+          if join_map.contains_key(&var) {
+            let &(_, ref join_any_op) = join_map.get(&var).unwrap();
             match join_any_op.downcast_ref::<Val<V>>() {
               None => panic!(),
-              Some(join_op) => return Some(join_op.clone()),
+              Some(join_op) => {
+                //println!("DEBUG: Sink: join:     adjoint ref count: {} ({:?})", join_op.ref_count(), join_op.name());
+                return Some(join_op.clone());
+              }
             }
           } else {
+            //let no_volatile_adjs = false;
+            let no_volatile_adjs = true;
             let adj_ops: Vec<_> = adjs.iter().map(|&(_, ref a)| {
               match a.downcast_ref::<Val<V>>() {
                 None => panic!(),
-                Some(adj_op) => adj_op.clone(),
+                Some(adj_op) => {
+                  //println!("DEBUG: Sink: multiple: adjoint ref count: {} ({:?})", adj_op.ref_count(), adj_op.name());
+                  /*// TODO
+                  if volatile.contains(&adj_op.var()) {
+                    no_volatile_adjs = false;
+                  }*/
+                  if adj_op.ref_count() <= 1 {
+                    nopass.insert(adj_op.var());
+                    //adj_op.clone()
+                  } else {
+                    pass.insert(adj_op.var());
+                    if nopass.contains(&adj_op.var()) {
+                      println!("WARNING: Sink: adjoint op may be executed twice");
+                    }
+                    //println!("DEBUG: Sink: multiple:   create pass");
+                    //adj_op.clone().pass()
+                  }
+                  //adj_op.clone().pass()
+                  adj_op.clone()
+                }
               }
             }).collect();
-            let mut no_volatile_adjs = true;
-            for adj_op in adj_ops.iter() {
-              if self.volatile.contains(&adj_op.var()) {
-                no_volatile_adjs = false;
-                break;
-              }
-            }
             // TODO: if none of `adj_ops` are volatile (TODO: define volatile),
             // transform this join into an in-place/accumulate op.
             // FIXME: also gate on an "explicitly allow non-volatile" flag.
             let join = if no_volatile_adjs {
               for adj_op in adj_ops.iter() {
-                self.frozen.insert(adj_op.var());
+                //println!("DEBUG: Sink: multiple: adjoint ref count: {} ({:?})", adj_op.ref_count(), adj_op.name());
+                frozen.insert(adj_op.var());
               }
               match <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build_inplace(adj_ops) {
                 None => panic!("FATAL: Sink::get_adj(): failed to sum adjoints inplace"),
@@ -1051,7 +1146,8 @@ impl Sink {
                 Some(join) => join,
               }
             };
-            self.join_map.insert(var, (join.clone().into_node(), Rc::new(join.clone())));
+            let join_clone = join.clone();
+            join_map.insert(var, (join_clone._to_node(), Rc::new(join_clone)));
             return Some(join);
           }
         }
@@ -1064,9 +1160,11 @@ impl Sink {
     assert!(!self.frozen.contains(&var));
     if self.adj_map.contains_key(&var) {
       let adjs = self.adj_map.get_mut(&var).unwrap();
-      adjs.push((adj_op.clone().into_node(), Rc::new(adj_op)));
+      /*adjs.push((adj_op.clone().into_node(), Rc::new(adj_op)));*/
+      adjs.push((adj_op._to_node(), Rc::new(adj_op)));
     } else {
-      self.adj_map.insert(var, vec![(adj_op.clone().into_node(), Rc::new(adj_op))]);
+      /*self.adj_map.insert(var, vec![(adj_op.clone().into_node(), Rc::new(adj_op))]);*/
+      self.adj_map.insert(var, vec![(adj_op._to_node(), Rc::new(adj_op))]);
     }
   }
 }
@@ -1437,6 +1535,7 @@ impl<T> ShareableRWVal<T> where T: 'static {
 }
 
 pub struct RWVal<T> {
+  ref_:     RWValRef,
   alloc:    Arc<Fn(Txn) -> T>,
   buf:      Arc<RwLock<RWValBuf<T>>>,
   borrow:   (),
@@ -1472,8 +1571,10 @@ impl<T> IOVal for RWVal<T> where T: 'static {
 
 impl<T> RWVal<T> where T: 'static {
   pub fn from(alloc: Arc<Fn(Txn) -> T>) -> Self {
+    let ref_ = RWValRef::default();
     let buf = Arc::new(RwLock::new(RWValBuf::default()));
     RWVal{
+      ref_:     ref_,
       alloc:    alloc,
       buf:      buf,
       borrow:   (),
@@ -1498,6 +1599,7 @@ impl<T> RWVal<T> where T: 'static {
 
   pub fn _clone(&self) -> Self {
     RWVal{
+      ref_:     self.ref_,
       alloc:    self.alloc.clone(),
       buf:      self.buf.clone(),
       borrow:   (),
@@ -1525,6 +1627,10 @@ impl<T> RWVal<T> where T: 'static {
       _ => panic!(),
     }
   }*/
+
+  pub fn _ref(&self) -> RWValRef {
+    self.ref_
+  }
 
   pub fn txn(&self) -> Option<Txn> {
     let buf = self.buf.read();
@@ -1654,6 +1760,32 @@ impl<T> RWVal<T> where T: 'static {
     };
     l_producers.insert(xvar);
     Some((cap, WriteToken{xvar: xvar, first: first, borrow: &self.borrow}))
+  }
+
+  pub fn _get_debug(&self, txn: Txn, rvar: RVar, name: Option<&str>) -> RwLockReadGuard<T> {
+    let buf = self.buf.read();
+
+    let mut valid_txn = false;
+    if let Some(curr_txn) = buf.curr_txn {
+      if curr_txn == txn {
+        valid_txn = true;
+      }
+    }
+    assert!(valid_txn,
+        "attempting a read with an invalid txn (did you forget to `persist` or `write`?) name: {:?}", name);
+
+    assert!(!buf.d_consumers.contains(&rvar),
+        "attempting a stale read (the value has been clobbered)");
+    match buf.l_producers.len() {
+      0 => panic!("attempting an invalid read (the value was never written)"),
+      _ => {}
+    }
+    buf.l_consumers.lock().insert(rvar);
+
+    assert!(buf.data.is_some(),
+        "attempting a read on empty data");
+
+    RwLockReadGuard::map(buf, |buf| buf.data.as_ref().unwrap())
   }
 
   pub fn get(&self, txn: Txn, rvar: RVar) -> RwLockReadGuard<T> {

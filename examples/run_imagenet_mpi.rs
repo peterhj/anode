@@ -123,7 +123,19 @@ fn build_batch_norm_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, conv_shape: Co
 
 fn build_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, conv_shape: Conv2dShape, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
   // TODO
-  unimplemented!();
+  let mut conv1 = conv_shape;
+  let y = build_batch_norm_conv(x.clone(), conv1, params, online_stats, avg_stats);
+  let y = y.positive_clip();
+  // TODO
+  let mut conv2 = conv_shape;
+  let y = build_batch_norm_conv(y, conv2, params, online_stats, avg_stats);
+  let y = y.positive_clip();
+  // TODO
+  let mut conv3 = conv_shape;
+  let y = build_batch_norm_conv(y, conv3, params, online_stats, avg_stats);
+  let y = y + x;
+  let y = y.positive_clip();
+  y
 }
 
 fn build_proj_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, conv_shape: Conv2dShape, src_size: [usize; 2], src_features: usize, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
@@ -172,7 +184,7 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
 
   let mut x = x;
   x = build_proj_residual3_conv(x, conv2, [56, 56], 64, &mut params, &mut online_stats, &mut avg_stats);
-  for _ in 1 .. 2 {
+  for _ in 1 .. 3 {
     x = build_residual3_conv(x, conv2, &mut params, &mut online_stats, &mut avg_stats);
   }
 
@@ -185,31 +197,39 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
 
   let mut x = x;
   x = build_proj_residual3_conv(x, conv3, [56, 56], 128, &mut params, &mut online_stats, &mut avg_stats);
-  for _ in 1 .. 2 {
+  for _ in 1 .. 4 {
     x = build_residual3_conv(x, conv3, &mut params, &mut online_stats, &mut avg_stats);
   }
 
-  // FIXME
-  /*
+  let mut conv4 = Conv2dShape::default_nchw();
+  conv4.src_size = [14, 14, 512];
+  conv4.ker_size = [3, 3];
+  conv4.features = 512;
+  conv4.stride = [1, 1];
+  conv4.zero_pad = [0, 0];
+
   let mut x = x;
   x = build_proj_residual3_conv(x, conv4, [28, 28], 256, &mut params, &mut online_stats, &mut avg_stats);
-  for _ in 1 .. _ {
+  for _ in 1 .. 6 {
     x = build_residual3_conv(x, conv4, &mut params, &mut online_stats, &mut avg_stats);
   }
-  */
 
-  // FIXME
-  /*
+  let mut conv5 = Conv2dShape::default_nchw();
+  conv5.src_size = [7, 7, 512];
+  conv5.ker_size = [3, 3];
+  conv5.features = 512;
+  conv5.stride = [1, 1];
+  conv5.zero_pad = [0, 0];
+
   let mut x = x;
   x = build_proj_residual3_conv(x, conv5, [14, 14], 512, &mut params, &mut online_stats, &mut avg_stats);
-  for _ in 1 .. _ {
+  for _ in 1 .. 3 {
     x = build_residual3_conv(x, conv5, &mut params, &mut online_stats, &mut avg_stats);
   }
-  */
 
   let mut avg_pool = Pool2dShape::default_nchw();
   pool1.src_size = [7, 7];
-  pool1.src_features = 512;
+  pool1.src_features = 2048;
   pool1.ker_size = [7, 7];
   pool1.stride = [7, 7];
   pool1.zero_pad = [0, 0];
@@ -217,10 +237,7 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   let x = x.average_pool(avg_pool);
   let x = x.flatten();
 
-  // FIXME
-  /*
-  let x = build_linear(x, 512, 1000, &mut params);
-  */
+  let x = build_linear(x, 2048, 1000, &mut params);
 
   let logit_var = x.clone();
 

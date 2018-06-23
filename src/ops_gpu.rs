@@ -52,6 +52,103 @@ fn sz2uint(sz: usize) -> u32 {
   sz as _
 }
 
+#[derive(Clone, Default)]
+pub struct GPUWriteSection {
+  section:  GPULazyAsyncSection,
+}
+
+impl WriteSectionExt<GPUDeviceScalar<f32>> for WriteSection {
+  type Section = GPUWriteSection;
+
+  fn maybe() -> Option<Self::Section> {
+    Some(GPUWriteSection::default())
+  }
+}
+
+impl WriteSectionImpl<GPUDeviceScalar<f32>> for GPUWriteSection {
+  fn copy(&mut self, dst: &mut GPUDeviceScalar<f32>, src: &GPUDeviceScalar<f32>) {
+    println!("DEBUG: GPU write section: in copy...");
+    let ctx = implicit_ctx().gpu();
+    let mut pool = ctx.pool();
+    let conn = pool.conn();
+    let mut guard = self.section.enter(conn.clone());
+    guard._wait(src.async_state());
+    guard._wait(dst.async_state());
+    dst.as_view_mut().copy(src.as_view(), conn);
+  }
+
+  fn add(&mut self, dst: &mut GPUDeviceScalar<f32>, src: &GPUDeviceScalar<f32>) {
+    println!("DEBUG: GPU write section: in add...");
+    let ctx = implicit_ctx().gpu();
+    let mut pool = ctx.pool();
+    let conn = pool.conn();
+    let mut guard = self.section.enter(conn.clone());
+    guard._wait(src.async_state());
+    guard._wait(dst.async_state());
+    dst.as_view_mut().add(src.as_view(), conn);
+  }
+}
+
+impl WriteSectionExt<GPUDeviceArray1d<f32>> for WriteSection {
+  type Section = GPUWriteSection;
+
+  fn maybe() -> Option<Self::Section> {
+    Some(GPUWriteSection::default())
+  }
+}
+
+impl WriteSectionImpl<GPUDeviceArray1d<f32>> for GPUWriteSection {
+  fn copy(&mut self, dst: &mut GPUDeviceArray1d<f32>, src: &GPUDeviceArray1d<f32>) {
+    // TODO
+    unimplemented!();
+  }
+
+  fn add(&mut self, dst: &mut GPUDeviceArray1d<f32>, src: &GPUDeviceArray1d<f32>) {
+    // TODO
+    unimplemented!();
+  }
+}
+
+impl WriteSectionExt<GPUDeviceOuterBatchScalar<f32>> for WriteSection {
+  type Section = GPUWriteSection;
+
+  fn maybe() -> Option<Self::Section> {
+    Some(GPUWriteSection::default())
+  }
+}
+
+impl WriteSectionImpl<GPUDeviceOuterBatchScalar<f32>> for GPUWriteSection {
+  fn copy(&mut self, dst: &mut GPUDeviceOuterBatchScalar<f32>, src: &GPUDeviceOuterBatchScalar<f32>) {
+    // TODO
+    unimplemented!();
+  }
+
+  fn add(&mut self, dst: &mut GPUDeviceOuterBatchScalar<f32>, src: &GPUDeviceOuterBatchScalar<f32>) {
+    // TODO
+    unimplemented!();
+  }
+}
+
+impl WriteSectionExt<GPUDeviceOuterBatchArray1d<f32>> for WriteSection {
+  type Section = GPUWriteSection;
+
+  fn maybe() -> Option<Self::Section> {
+    Some(GPUWriteSection::default())
+  }
+}
+
+impl WriteSectionImpl<GPUDeviceOuterBatchArray1d<f32>> for GPUWriteSection {
+  fn copy(&mut self, dst: &mut GPUDeviceOuterBatchArray1d<f32>, src: &GPUDeviceOuterBatchArray1d<f32>) {
+    // TODO
+    unimplemented!();
+  }
+
+  fn add(&mut self, dst: &mut GPUDeviceOuterBatchArray1d<f32>, src: &GPUDeviceOuterBatchArray1d<f32>) {
+    // TODO
+    unimplemented!();
+  }
+}
+
 pub struct GPUOp;
 pub struct MultiGPUBroadcastOp;
 pub struct MultiGPUBatchSplitOp;
@@ -1706,10 +1803,10 @@ impl SumJoinOp {
             + 'static,
   {
     let mut new_xs_ = Vec::with_capacity(old_xs_.len());
-    let new_x0_ = old_xs_[0].accumulate();
+    let new_x0_ = old_xs_[0].clone().pass().accumulate();
     new_xs_.push(new_x0_.clone());
     for i in 1 .. old_xs_.len() {
-      new_xs_.push(old_xs_[i].accumulate_value(new_x0_._static_value()));
+      new_xs_.push(old_xs_[i].clone().pass().accumulate_value(new_x0_._static_value()));
     }
     let ext = OpExt{
       make_val: {
@@ -1719,10 +1816,18 @@ impl SumJoinOp {
         })
       },
       apply: {
+        // FIXME(peter, 20180622): may need to do a "join pass" here.
         let section = GPULazyAsyncSection::default();
+        let xs_ = new_xs_.clone();
         Box::new(move |_txn: Txn, _state: RefMut<_>, _output: OVal<A>| {
           // Do nothing; the inputs did all the work.
+          for x_ in xs_.iter() {
+            if !_output._valref().is_none() && x_._valref() != _output._valref() {
+              println!("WARNING: SumJoinOp: inplace apply: possibly incorrect result");
+            }
+          }
         })
+        //pass_apply(new_x0_.clone())
       },
       build: Some({
         Box::new(move |args| {
@@ -2835,7 +2940,7 @@ impl OnlineAverageOpExt<f32, GPUDeviceArray1d<f32>> for OnlineAverageOp {
         let x_ = x_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<f32>>| {
           output.set(txn, |mut y| {
-            println!("DEBUG: OnlineAverageOp: apply: writing...");
+            //println!("DEBUG: OnlineAverageOp: apply: writing...");
             let mut pool = implicit_ctx().gpu().pool();
             let conn = pool.conn();
             let mut section = section.clone();
@@ -3247,6 +3352,7 @@ impl BatchSumOp {
         let x_ = x_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
           if let Some((cap, token)) = output.write(txn) {
+            //println!("DEBUG: BatchSumOp: apply");
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -3269,8 +3375,15 @@ impl BatchSumOp {
                 ) };
               }
               WriteCap::Accumulate => {
-                // TODO
-                unimplemented!();
+                let mut stream = conn.cuda_stream();
+                // TODO: should use a higher level wrapper for this.
+                unsafe { gpudevicemem_sum_packed_accumulate_deterministic_f32(
+                    sz2uint(x.batch_size()),
+                    x.as_view().as_dptr(),
+                    y.as_view_mut().as_mut_dptr(),
+                    conn.cuda_kernel_config() as *const _,
+                    stream.as_mut_ptr(),
+                ) };
               }
             }
           }
@@ -3288,6 +3401,7 @@ impl BatchSumOp {
         let x_ = x_.clone();
         Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
           if let Some(adj_y_) = y_.adjoint(sink) {
+            // FIXME(peter, 20180622): something about this wrong.
             let adj_x_ = adj_y_.batch_broadcast_like(x_.clone());
             x_.put_adjoint(adj_x_, sink);
           }
@@ -3321,6 +3435,7 @@ impl BatchBroadcastLikeOp {
             let conn = pool.conn();
             let mut section = section.clone();
             let mut guard = section.enter(conn.clone());
+            //target_.eval(txn);
             let target = target_.get(txn);
             guard._wait(target.async_state());
             let y = GPUDeviceOuterBatchScalar::zeros((), target.max_batch_size(), conn);
@@ -3335,6 +3450,7 @@ impl BatchBroadcastLikeOp {
         let target_ = target_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
           if let Some((cap, token)) = output.write(txn) {
+            //println!("DEBUG: BatchBroadcastLikeOp: apply");
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -3393,7 +3509,9 @@ impl BatchBroadcastLikeOp {
       }),
       inplace: None,
     };
-    Val::from(Rc::new(F2Op::new(BatchBroadcastLikeOp, ext, x_, target_)))
+    //Val::from(Rc::new(F1Op::new(BatchBroadcastLikeOp, ext, x_)))
+    //Val::from(Rc::new(F2Op::new(BatchBroadcastLikeOp, ext, x_, target_)))
+    Val::from(Rc::new(F2Op::new(BatchBroadcastLikeOp, ext, target_, x_)))
   }
 }
 
