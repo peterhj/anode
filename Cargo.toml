@@ -32,6 +32,7 @@ cuda = { path = "../libcuda", optional = true }
 cuda_blas = { path = "../cuda_blas", optional = true }
 cuda_coll = { path = "../cuda_coll", optional = true }
 cuda_dnn = { path = "../cuda_dnn", optional = true }
+dot = "*"
 float = { path = "../libfloat" }
 gpudevicemem = { path = "../gpudevicemem", optional = true }
 lazy_static = "*"

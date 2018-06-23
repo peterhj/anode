@@ -5,6 +5,7 @@ extern crate rand;
 
 use anode::*;
 use anode::context::*;
+use anode::log::*;
 use anode::ops::*;
 use anode::ops_gpu::*;
 use anode::utils::*;
@@ -315,34 +316,54 @@ fn test_gpu_adj_sumjoin() {
 }
 
 #[test]
-#[should_panic]
+//#[should_panic]
 fn test_gpu_adj_failure_case() {
   println!();
+  println!("DEBUG: enable graph log...");
+  enable_static_graph_logging();
+  enable_dynamic_graph_logging();
   let target = zeros(Rc::new(|_, conn: GPUDeviceConn| {
     GPUDeviceOuterBatchScalar::<f32>::zeros((), 16, conn)
   })).named("target");
   let x = zeros(Rc::new(|_, conn: GPUDeviceConn| {
     GPUDeviceScalar::<f32>::zeros((), conn)
   })).named("x");
-  let tmp = x.clone().batch_broadcast_like(target.clone().fix()).named("tmp");
+  let tmp = x.clone().batch_broadcast(16).named("tmp");
+  //let tmp = x.clone().batch_broadcast_like(target.clone().fix()).named("tmp");
   let tmp2 = tmp.clone().batch_sum().named("tmp2");
   let y = sum(vec![x.clone(), tmp2.clone()]).named("y");
   //let y = sum(vec![tmp2.clone(), x.clone()]).named("y");
+  println!("DEBUG: build adjoint...");
   let mut y_sink = sink(y.clone());
+  println!("DEBUG: done building adjoint");
+  //dump_static_graph();
+  println!("DEBUG: query dy...");
   let dy = y.adjoint(&mut y_sink).unwrap();
-  let dx = x.adjoint(&mut y_sink).unwrap();
-  let dt = tmp.adjoint(&mut y_sink).unwrap();
+  println!("DEBUG:   dy key: {:?}", dy._graph_key());
+  println!("DEBUG: query dt2...");
   let dt2 = tmp2.adjoint(&mut y_sink).unwrap();
+  println!("DEBUG:   dt2 key: {:?}", dt2._graph_key());
+  println!("DEBUG: query dt...");
+  let dt = tmp.adjoint(&mut y_sink).unwrap();
+  println!("DEBUG:   dt key: {:?}", dt._graph_key());
+  println!("DEBUG: query dx...");
+  let dx = x.adjoint(&mut y_sink).unwrap();
+  println!("DEBUG:   dx key: {:?}", dx._graph_key());
+  println!("DEBUG: done querying");
   let t = txn();
   target.eval(t);
   //tmp.eval(t);
   //tmp2.eval(t);
+  //println!("DEBUG: eval y...");
   //y.eval(t);
   //dy.eval(t);
+  //println!("DEBUG: eval dt2...");
   //dt2.eval(t);
   // FIXME: why is `dt` not correctly eval'd?
   // FIXME: has to do with the use of inplace sum-join in adjoint building.
+  //println!("DEBUG: eval dt...");
   //dt.eval(t);
+  println!("DEBUG: eval dx...");
   dx.eval(t);
   let mut z: f32 = -1.0;
   dx.serialize(t, &mut z);

@@ -51,11 +51,12 @@ pub struct ReshapeLikeOp;
 pub struct MapOp<MapF> { pub f: MapF, }
 pub struct TransposeOp;
 pub struct SumJoinOp;
+pub struct SumJoinAccumulateOp;
 //pub struct SumJoinOp<Variant> { _mrk: PhantomData<Variant> }
-//pub struct SumJoinAccumulateOp;
 pub struct FlatSumOp;
 pub struct ReduceSumOp;
 pub struct BatchSumOp;
+pub struct BatchBroadcastOp;
 pub struct BatchBroadcastLikeOp;
 pub struct FlatMapOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatMapInplaceOp<FlatMapF> { pub f: FlatMapF }
@@ -507,6 +508,20 @@ impl<V, W> BatchSumExt<V, W> for Val<V> where BatchSumOp: BatchSumOpExt<V, W> {
   }
 }
 
+pub trait BatchBroadcastOpExt<V, W> {
+  fn build(x_: Val<V>, target: usize) -> Val<W>;
+}
+
+pub trait BatchBroadcastExt<V, W> {
+  fn batch_broadcast(self, target: usize) -> Val<W>;
+}
+
+impl<V, W> BatchBroadcastExt<V, W> for Val<V> where BatchBroadcastOp: BatchBroadcastOpExt<V, W> {
+  fn batch_broadcast(self, target: usize) -> Val<W> {
+    <BatchBroadcastOp as BatchBroadcastOpExt<V, W>>::build(self, target)
+  }
+}
+
 pub trait BatchBroadcastLikeOpExt<V, W> {
   fn build(x_: Val<V>, target_: Val<W>) -> Val<W>;
 }
@@ -774,8 +789,17 @@ pub fn pass_apply<F, A: 'static>(x_: Val<A>) -> Box<Fn(Txn, RefMut<F>, OVal<A>)>
     Some(section) => section,
   };
   Box::new(move |txn: Txn, _state: RefMut<_>, output: OVal<A>| {
-    if !output._valref().is_none() && x_._valref() != output._valref() {
+    if x_._graph_key() == (67, "BatchSumOp".to_owned()) {
+      println!("DEBUG: pass_apply: src is (67, \"BatchSumOp\"), this is {}", output.xvar._raw());
+    }
+    if output._valref().is_some() && x_._valref() != output._valref() {
+      if x_._graph_key() == (67, "BatchSumOp".to_owned()) {
+        println!("DEBUG: pass_apply:   nontrivial output");
+      }
       if let Some((cap, token)) = output.write(txn) {
+        if x_._graph_key() == (67, "BatchSumOp".to_owned()) {
+          println!("DEBUG: pass_apply:   nontrivial write");
+        }
         let mut section = section.clone();
         let x = x_.get(txn);
         let mut y = output.get_mut(txn, token);

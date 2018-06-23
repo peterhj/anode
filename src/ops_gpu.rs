@@ -584,7 +584,9 @@ where T: ZeroBits + Copy + 'static,
       }),*/
       adjoint: Some({
         Box::new(move |_: Pass, this: Val<GPUDeviceScalar<T>>, state: RefMut<_>, sink: &mut Sink| {
-          // Do nothing.
+          if let Some(_) = this.adjoint(sink) {
+            // Do nothing.
+          }
         })
       }),
       inplace: None,
@@ -680,7 +682,9 @@ where T: ZeroBits + Copy + 'static,
       }),*/
       adjoint: Some({
         Box::new(move |_: Pass, this: Val<GPUDeviceArray1d<T>>, state: RefMut<_>, sink: &mut Sink| {
-          // Do nothing.
+          if let Some(_) = this.adjoint(sink) {
+            // Do nothing.
+          }
         })
       }),
       inplace: None,
@@ -772,7 +776,9 @@ where T: ZeroBits + Copy + 'static,
       }),*/
       adjoint: Some({
         Box::new(move |_: Pass, this: Val<GPUDeviceArray2d<T>>, state: RefMut<_>, sink: &mut Sink| {
-          // Do nothing.
+          if let Some(_) = this.adjoint(sink) {
+            // Do nothing.
+          }
         })
       }),
       inplace: None,
@@ -864,7 +870,9 @@ where T: ZeroBits + Copy + 'static,
       }),*/
       adjoint: Some({
         Box::new(move |_: Pass, this: Val<GPUDeviceArray4d<T>>, state: RefMut<_>, sink: &mut Sink| {
-          // Do nothing.
+          if let Some(_) = this.adjoint(sink) {
+            // Do nothing.
+          }
         })
       }),
       inplace: None,
@@ -967,7 +975,9 @@ where T: ZeroBits + Copy + 'static,
       }),*/
       adjoint: Some({
         Box::new(move |_: Pass, this: Val<GPUDeviceOuterBatchScalar<T>>, state: RefMut<_>, sink: &mut Sink| {
-          // Do nothing.
+          if let Some(_) = this.adjoint(sink) {
+            // Do nothing.
+          }
         })
       }),
       inplace: None,
@@ -1070,7 +1080,9 @@ where T: ZeroBits + Copy + 'static,
       }),*/
       adjoint: Some({
         Box::new(move |_: Pass, this: Val<GPUDeviceOuterBatchArray1d<T>>, state: RefMut<_>, sink: &mut Sink| {
-          // Do nothing.
+          if let Some(_) = this.adjoint(sink) {
+            // Do nothing.
+          }
         })
       }),
       inplace: None,
@@ -1172,7 +1184,9 @@ where T: ZeroBits + Copy + 'static,
       }),*/
       adjoint: Some({
         Box::new(move |_: Pass, this: Val<GPUDeviceOuterBatchArray3d<T>>, state: RefMut<_>, sink: &mut Sink| {
-          // Do nothing.
+          if let Some(_) = this.adjoint(sink) {
+            // Do nothing.
+          }
         })
       }),
       inplace: None,
@@ -1282,7 +1296,9 @@ where T: PseudoField + Copy + 'static,
       }),*/
       adjoint: Some({
         Box::new(move |_: Pass, this: Val<GPUDeviceScalar<T>>, state: RefMut<_>, sink: &mut Sink| {
-          // Do nothing.
+          if let Some(_) = this.adjoint(sink) {
+            // Do nothing.
+          }
         })
       }),
       inplace: None,
@@ -1368,7 +1384,9 @@ where T: PseudoField + Copy + 'static,
       }),*/
       adjoint: Some({
         Box::new(move |_: Pass, this: Val<GPUDeviceArray1d<T>>, state: RefMut<_>, sink: &mut Sink| {
-          // Do nothing.
+          if let Some(_) = this.adjoint(sink) {
+            // Do nothing.
+          }
         })
       }),
       inplace: None,
@@ -1454,7 +1472,9 @@ where T: PseudoField + Copy + 'static,
       }),*/
       adjoint: Some({
         Box::new(move |_: Pass, this: Val<GPUDeviceOuterBatchArray3d<T>>, state: RefMut<_>, sink: &mut Sink| {
-          // Do nothing.
+          if let Some(_) = this.adjoint(sink) {
+            // Do nothing.
+          }
         })
       }),
       inplace: None,
@@ -1803,10 +1823,12 @@ impl SumJoinOp {
             + 'static,
   {
     let mut new_xs_ = Vec::with_capacity(old_xs_.len());
-    let new_x0_ = old_xs_[0].clone().pass().accumulate();
+    let new_x0_ = old_xs_[0].accumulate();
+    //let new_x0_ = old_xs_[0].clone().pass().accumulate();
     new_xs_.push(new_x0_.clone());
     for i in 1 .. old_xs_.len() {
-      new_xs_.push(old_xs_[i].clone().pass().accumulate_value(new_x0_._static_value()));
+      new_xs_.push(old_xs_[i].accumulate_value(new_x0_._static_value()));
+      //new_xs_.push(old_xs_[i].clone().pass().accumulate_value(new_x0_._static_value()));
     }
     let ext = OpExt{
       make_val: {
@@ -1819,12 +1841,14 @@ impl SumJoinOp {
         // FIXME(peter, 20180622): may need to do a "join pass" here.
         let section = GPULazyAsyncSection::default();
         let xs_ = new_xs_.clone();
-        Box::new(move |_txn: Txn, _state: RefMut<_>, _output: OVal<A>| {
-          // Do nothing; the inputs did all the work.
+        Box::new(move |txn: Txn, _state: RefMut<_>, output: OVal<A>| {
           for x_ in xs_.iter() {
-            if !_output._valref().is_none() && x_._valref() != _output._valref() {
-              println!("WARNING: SumJoinOp: inplace apply: possibly incorrect result");
+            if !output._valref().is_none() && x_._valref() != output._valref() {
+              println!("WARNING: SumJoinAccumulateOp: apply: possibly incorrect result");
             }
+          }
+          if let Some((_, token)) = output.write(txn) {
+            output.finish_write(txn, token);
           }
         })
         //pass_apply(new_x0_.clone())
@@ -1838,7 +1862,7 @@ impl SumJoinOp {
       // TODO
       tangent: None,
       adjoint: Some({
-        let xs_ = new_xs_.clone();
+        let xs_ = old_xs_.clone();
         Box::new(move |_: Pass, y_: Val<A>, _state: RefMut<_>, sink: &mut Sink| {
           if let Some(adj_y_) = y_.adjoint(sink) {
             for i in 0 .. xs_.len() {
@@ -1849,7 +1873,7 @@ impl SumJoinOp {
       }),
       inplace: None,
     };
-    (Val::with_value(Rc::new(FJoinOp::new(SumJoinOp, ext, new_xs_.clone())), new_x0_._static_value()), new_xs_)
+    (Val::with_value_mode(Rc::new(FJoinOp::new(SumJoinAccumulateOp, ext, new_xs_.clone())), new_x0_._static_value(), WriteMode::Accumulate), new_xs_)
   }
 
   /*pub fn build_device_batch_op<T, A>(inputs_: Vec<Val<A>>) -> Val<A>
@@ -3351,7 +3375,9 @@ impl BatchSumOp {
         let section = GPULazyAsyncSection::default();
         let x_ = x_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
+          println!("DEBUG: BatchSumOp: apply: this is {}", output.xvar._raw());
           if let Some((cap, token)) = output.write(txn) {
+            println!("DEBUG: BatchSumOp: apply:   nontrivial write");
             //println!("DEBUG: BatchSumOp: apply");
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
@@ -3402,7 +3428,9 @@ impl BatchSumOp {
         Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
           if let Some(adj_y_) = y_.adjoint(sink) {
             // FIXME(peter, 20180622): something about this wrong.
+            //let adj_x_ = adj_y_.batch_broadcast(16); // NOTE: this does not fix things.
             let adj_x_ = adj_y_.batch_broadcast_like(x_.clone());
+            //let adj_x_ = adj_y_.batch_broadcast_like(x_.clone().pass()); // NOTE: this also does not fix things.
             x_.put_adjoint(adj_x_, sink);
           }
         })
@@ -3410,6 +3438,105 @@ impl BatchSumOp {
       inplace: None,
     };
     Val::from(Rc::new(F1Op::new(BatchSumOp, ext, x_)))
+  }
+}
+
+impl BatchBroadcastOpExt<GPUDeviceScalar<f32>, GPUDeviceOuterBatchScalar<f32>> for BatchBroadcastOp {
+  fn build(x_: Val<GPUDeviceScalar<f32>>, target: usize) -> Val<GPUDeviceOuterBatchScalar<f32>> {
+    //println!("DEBUG: build batch broadcast like op...");
+    BatchBroadcastOp::build_device_f32_op(x_, target)
+  }
+}
+
+impl BatchBroadcastOp {
+  pub fn build_device_f32_op(x_: Val<GPUDeviceScalar<f32>>, target: usize) -> Val<GPUDeviceOuterBatchScalar<f32>> {
+    let ext = OpExt{
+      make_val: {
+        //let target_ = target_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          //let target_ = target_.clone();
+          RWVal::from(Arc::new(move |txn: Txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            //let target = target_.get(txn);
+            //guard._wait(target.async_state());
+            let y = GPUDeviceOuterBatchScalar::zeros((), target, conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        //let target_ = target_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
+          if let Some((cap, token)) = output.write(txn) {
+            //println!("DEBUG: BatchBroadcastOp: apply");
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            //let target = target_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            guard._wait(x.async_state());
+            //guard._wait(target.async_state());
+            guard._wait(y.async_state());
+            y.set_batch_size(target);
+            match cap {
+              WriteCap::Assign => {
+                let mut stream = conn.cuda_stream();
+                // TODO: should use a higher level wrapper for this.
+                unsafe { gpudevicemem_bcast_packed_f32(
+                    sz2uint(y.batch_size()),
+                    x.as_view().as_dptr(),
+                    y.as_view_mut().as_mut_dptr(),
+                    conn.cuda_kernel_config() as *const _,
+                    stream.as_mut_ptr(),
+                ) };
+              }
+              WriteCap::Accumulate => {
+                let mut stream = conn.cuda_stream();
+                // TODO: should use a higher level wrapper for this.
+                unsafe { gpudevicemem_bcast_packed_accumulate_f32(
+                    sz2uint(y.batch_size()),
+                    x.as_view().as_dptr(),
+                    y.as_view_mut().as_mut_dptr(),
+                    conn.cuda_kernel_config() as *const _,
+                    stream.as_mut_ptr(),
+                ) };
+              }
+            }
+          }
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      // TODO
+      tangent: None,
+      adjoint: Some({
+        let x_ = x_.clone();
+        Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            let adj_x_ = adj_y_.batch_sum();
+            x_.put_adjoint(adj_x_, sink);
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F1Op::new(BatchBroadcastOp, ext, x_)))
   }
 }
 
@@ -3435,7 +3562,6 @@ impl BatchBroadcastLikeOp {
             let conn = pool.conn();
             let mut section = section.clone();
             let mut guard = section.enter(conn.clone());
-            //target_.eval(txn);
             let target = target_.get(txn);
             guard._wait(target.async_state());
             let y = GPUDeviceOuterBatchScalar::zeros((), target.max_batch_size(), conn);

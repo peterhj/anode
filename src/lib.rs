@@ -31,6 +31,7 @@ extern crate arrayidx;
 #[cfg(feature = "gpu")] extern crate cuda_blas;
 #[cfg(feature = "gpu")] extern crate cuda_coll;
 #[cfg(feature = "gpu")] extern crate cuda_dnn;
+extern crate dot;
 //extern crate float;
 #[cfg(feature = "gpu")] extern crate gpudevicemem;
 #[macro_use] extern crate lazy_static;
@@ -43,6 +44,7 @@ extern crate time;
 extern crate typemap;
 
 use analysis::{LivenessAnalysis};
+use log::*;
 use ops::{OnesSrcOp, OnesSrcOpMaybeExt, SumJoinOp, SumJoinOpMaybeExt, PassExt};
 #[cfg(feature = "gpu")] use ops_gpu::{GPUMuxOp};
 
@@ -56,6 +58,7 @@ use std::any::{Any};
 use std::cell::{Cell, RefCell, RefMut};
 use std::collections::{HashMap, HashSet};
 //use std::collections::hash_map::{Entry};
+use std::intrinsics::{type_name};
 //use std::ops::{Deref, DerefMut};
 use std::rc::{Rc};
 use std::sync::{Arc};
@@ -66,6 +69,7 @@ pub mod config;
 pub mod context;
 pub mod ffi;
 #[cfg(feature = "gpu")] pub mod io_gpu;
+pub mod log;
 pub mod ops;
 #[cfg(feature = "gpu")] pub mod ops_gpu;
 #[cfg(feature = "mpi")] pub mod ops_mpi;
@@ -102,7 +106,7 @@ pub struct RVar(u64);
 pub struct RWVar(RVar);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct NodeRef(u64);
+pub struct OpRef(u64);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct RWValRef(u64);
@@ -133,9 +137,21 @@ impl Default for RVar {
   }
 }
 
-impl Default for NodeRef {
+impl RVar {
+  fn _raw(self) -> u64 {
+    self.0
+  }
+}
+
+impl RWVar {
+  fn _raw(self) -> u64 {
+    self.0._raw()
+  }
+}
+
+impl Default for OpRef {
   fn default() -> Self {
-    NodeRef(gen_thread_local_uid())
+    OpRef(gen_thread_local_uid())
   }
 }
 
@@ -150,7 +166,7 @@ pub struct WalkStackEntry {
   push_degree:  usize,
   pop_degree:   usize,
   // TODO: cycle detection.
-  //succ_set:     HashSet<NodeRef>,
+  //succ_set:     HashSet<OpRef>,
 }
 
 #[derive(Default)]
@@ -214,6 +230,7 @@ pub trait AnalysisTags {
 }
 
 pub trait ANode {
+  fn _key(&self) -> String;
   fn _walk(&self) -> &Walk;
   fn _analysis_tags(&self) -> &AnalysisTags { unimplemented!(); }
 
@@ -262,7 +279,8 @@ pub trait AOp<V>: ANode {
 }
 
 pub trait AnyRWVal {
-  fn _txn(&self) -> Option<Txn>;
+  //fn _txn(&self) -> Option<Txn>;
+  fn _complete_txn(&self) -> Option<Txn>;
   fn _persist(&self, txn: Txn, xvar: RWVar);
 }
 
@@ -509,7 +527,7 @@ impl Node {
   }
 
   pub fn _eval_recursive(&self, txn: Txn) {
-    if Some(txn) == self.node._io(txn, &*self.value)._txn() {
+    if Some(txn) == self.node._io(txn, &*self.value)._complete_txn() {
       self.node._eval_recursive(txn, self.rvar, self.xvar);
     }
   }
@@ -578,6 +596,7 @@ impl<V> Clone for Val<V> where V: 'static {
 
 impl<V> Val<V> where V: 'static {
   pub fn nowrap<Op>(op: Rc<Op>, xvar: RWVar) -> Self where Op: AOp<V> + 'static {
+    println!("WARNING: Val::nowrap: semantics of this are currently very unstable");
     let rvar = RVar::default();
     Val{
       node:     op.clone(),
@@ -594,16 +613,20 @@ impl<V> Val<V> where V: 'static {
 
   pub fn from<Op>(op: Rc<Op>) -> Self where Op: AOp<V> + 'static {
     let rvar = RVar::default();
+    let xvar = RWVar(rvar);
     let val = Val{
       node:     op.clone(),
       op:       op.clone(),
       value:    Some(op._make_value()),
       mode:     WriteMode::Exclusive,
       xref:     Rc::new(()),
-      xvar:     RWVar(rvar),
+      xvar:     xvar,
       rvar:     rvar,
       name:     None,
     };
+    log_static_graph(|logging| {
+      logging.insert_node(val._graph_key());
+    });
     // FIXME(peter, 20180619): disable wrappers while revamping ops.
     /*let val = WRAP_VAL_STACK.with(|stack| {
       let stack = stack.borrow();
@@ -626,16 +649,39 @@ impl<V> Val<V> where V: 'static {
 
   pub fn with_value<Op>(op: Rc<Op>, value: Option<RWVal<V>>) -> Self where Op: AOp<V> + 'static {
     let rvar = RVar::default();
+    let xvar = RWVar(rvar);
     let val = Val{
       node:     op.clone(),
       op:       op.clone(),
       value:    value,
       mode:     WriteMode::Exclusive,
       xref:     Rc::new(()),
-      xvar:     RWVar(rvar),
+      xvar:     xvar,
       rvar:     rvar,
       name:     None,
     };
+    log_static_graph(|logging| {
+      logging.insert_node(val._graph_key());
+    });
+    val
+  }
+
+  pub fn with_value_mode<Op>(op: Rc<Op>, value: Option<RWVal<V>>, mode: WriteMode) -> Self where Op: AOp<V> + 'static {
+    let rvar = RVar::default();
+    let xvar = RWVar(rvar);
+    let val = Val{
+      node:     op.clone(),
+      op:       op.clone(),
+      value:    value,
+      mode:     mode,
+      xref:     Rc::new(()),
+      xvar:     xvar,
+      rvar:     rvar,
+      name:     None,
+    };
+    log_static_graph(|logging| {
+      logging.insert_node(val._graph_key());
+    });
     val
   }
 
@@ -691,58 +737,82 @@ impl<V> Val<V> where V: 'static {
 
   pub fn duplicate(&self) -> Val<V> {
     let rvar = RVar::default();
-    Val{
+    let xvar = RWVar(rvar);
+    let val = Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
       value:    Some(self._make_value()),
       mode:     self.mode,
       xref:     Rc::new(()),
-      xvar:     RWVar(rvar),
+      xvar:     xvar,
       rvar:     rvar,
       name:     None,
-    }
+    };
+    log_static_graph(|logging| {
+      logging.insert_node(val._graph_key());
+      logging.insert_alias_edge(self._graph_key(), val._graph_key());
+    });
+    val
   }
 
   pub fn accumulate_value(&self, new_value: Option<RWVal<V>>) -> Val<V> {
     let rvar = RVar::default();
-    Val{
+    let xvar = RWVar(rvar);
+    let val = Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
       value:    new_value,
       mode:     WriteMode::Accumulate,
       xref:     Rc::new(()),
-      xvar:     RWVar(rvar),
+      xvar:     xvar,
       rvar:     rvar,
       name:     None,
-    }
+    };
+    log_static_graph(|logging| {
+      logging.insert_node(val._graph_key());
+      logging.insert_alias_edge(self._graph_key(), val._graph_key());
+    });
+    val
   }
 
   pub fn accumulate(&self) -> Val<V> {
     let rvar = RVar::default();
-    Val{
+    let xvar = RWVar(rvar);
+    let val = Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
       value:    Some(self._make_value()),
       mode:     WriteMode::Accumulate,
       xref:     Rc::new(()),
-      xvar:     RWVar(rvar),
+      xvar:     xvar,
       rvar:     rvar,
       name:     None,
-    }
+    };
+    log_static_graph(|logging| {
+      logging.insert_node(val._graph_key());
+      logging.insert_alias_edge(self._graph_key(), val._graph_key());
+    });
+    val
   }
 
   pub fn clobber(&self) -> Val<V> {
     let rvar = RVar::default();
-    Val{
+    let xvar = RWVar(rvar);
+    let val = Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
       value:    Some(self._make_value()),
       mode:     WriteMode::Clobber,
       xref:     Rc::new(()),
-      xvar:     RWVar(rvar),
+      xvar:     xvar,
       rvar:     rvar,
       name:     None,
-    }
+    };
+    log_static_graph(|logging| {
+      logging.insert_node(val._graph_key());
+      logging.insert_alias_edge(self._graph_key(), val._graph_key());
+    });
+    val
   }
 
   pub fn named(&self, name: &str) -> Val<V> {
@@ -763,6 +833,16 @@ impl<V> Val<V> where V: 'static {
 
   pub fn name(&self) -> Option<String> {
     self.name.clone()
+  }
+
+  pub fn _graph_key(&self) -> (u64, String) {
+    let base_opkey = self.op._key().replace("anode::", "").replace("ops::", "");
+    let opkey = match self.mode {
+      WriteMode::Exclusive => base_opkey,
+      WriteMode::Accumulate => format!("{}(Accumulate)", base_opkey),
+      WriteMode::Clobber => format!("{}(Clobber)", base_opkey),
+    };
+    (self.xvar._raw(), opkey)
   }
 
   pub fn _node(&self) -> &ANode {
@@ -787,7 +867,20 @@ impl<V> Val<V> where V: 'static {
   }
 
   pub fn _eval_recursive(&self, txn: Txn) {
-    if Some(txn) != self._value3(txn).txn() {
+    if 80 == self.xvar._raw() {
+      println!("DEBUG: Val: eval_recursive: this is {:?}", self._graph_key());
+    }
+    if 89 == self.xvar._raw() {
+      println!("DEBUG: Val: eval_recursive: this is {:?}", self._graph_key());
+    }
+    //if Some(txn) != self._value3(txn).txn() || self._value3(txn).incomplete() {
+    if Some(txn) != self._value3(txn)._complete_txn() {
+      if 80 == self.xvar._raw() {
+        println!("DEBUG: Val: eval_recursive:   enter");
+      }
+      if 89 == self.xvar._raw() {
+        println!("DEBUG: Val: eval_recursive:   enter");
+      }
       self.op._eval_recursive(txn, self.rvar, self.xvar);
     }
   }
@@ -805,7 +898,7 @@ impl<V> Val<V> where V: 'static {
     self.xvar
   }
 
-  pub fn ref_count(&self) -> usize {
+  pub fn _ref_count(&self) -> usize {
     // FIXME: this is not the refcount we want.
     //Rc::strong_count(&self.op)
     Rc::strong_count(&self.xref)
@@ -842,7 +935,7 @@ impl<V> Val<V> where V: 'static {
     //let xvalue = self.op._value2(txn, self._static_value());
     let xvalue = self.op._value3(txn, self.value.as_ref());
     //xvalue.get(txn, self.rvar)
-    xvalue._get_debug(txn, self.rvar, self.name.as_ref().map(|s| s.as_ref()))
+    xvalue._get_debug(txn, self.rvar, self.name.as_ref().map(|s| s.as_ref()), self._graph_key())
   }
 
   pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwLockWriteGuard<V> {
@@ -851,6 +944,11 @@ impl<V> Val<V> where V: 'static {
     //let xvalue = self.op._value2(txn, self._static_value());
     let xvalue = self.op._value3(txn, self.value.as_ref());
     xvalue.get_mut(txn, self.xvar, token)
+  }
+
+  pub fn finish_write(&self, txn: Txn, token: WriteToken) {
+    let xvalue = self.op._value3(txn, self.value.as_ref());
+    xvalue.finish_write(txn, self.xvar, token);
   }
 
   pub fn set<F: FnOnce(RwLockWriteGuard<V>)>(&self, txn: Txn, f: F) {
@@ -982,6 +1080,19 @@ impl<V> OVal<V> where V: 'static {
     self.value.as_ref().unwrap().write(txn, self.xvar, self.mode)
   }
 
+  pub fn write_<F>(&self, txn: Txn, f: F) -> bool where F: FnOnce(WriteCap, WriteToken) {
+    assert!(self.value.is_some());
+    match self.value.as_ref().unwrap().write(txn, self.xvar, self.mode) {
+      Some((cap, token)) => {
+        f(cap, token);
+        true
+      }
+      None => {
+        false
+      }
+    }
+  }
+
   pub fn get(&self, txn: Txn) -> RwLockReadGuard<V> {
     assert!(self.value.is_some());
     self.value.as_ref().unwrap().get(txn, self.rvar)
@@ -990,6 +1101,11 @@ impl<V> OVal<V> where V: 'static {
   pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwLockWriteGuard<V> {
     assert!(self.value.is_some());
     self.value.as_ref().unwrap().get_mut(txn, self.xvar, token)
+  }
+
+  pub fn finish_write(&self, txn: Txn, token: WriteToken) {
+    assert!(self.value.is_some());
+    self.value.as_ref().unwrap().finish_write(txn, self.xvar, token);
   }
 
   pub fn set<F: FnOnce(RwLockWriteGuard<V>)>(&self, txn: Txn, f: F) {
@@ -1085,7 +1201,7 @@ impl Sink {
           match (adjs[0].1).downcast_ref::<Val<V>>() {
             None => panic!(),
             Some(adj_op) => {
-              //println!("DEBUG: Sink: single:   adjoint ref count: {} ({:?})", adj_op.ref_count(), adj_op.name());
+              //println!("DEBUG: Sink: single:   adjoint ref count: {} ({:?})", adj_op._ref_count(), adj_op.name());
               return Some(adj_op.clone());
             }
           }
@@ -1096,7 +1212,7 @@ impl Sink {
             match join_any_op.downcast_ref::<Val<V>>() {
               None => panic!(),
               Some(join_op) => {
-                //println!("DEBUG: Sink: join:     adjoint ref count: {} ({:?})", join_op.ref_count(), join_op.name());
+                //println!("DEBUG: Sink: join:     adjoint ref count: {} ({:?})", join_op._ref_count(), join_op.name());
                 return Some(join_op.clone());
               }
             }
@@ -1107,12 +1223,12 @@ impl Sink {
               match a.downcast_ref::<Val<V>>() {
                 None => panic!(),
                 Some(adj_op) => {
-                  //println!("DEBUG: Sink: multiple: adjoint ref count: {} ({:?})", adj_op.ref_count(), adj_op.name());
+                  //println!("DEBUG: Sink: multiple: adjoint ref count: {} ({:?})", adj_op._ref_count(), adj_op.name());
                   /*// TODO
                   if volatile.contains(&adj_op.var()) {
                     no_volatile_adjs = false;
                   }*/
-                  if adj_op.ref_count() <= 1 {
+                  if adj_op._ref_count() <= 1 {
                     nopass.insert(adj_op.var());
                     //adj_op.clone()
                   } else {
@@ -1133,7 +1249,7 @@ impl Sink {
             // FIXME: also gate on an "explicitly allow non-volatile" flag.
             let join = if no_volatile_adjs {
               for adj_op in adj_ops.iter() {
-                //println!("DEBUG: Sink: multiple: adjoint ref count: {} ({:?})", adj_op.ref_count(), adj_op.name());
+                //println!("DEBUG: Sink: multiple: adjoint ref count: {} ({:?})", adj_op._ref_count(), adj_op.name());
                 frozen.insert(adj_op.var());
               }
               match <SumJoinOp as SumJoinOpMaybeExt<V>>::maybe_build_inplace(adj_ops) {
@@ -1498,6 +1614,7 @@ impl<'a> WriteToken<'a> {
 pub struct RWValBuf<T> {
   //mode:         WriteMode,
   curr_txn:     Option<Txn>,
+  complete:     bool,
   l_consumers:  Mutex<HashSet<RVar>>,
   d_consumers:  HashSet<RVar>,
   l_producers:  HashSet<RWVar>,
@@ -1510,6 +1627,7 @@ impl<T> Default for RWValBuf<T> {
     RWValBuf{
       //mode:         WriteMode::Exclusive,
       curr_txn:     None,
+      complete:     false,
       l_consumers:  Mutex::new(HashSet::new()),
       d_consumers:  HashSet::new(),
       l_producers:  HashSet::new(),
@@ -1542,8 +1660,15 @@ pub struct RWVal<T> {
 }
 
 impl<T> AnyRWVal for RWVal<T> where T: 'static {
-  fn _txn(&self) -> Option<Txn> {
+  /*fn _txn(&self) -> Option<Txn> {
     self.txn()
+  }*/
+
+  fn _complete_txn(&self) -> Option<Txn> {
+    match self.incomplete() {
+      false => self.txn(),
+      true  => None,
+    }
   }
 
   fn _persist(&self, txn: Txn, xvar: RWVar) {
@@ -1637,9 +1762,15 @@ impl<T> RWVal<T> where T: 'static {
     buf.curr_txn
   }
 
+  pub fn incomplete(&self) -> bool {
+    let buf = self.buf.read();
+    !buf.complete
+  }
+
   pub fn reset(&self) {
     let mut buf = self.buf.write();
     buf.curr_txn = None;
+    buf.complete = false;
     buf.l_consumers.lock().clear();
     buf.d_consumers.clear();
     buf.l_producers.clear();
@@ -1649,6 +1780,7 @@ impl<T> RWVal<T> where T: 'static {
   pub fn release(&self) {
     let mut buf = self.buf.write();
     buf.curr_txn = None;
+    buf.complete = false;
     buf.l_consumers.lock().clear();
     buf.d_consumers.clear();
     buf.l_producers.clear();
@@ -1662,6 +1794,7 @@ impl<T> RWVal<T> where T: 'static {
     let new_txn = buf.curr_txn.is_none() || buf.curr_txn.unwrap() != txn;
     if new_txn {
       buf.curr_txn = Some(txn);
+      buf.complete = true;
       buf.l_consumers.lock().clear();
       buf.d_consumers.clear();
       buf.l_producers.clear();
@@ -1692,6 +1825,7 @@ impl<T> RWVal<T> where T: 'static {
     let mut buf = self.buf.write();
     let &mut RWValBuf{
         ref mut curr_txn,
+        ref mut complete,
         ref l_consumers,
         ref mut d_consumers,
         ref mut l_producers,
@@ -1702,6 +1836,7 @@ impl<T> RWVal<T> where T: 'static {
     let new_txn = curr_txn.is_none() || curr_txn.unwrap() != txn;
     if new_txn {
       *curr_txn = Some(txn);
+      *complete = false;
       l_consumers.clear();
       d_consumers.clear();
       l_producers.clear();
@@ -1721,6 +1856,7 @@ impl<T> RWVal<T> where T: 'static {
           (_, 0) => panic!("attempting multiple writes to `Exclusive` val"),
           (_, _) => panic!("all writes to `Exclusive` val must be live"),
         }
+        *complete = true;
         assert!(l_consumers.is_empty(),
             "attempting write to `Exclusive` val after read");
       }
@@ -1734,6 +1870,7 @@ impl<T> RWVal<T> where T: 'static {
           }
           (_, _) => panic!("all writes to `Accumulate` val must be live"),
         }
+        assert!(!*complete);
         assert!(l_consumers.is_empty(),
             "attempting write to `Accumulate` val after read");
       }
@@ -1747,6 +1884,7 @@ impl<T> RWVal<T> where T: 'static {
           }
           (_, _) => panic!("attempting multiple live writes to `Clobber` val"),
         }
+        *complete = true;
         d_consumers.extend(l_consumers.drain());
         d_producers.extend(l_producers.drain());
       }
@@ -1762,7 +1900,7 @@ impl<T> RWVal<T> where T: 'static {
     Some((cap, WriteToken{xvar: xvar, first: first, borrow: &self.borrow}))
   }
 
-  pub fn _get_debug(&self, txn: Txn, rvar: RVar, name: Option<&str>) -> RwLockReadGuard<T> {
+  pub fn _get_debug(&self, txn: Txn, rvar: RVar, name: Option<&str>, key: (u64, String)) -> RwLockReadGuard<T> {
     let buf = self.buf.read();
 
     let mut valid_txn = false;
@@ -1772,8 +1910,11 @@ impl<T> RWVal<T> where T: 'static {
       }
     }
     assert!(valid_txn,
-        "attempting a read with an invalid txn (did you forget to `persist` or `write`?) name: {:?}", name);
+        //"attempting a read with an invalid txn (did you forget to `persist` or `write`?) name: {:?}", name);
+        "attempting a read with an invalid txn (did you forget to `persist` or `write`?) key: {:?}", key);
 
+    assert!(buf.complete,
+        "attempting an incomplete read");
     assert!(!buf.d_consumers.contains(&rvar),
         "attempting a stale read (the value has been clobbered)");
     match buf.l_producers.len() {
@@ -1800,6 +1941,8 @@ impl<T> RWVal<T> where T: 'static {
     assert!(valid_txn,
         "attempting a read with an invalid txn (did you forget to `persist` or `write`?)");
 
+    assert!(buf.complete,
+        "attempting an incomplete read");
     assert!(!buf.d_consumers.contains(&rvar),
         "attempting a stale read (the value has been clobbered)");
     match buf.l_producers.len() {
@@ -1841,6 +1984,33 @@ impl<T> RWVal<T> where T: 'static {
     RwLockWriteGuard::map(buf, |buf| buf.data.as_mut().unwrap())
   }
 
+  pub fn finish_write(&self, txn: Txn, xvar: RWVar, token: WriteToken) {
+    let mut buf = self.buf.write();
+    assert_eq!(xvar, token.xvar);
+
+    let mut valid_txn = false;
+    if let Some(curr_txn) = buf.curr_txn {
+      if curr_txn == txn {
+        valid_txn = true;
+      }
+    }
+    assert!(valid_txn,
+        "attempting a write with an invalid txn (did you forget to `write`?)");
+
+    assert!(!buf.complete,
+        "attempting to finish write, but txn already complete");
+    buf.complete = true;
+    assert!(buf.l_consumers.lock().is_empty(),
+        "attempting a write-after-read (check your `get` and `get_mut` order)");
+    assert!(!buf.d_producers.contains(&xvar),
+        "attempting an invalid write (the value has been clobbered)");
+    assert!(buf.l_producers.contains(&xvar),
+        "attempting an invalid write (did you forget to `write`?)");
+
+    assert!(buf.data.is_some(),
+        "attempting to finish write on empty data");
+  }
+
   pub fn set<F>(&self, txn: Txn, xvar: RWVar, mode: WriteMode, f: F) where F: FnOnce(RwLockWriteGuard<T>) {
     if let Some((cap, token)) = self.write(txn, xvar, mode) {
       match cap {
@@ -1854,7 +2024,7 @@ impl<T> RWVal<T> where T: 'static {
 }
 
 pub struct OpBase {
-  ref_:     NodeRef,
+  ref_:     OpRef,
   stack:    WalkStack,
   tags:     CloneMap,
   //tng_op:   RefCell<Option<Val<V>>>,
@@ -1863,7 +2033,7 @@ pub struct OpBase {
 impl Default for OpBase {
   fn default() -> Self {
     OpBase{
-      ref_:     NodeRef::default(),
+      ref_:     OpRef::default(),
       stack:    WalkStack::default(),
       tags:     TypeMap::custom(),
       //tng_op:   RefCell::new(None),
@@ -1913,8 +2083,11 @@ pub struct FSrcWrapOp<F, V> {
   val_: Val<V>,
 }
 
-impl<F, V> FSrcWrapOp<F, V> {
+impl<F, V> FSrcWrapOp<F, V> where V: 'static {
   pub fn new(cfg: F, ext: OpExt<F, V>, val_: Val<V>) -> Self {
+    log_static_graph(|logging| {
+      logging.push_pred(val_._graph_key());
+    });
     let cfg = RefCell::new(cfg);
     FSrcWrapOp{
       base: OpBase::default(),
@@ -1927,6 +2100,10 @@ impl<F, V> FSrcWrapOp<F, V> {
 }
 
 impl<F, V> ANode for FSrcWrapOp<F, V> where V: 'static {
+  fn _key(&self) -> String {
+    unsafe { type_name::<F>() }.to_owned()
+  }
+
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
@@ -2078,7 +2255,7 @@ pub struct FSrcOp<F, V> {
   //val:  RWVal<V>,
 }
 
-impl<F, V> FSrcOp<F, V> {
+impl<F, V> FSrcOp<F, V> where V: 'static {
   pub fn new(cfg: F, ext: OpExt<F, V>) -> Self {
     let cfg = RefCell::new(cfg);
     //let val = (ext.make_val)(cfg.borrow_mut());
@@ -2104,6 +2281,10 @@ impl<F, V> FSrcOp<F, V> {
 }
 
 impl<F, V> ANode for FSrcOp<F, V> where V: 'static {
+  fn _key(&self) -> String {
+    unsafe { type_name::<F>() }.to_owned()
+  }
+
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
@@ -2308,8 +2489,12 @@ pub struct F1WrapOp<F, V, W> {
   y_:   Val<W>,
 }
 
-impl<F, V, W> F1WrapOp<F, V, W> {
+impl<F, V, W> F1WrapOp<F, V, W> where V: 'static, W: 'static {
   pub fn new(cfg: F, ext: OpExt<F, W>, x_: Val<V>, y_: Val<W>) -> Self {
+    log_static_graph(|logging| {
+      logging.push_pred(x_._graph_key());
+      logging.push_pred(y_._graph_key());
+    });
     let cfg = RefCell::new(cfg);
     F1WrapOp{
       base: OpBase::default(),
@@ -2323,6 +2508,10 @@ impl<F, V, W> F1WrapOp<F, V, W> {
 }
 
 impl<F, V, W> ANode for F1WrapOp<F, V, W> where V: 'static, W: 'static {
+  fn _key(&self) -> String {
+    unsafe { type_name::<F>() }.to_owned()
+  }
+
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
@@ -2497,9 +2686,12 @@ pub struct F1Op<F, V1, W> {
   //y:    RWVal<W>,
 }
 
-impl<F, V1, W> F1Op<F, V1, W> {
+impl<F, V1, W> F1Op<F, V1, W> where V1: 'static, W: 'static {
   //pub fn new(cfg: F, ext: OpExt<F, W>, x_: Val<V1>, y: RWVal<W>) -> Self {
   pub fn new(cfg: F, ext: OpExt<F, W>, x_: Val<V1>) -> Self {
+    log_static_graph(|logging| {
+      logging.push_pred(x_._graph_key());
+    });
     let state = RefCell::new(cfg);
     //let y = (ext.make_val)(state.borrow_mut());
     F1Op{
@@ -2515,6 +2707,10 @@ impl<F, V1, W> F1Op<F, V1, W> {
 }
 
 impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, W: 'static {
+  fn _key(&self) -> String {
+    unsafe { type_name::<F>() }.to_owned()
+  }
+
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
@@ -2764,9 +2960,13 @@ pub struct F2Op<F, V1, V2, W> {
   //y:    RWVal<W>,
 }
 
-impl<F, V1, V2, W> F2Op<F, V1, V2, W> {
+impl<F, V1, V2, W> F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, W: 'static {
   //pub fn new(cfg: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>, y: RWVal<W>) -> Self {
   pub fn new(cfg: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>) -> Self {
+    log_static_graph(|logging| {
+      logging.push_pred(x1_._graph_key());
+      logging.push_pred(x2_._graph_key());
+    });
     let state = RefCell::new(cfg);
     //let y = (ext.make_val)(state.borrow_mut());
     F2Op{
@@ -2783,6 +2983,10 @@ impl<F, V1, V2, W> F2Op<F, V1, V2, W> {
 }
 
 impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, W: 'static {
+  fn _key(&self) -> String {
+    unsafe { type_name::<F>() }.to_owned()
+  }
+
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
@@ -2997,9 +3201,14 @@ pub struct F3Op<F, V1, V2, V3, W> {
   //y:    RWVal<W>,
 }
 
-impl<F, V1, V2, V3, W> F3Op<F, V1, V2, V3, W> {
+impl<F, V1, V2, V3, W> F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 'static, V3: 'static, W: 'static {
   //pub fn new(cfg: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>, x3_: Val<V3>, y: RWVal<W>) -> Self {
   pub fn new(cfg: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>, x3_: Val<V3>) -> Self {
+    log_static_graph(|logging| {
+      logging.push_pred(x1_._graph_key());
+      logging.push_pred(x2_._graph_key());
+      logging.push_pred(x3_._graph_key());
+    });
     let state = RefCell::new(cfg);
     //let y = (ext.make_val)(state.borrow_mut());
     F3Op{
@@ -3017,6 +3226,10 @@ impl<F, V1, V2, V3, W> F3Op<F, V1, V2, V3, W> {
 }
 
 impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 'static, V3: 'static, W: 'static {
+  fn _key(&self) -> String {
+    unsafe { type_name::<F>() }.to_owned()
+  }
+
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
@@ -3242,8 +3455,14 @@ pub struct F4Op<F, V1, V2, V3, V4, W> {
   x4_:  Val<V4>,
 }
 
-impl<F, V1, V2, V3, V4, W> F4Op<F, V1, V2, V3, V4, W> {
+impl<F, V1, V2, V3, V4, W> F4Op<F, V1, V2, V3, V4, W> where V1: 'static, V2: 'static, V3: 'static, V4: 'static, W: 'static {
   pub fn new(cfg: F, ext: OpExt<F, W>, x1_: Val<V1>, x2_: Val<V2>, x3_: Val<V3>, x4_: Val<V4>) -> Self {
+    log_static_graph(|logging| {
+      logging.push_pred(x1_._graph_key());
+      logging.push_pred(x2_._graph_key());
+      logging.push_pred(x3_._graph_key());
+      logging.push_pred(x4_._graph_key());
+    });
     let cfg = RefCell::new(cfg);
     F4Op{
       base: OpBase::default(),
@@ -3259,6 +3478,10 @@ impl<F, V1, V2, V3, V4, W> F4Op<F, V1, V2, V3, V4, W> {
 }
 
 impl<F, V1, V2, V3, V4, W> ANode for F4Op<F, V1, V2, V3, V4, W> where V1: 'static, V2: 'static, V3: 'static, V4: 'static, W: 'static {
+  fn _key(&self) -> String {
+    unsafe { type_name::<F>() }.to_owned()
+  }
+
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
@@ -3399,8 +3622,12 @@ pub struct FSwitchOp<F, V> {
   done: TCell<()>,
 }
 
-impl<F, V> FSwitchOp<F, V> {
+impl<F, V> FSwitchOp<F, V> where V: 'static {
   pub fn new(cfg: F, ext: OpExt<F, V>, flag: TCell<bool>, x1_: Val<V>, x2_: Val<V>) -> Self {
+    log_static_graph(|logging| {
+      logging.push_pred(x1_._graph_key());
+      logging.push_pred(x2_._graph_key());
+    });
     let cfg = RefCell::new(cfg);
     FSwitchOp{
       base: OpBase::default(),
@@ -3416,6 +3643,10 @@ impl<F, V> FSwitchOp<F, V> {
 }
 
 impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, V: 'static {
+  fn _key(&self) -> String {
+    unsafe { type_name::<F>() }.to_owned()
+  }
+
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
@@ -3617,9 +3848,14 @@ pub struct FJoinOp<F, V, W> {
   //y:    RWVal<W>,
 }
 
-impl<F, V, W> FJoinOp<F, V, W> {
+impl<F, V, W> FJoinOp<F, V, W> where V: 'static, W: 'static {
   //pub fn new(cfg: F, ext: OpExt<F, W>, xs_: Vec<Val<V>>, y: RWVal<W>) -> Self {
   pub fn new(cfg: F, ext: OpExt<F, W>, xs_: Vec<Val<V>>) -> Self {
+    log_static_graph(|logging| {
+      for x_ in xs_.iter() {
+        logging.push_pred(x_._graph_key());
+      }
+    });
     let state = RefCell::new(cfg);
     //let y = (ext.make_val)(state.borrow_mut());
     FJoinOp{
@@ -3635,6 +3871,10 @@ impl<F, V, W> FJoinOp<F, V, W> {
 }
 
 impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, W: 'static {
+  fn _key(&self) -> String {
+    unsafe { type_name::<F>() }.to_owned()
+  }
+
   fn _walk(&self) -> &Walk {
     &self.base.stack
   }
