@@ -490,6 +490,20 @@ impl<V> Add<Val<V>> for Val<V> where Val<V>: SumExt<V> {
   }
 }
 
+pub fn sum_inplace_unstable<V>(xs_: Vec<Val<V>>) -> Val<V> where Val<V>: SumInplaceExt<V> {
+  <Val<V> as SumInplaceExt<V>>::sum_inplace_unstable(xs_)
+}
+
+pub trait SumInplaceExt<V> {
+  fn sum_inplace_unstable(xs_: Vec<Val<V>>) -> Val<V>;
+}
+
+impl<V> SumInplaceExt<V> for Val<V> where SumJoinOp: SumJoinOpExt<V> {
+  fn sum_inplace_unstable(xs_: Vec<Val<V>>) -> Val<V> {
+    <SumJoinOp as SumJoinOpExt<V>>::build_inplace(xs_).0
+  }
+}
+
 pub trait ReduceSumExt<V, W> {
   fn reduce_sum(self, axis: isize) -> Val<W>;
 }
@@ -789,18 +803,9 @@ pub fn pass_apply<F, A: 'static>(x_: Val<A>) -> Box<Fn(Txn, RefMut<F>, OVal<A>) 
     Some(section) => section,
   };
   Box::new(move |txn: Txn, _state: RefMut<_>, output: OVal<A>| {
-    /*if x_._graph_key() == (67, "BatchSumOp".to_owned()) {
-      println!("DEBUG: pass_apply: src is (67, \"BatchSumOp\"), this is {}", output.xvar._raw());
-    }*/
     if output._valref().is_some() && x_._valref() != output._valref() {
-      /*if x_._graph_key() == (67, "BatchSumOp".to_owned()) {
-        println!("DEBUG: pass_apply:   nontrivial output");
-      }*/
       //if let Some((cap, token)) = output.write(txn) {
       output.write_v2(txn, |cap, token| {
-        /*if x_._graph_key() == (67, "BatchSumOp".to_owned()) {
-          println!("DEBUG: pass_apply:   nontrivial write");
-        }*/
         let mut section = section.clone();
         let x = x_.get(txn);
         let mut y = output.get_mut(txn, token);

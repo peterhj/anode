@@ -67,7 +67,7 @@ impl WriteSectionExt<GPUDeviceScalar<f32>> for WriteSection {
 
 impl WriteSectionImpl<GPUDeviceScalar<f32>> for GPUWriteSection {
   fn copy(&mut self, dst: &mut GPUDeviceScalar<f32>, src: &GPUDeviceScalar<f32>) {
-    println!("DEBUG: GPU write section: in copy...");
+    //println!("DEBUG: GPU write section: in copy...");
     let ctx = implicit_ctx().gpu();
     let mut pool = ctx.pool();
     let conn = pool.conn();
@@ -78,7 +78,7 @@ impl WriteSectionImpl<GPUDeviceScalar<f32>> for GPUWriteSection {
   }
 
   fn add(&mut self, dst: &mut GPUDeviceScalar<f32>, src: &GPUDeviceScalar<f32>) {
-    println!("DEBUG: GPU write section: in add...");
+    //println!("DEBUG: GPU write section: in add...");
     let ctx = implicit_ctx().gpu();
     let mut pool = ctx.pool();
     let conn = pool.conn();
@@ -144,6 +144,26 @@ impl WriteSectionImpl<GPUDeviceOuterBatchArray1d<f32>> for GPUWriteSection {
   }
 
   fn add(&mut self, dst: &mut GPUDeviceOuterBatchArray1d<f32>, src: &GPUDeviceOuterBatchArray1d<f32>) {
+    // TODO
+    unimplemented!();
+  }
+}
+
+impl WriteSectionExt<GPUDeviceOuterBatchArray3d<f32>> for WriteSection {
+  type Section = GPUWriteSection;
+
+  fn maybe() -> Option<Self::Section> {
+    Some(GPUWriteSection::default())
+  }
+}
+
+impl WriteSectionImpl<GPUDeviceOuterBatchArray3d<f32>> for GPUWriteSection {
+  fn copy(&mut self, dst: &mut GPUDeviceOuterBatchArray3d<f32>, src: &GPUDeviceOuterBatchArray3d<f32>) {
+    // TODO
+    unimplemented!();
+  }
+
+  fn add(&mut self, dst: &mut GPUDeviceOuterBatchArray3d<f32>, src: &GPUDeviceOuterBatchArray3d<f32>) {
     // TODO
     unimplemented!();
   }
@@ -306,11 +326,11 @@ where A: GPUDeviceAsync + 'static,
       make_val: {
         //Box::new(move || {
         Box::new(move |state: RefMut<_>| {
-          println!("DEBUG: SrcOpExt: init gpu...");
+          //println!("DEBUG: SrcOpExt: init gpu...");
           let section = GPULazyAsyncSection::default();
           let init_val = init_val.clone();
           RWVal::from(Arc::new(move |txn: Txn| {
-            println!("DEBUG: SrcOpExt: init gpu: allocating...");
+            //println!("DEBUG: SrcOpExt: init gpu: allocating...");
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -363,11 +383,11 @@ where A: GPUDeviceAsync + 'static,
       make_val: {
         //Box::new(move || {
         Box::new(move |state: RefMut<_>| {
-          println!("DEBUG: TouchSrcOpExt: init gpu...");
+          //println!("DEBUG: TouchSrcOpExt: init gpu...");
           let section = GPULazyAsyncSection::default();
           let init_val = init_val.clone();
           RWVal::from(Arc::new(move |txn: Txn| {
-            println!("DEBUG: TouchSrcOpExt: init gpu: allocating...");
+            //println!("DEBUG: TouchSrcOpExt: init gpu: allocating...");
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -427,11 +447,11 @@ where T: Copy,
       make_val: {
         //Box::new(move || {
         Box::new(move |state: RefMut<_>| {
-          println!("DEBUG: RandomBitsSrcOpExt: init gpu...");
+          //println!("DEBUG: RandomBitsSrcOpExt: init gpu...");
           let section = GPULazyAsyncSection::default();
           let init_val = init_val.clone();
           RWVal::from(Arc::new(move |txn: Txn| {
-            println!("DEBUG: RandomBitsSrcOpExt: init gpu: allocating...");
+            //println!("DEBUG: RandomBitsSrcOpExt: init gpu: allocating...");
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -569,7 +589,9 @@ where T: ZeroBits + Copy + 'static,
                 guard._wait(y.async_state());
                 y.as_view_mut().set_zeros(conn);
               }
-              _ => unimplemented!(),
+              WriteCap::Accumulate => {
+                let _ = output.get_mut(txn, token);
+              }
             }
           })
         })
@@ -668,7 +690,9 @@ where T: ZeroBits + Copy + 'static,
                 guard._wait(y.async_state());
                 y.as_view_mut().set_zeros(conn);
               }
-              _ => unimplemented!(),
+              WriteCap::Accumulate => {
+                let _ = output.get_mut(txn, token);
+              }
             }
           })
         })
@@ -758,12 +782,14 @@ where T: ZeroBits + Copy + 'static,
             match cap {
               WriteCap::Assign => {
                 // TODO: zero out the whole thing.
-                println!("DEBUG: ZeroSrcOp: zeroing...");
+                //println!("DEBUG: ZeroSrcOp: zeroing...");
                 let mut y = output.get_mut(txn, token);
                 guard._wait(y.async_state());
                 y.as_view_mut().set_zeros(conn);
               }
-              _ => unreachable!(),
+              WriteCap::Accumulate => {
+                let _ = output.get_mut(txn, token);
+              }
             }
           })
         })
@@ -853,12 +879,14 @@ where T: ZeroBits + Copy + 'static,
             match cap {
               WriteCap::Assign => {
                 // TODO: zero out the whole thing.
-                println!("DEBUG: ZeroSrcOp: zeroing...");
+                //println!("DEBUG: ZeroSrcOp: zeroing...");
                 let mut y = output.get_mut(txn, token);
                 guard._wait(y.async_state());
                 y.as_view_mut().set_zeros(conn);
               }
-              WriteCap::Accumulate => {}
+              WriteCap::Accumulate => {
+                let _ = output.get_mut(txn, token);
+              }
             }
           })
         })
@@ -959,12 +987,14 @@ where T: ZeroBits + Copy + 'static,
             match cap {
               WriteCap::Assign => {
                 // TODO: zero out the whole thing.
-                println!("DEBUG: ZeroSrcOp: zeroing...");
+                //println!("DEBUG: ZeroSrcOp: zeroing...");
                 let mut y = output.get_mut(txn, token);
                 guard._wait(y.async_state());
                 y.as_view_mut().set_zeros(conn);
               }
-              WriteCap::Accumulate => {}
+              WriteCap::Accumulate => {
+                let _ = output.get_mut(txn, token);
+              }
             }
           })
         })
@@ -1065,12 +1095,14 @@ where T: ZeroBits + Copy + 'static,
             match cap {
               WriteCap::Assign => {
                 // TODO: zero out the whole thing.
-                println!("DEBUG: ZeroSrcOp: zeroing...");
+                //println!("DEBUG: ZeroSrcOp: zeroing...");
                 let mut y = output.get_mut(txn, token);
                 guard._wait(y.async_state());
                 y.as_view_mut().set_zeros(conn);
               }
-              WriteCap::Accumulate => {}
+              WriteCap::Accumulate => {
+                let _ = output.get_mut(txn, token);
+              }
             }
           })
         })
@@ -1170,12 +1202,14 @@ where T: ZeroBits + Copy + 'static,
             match cap {
               WriteCap::Assign => {
                 // TODO: zero out the whole thing.
-                println!("DEBUG: ZeroSrcOp: zeroing...");
+                //println!("DEBUG: ZeroSrcOp: zeroing...");
                 let mut y = output.get_mut(txn, token);
                 guard._wait(y.async_state());
                 y.as_view_mut().set_zeros(conn);
               }
-              WriteCap::Accumulate => {}
+              WriteCap::Accumulate => {
+                let _ = output.get_mut(txn, token);
+              }
             }
           })
         })
@@ -1880,8 +1914,13 @@ impl SumJoinOp {
       // TODO
       tangent: None,
       adjoint: Some({
-        let xs_ = old_xs_.clone();
+        // FIXME(peter, 20180623): This is generally wrong. The current
+        // workaround to get the correct adjoint in some cases is to put
+        // the first argument in a `PassOp`.
+        //let xs_ = old_xs_.clone();
+        let xs_ = new_xs_.clone();
         Box::new(move |_: Pass, y_: Val<A>, _state: RefMut<_>, sink: &mut Sink| {
+          println!("WARNING: SumJoinAccumulateOp: attempting to build in-place adjoint; please exercise care as this part is known to be buggy outside of controlled workarounds.");
           if let Some(adj_y_) = y_.adjoint(sink) {
             for i in 0 .. xs_.len() {
               xs_[i].put_adjoint(adj_y_.clone(), sink);
@@ -3458,10 +3497,7 @@ impl BatchSumOp {
         let x_ = x_.clone();
         Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
           if let Some(adj_y_) = y_.adjoint(sink) {
-            // FIXME(peter, 20180622): something about this wrong.
-            //let adj_x_ = adj_y_.batch_broadcast(16); // NOTE: this does not fix things.
             let adj_x_ = adj_y_.batch_broadcast_like(x_.clone());
-            //let adj_x_ = adj_y_.batch_broadcast_like(x_.clone().pass()); // NOTE: this also does not fix things.
             x_.put_adjoint(adj_x_, sink);
           }
         })

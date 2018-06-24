@@ -983,8 +983,8 @@ impl<V> Val<V> where V: 'static {
     //self.op._get_output(txn, self.rvar, self._clone_value());
     //let xvalue = self.op._value2(txn, self._static_value());
     let xvalue = self.op._value3(txn, self.value.as_ref());
-    //xvalue.get(txn, self.rvar)
-    xvalue._get_debug(txn, self.rvar, self.name.as_ref().map(|s| s.as_ref()), self._graph_key())
+    //xvalue._get_debug(txn, self.rvar, self.name.as_ref().map(|s| s.as_ref()), self._graph_key())
+    xvalue._get(txn, self.rvar, Some(self._graph_key()))
   }
 
   pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwLockWriteGuard<V> {
@@ -1051,7 +1051,7 @@ impl<V> Val<V> where V: 'static {
   }
 
   pub fn put_adjoint(&self, adj: Val<V>, sink: &mut Sink) {
-    // FIXME: for debugging.
+    /*// FIXME: for debugging.
     let adj = match self.name {
       None => adj,
       Some(ref name) => {
@@ -1060,7 +1060,7 @@ impl<V> Val<V> where V: 'static {
           Some(ref prev_name) => adj.named(&format!("adj.{} (was: {})", name, prev_name)),
         }
       }
-    };
+    };*/
     sink.put_adj::<V>(self.var(), adj);
   }
 }
@@ -1949,36 +1949,11 @@ impl<T> RWVal<T> where T: 'static {
     Some((cap, WriteToken{xvar: xvar, first: first, borrow: &self.borrow}))
   }
 
-  pub fn _get_debug(&self, txn: Txn, rvar: RVar, name: Option<&str>, key: (u64, String)) -> RwLockReadGuard<T> {
-    let buf = self.buf.read();
-
-    let mut valid_txn = false;
-    if let Some(curr_txn) = buf.curr_txn {
-      if curr_txn == txn {
-        valid_txn = true;
-      }
-    }
-    assert!(valid_txn,
-        //"attempting a read with an invalid txn (did you forget to `persist` or `write`?) name: {:?}", name);
-        "attempting a read with an invalid txn (did you forget to `persist` or `write`?) key: {:?}", key);
-
-    assert!(buf.complete,
-        "attempting an incomplete read");
-    assert!(!buf.d_consumers.contains(&rvar),
-        "attempting a stale read (the value has been clobbered)");
-    match buf.l_producers.len() {
-      0 => panic!("attempting an invalid read (the value was never written)"),
-      _ => {}
-    }
-    buf.l_consumers.lock().insert(rvar);
-
-    assert!(buf.data.is_some(),
-        "attempting a read on empty data");
-
-    RwLockReadGuard::map(buf, |buf| buf.data.as_ref().unwrap())
+  pub fn get(&self, txn: Txn, rvar: RVar) -> RwLockReadGuard<T> {
+    self._get(txn, rvar, None)
   }
 
-  pub fn get(&self, txn: Txn, rvar: RVar) -> RwLockReadGuard<T> {
+  pub fn _get(&self, txn: Txn, rvar: RVar, key: Option<(u64, String)>) -> RwLockReadGuard<T> {
     let buf = self.buf.read();
 
     let mut valid_txn = false;
@@ -1988,7 +1963,8 @@ impl<T> RWVal<T> where T: 'static {
       }
     }
     assert!(valid_txn,
-        "attempting a read with an invalid txn (did you forget to `persist` or `write`?)");
+        //"attempting a read with an invalid txn (did you forget to `persist` or `write`?)");
+        "attempting a read with an invalid txn (did you forget to `persist` or `write`?) key: {:?}", key);
 
     assert!(buf.complete,
         "attempting an incomplete read");
