@@ -22,6 +22,7 @@ use rand::distributions::{Distribution, Uniform, Normal};
 use sharedmem::*;
 use superdata::*;
 use superdata::datasets::imagenet::*;
+use superdata::image::*;
 use superdata::utils::*;
 
 use std::cmp::{max, min};
@@ -331,7 +332,8 @@ fn main() {
                   Ok(mut image) => {
                     //println!("DEBUG: image: dims: {} {}", image.width(), image.height());
                     // TODO: data augmentation.
-                    image.resize(224, 224);
+                    inception_crop_resize(224, 224, &mut image, &mut rng);
+                    random_flip(&mut image, &mut rng);
                     Some(image)
                   }
                   Err(_) => {
@@ -345,6 +347,9 @@ fn main() {
           .async_prefetch_data(batch_sz * max(2, num_data_workers))
           .batch_data(batch_sz)
       };
+
+      // TODO
+      //let (image_var, label_var, logit_var, loss_var, online, avg_rate, params, online_stats, avg_stats) = build_resnet(batch_sz);
 
       let mut stopwatch = Stopwatch::new();
       let mut images = Vec::with_capacity(batch_sz);
@@ -396,29 +401,57 @@ fn main() {
               loss,
               stopwatch.click().lap_time());
         }
-        continue;
+        //continue;
 
         if (iter_nr + 1) % eval_interval == 0 {
           // TODO: validation.
-          let val_shard = val_dataset.partition(proc.rank(), proc.num_ranks());
+          let val_shard = val_dataset.range_shard(proc.rank(), proc.num_ranks());
           let shard_len = val_shard.len();
-          let val_iter =
-              val_shard
-              .one_pass()
-              .round_up_data(batch_sz)
-              .batch_data(batch_sz);
-          let mut shard_ctr = 0;
+          let val_iter = {
+            let mut val_splits = async_split_data(num_data_workers, || {
+              val_shard.one_pass()
+            });
+            let mut val_splits = val_splits.drain(..);
+            async_join_data(num_data_workers, |worker_rank| {
+              val_splits.next().unwrap()
+                .map_data(|(value, label)| {
+                  let image = match ColorImage::decode(&value) {
+                    Ok(mut image) => {
+                      scale_resize(256, &mut image);
+                      center_crop(224, 224, &mut image);
+                      Some(image)
+                    }
+                    Err(_) => {
+                      panic!("WARNING: image decode error");
+                    }
+                  };
+                  (maybe_image, label)
+                })
+            })
+            .round_up_data(batch_sz)
+            .batch_data(batch_sz)
+          };
+          let mut eval_ctr = 0;
+          let mut eval_acc_ct = 0;
           'eval_batch_loop: for eval_batch in val_iter {
             let batch_txn = txn();
             // TODO: evaluate the batch.
             for idx in 0 .. batch_sz {
-              // TODO: calculate accuracy stats.
-              shard_ctr += 1;
-              if shard_ctr == shard_len {
+              let k = _arg_max(&logit_batch.flat_view().unwrap().as_slice()[num_classes * idx .. num_classes * (idx + 1)]);
+              if k == labels[idx] as _ {
+                eval_acc_ct += 1;
+              }
+              eval_ctr += 1;
+              if eval_ctr == shard_len {
                 break 'eval_batch_loop;
               }
             }
           }
+          println!("DEBUG: eval: count: {} acc: {:.4} ({}/{}) elapsed: {:.6} s",
+              eval_ctr,
+              eval_acc_ct as f64 / eval_ctr as f64,
+              eval_acc_ct, eval_ctr,
+              stopwatch.click().lap_time());
         }
       }
     }).unwrap().join();
