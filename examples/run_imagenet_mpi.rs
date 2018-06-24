@@ -12,133 +12,161 @@ use anode::ops::*;
 #[cfg(feature = "mpi")] use anode::proc::*;
 use anode::utils::*;
 use colorimage::*;
+use gpudevicemem::*;
 use gpudevicemem::array::*;
 use memarray::*;
 #[cfg(feature = "mpi")] use mpich::*;
 use rand::prelude::*;
-use rand::rngs::mock::*;
+use rand::distributions::{Distribution, Uniform, Normal};
+//use rand::rngs::mock::*;
 use sharedmem::*;
 use superdata::*;
 use superdata::datasets::imagenet::*;
+use superdata::utils::*;
 
 use std::cmp::{max, min};
 use std::path::{PathBuf};
+use std::rc::{Rc};
 
-/*struct SplitShardsMPI<Data> {
-  part_len: usize,
-  part_off: usize,
-  all_data: Data,
-  proc:     DistProc,
+pub trait XavierLinearInit<Shape, T, R: Rng> {
+  type RValue;
+
+  fn xavier_linear_init(shape: Shape, src: usize, dst: usize, seed_rng: &mut R) -> Self::RValue;
 }
 
-impl<Data: RandomAccess> SplitShardsMPI<Data> {
-  pub fn new(all_data: Data, proc: DistProc) -> Self {
-    //let mut all_len = [data.len() as u64];
-    //proc.barrier();
-    //proc.allreduce_sum(&mut all_len);
-    //proc.barrier();
-    //let all_len = all_len[0] as usize;
-    let rdup_all_len = (all_data.len() + proc.num_ranks() - 1) / proc.num_ranks() * proc.num_ranks();
-    let rdup_part_len = rdup_all_len / proc.num_ranks();
-    let part_off = proc.rank() * rdup_part_len;
-    let part_len = min(all_data.len(), (proc.rank() + 1) * rdup_part_len) - part_off;
-    println!("DEBUG: SplitShardsMPI: rank: {} all len: {} part offset: {} part len: {}",
-        proc.rank(), all_data.len(), part_off, part_len);
-    //let rm_buf = MPIWindow::new(64 * 1024 * 1024, &mut MPIComm::world()).unwrap();
-    //println!("DEBUG:   rma window created");
-    SplitShardsMPI{
-      part_len: part_len,
-      part_off: part_off,
-      all_data: all_data,
-      proc:     proc,
-    }
+pub trait XavierConv2dInit<Shape, T, R: Rng> {
+  type RValue;
+
+  fn xavier_conv2d_init(shape: Shape, ker_sz: [usize; 2], src: usize, dst: usize, seed_rng: &mut R) -> Self::RValue;
+}
+
+pub trait KaimingConv2dInit<Shape, T, R: Rng> {
+  type RValue;
+
+  fn kaiming_conv2d_init(shape: Shape, ker_sz: [usize; 2], src: usize, dst: usize, seed_rng: &mut R) -> Self::RValue;
+}
+
+impl<R: Rng> XavierLinearInit<[usize; 2], f32, R> for GPUDeviceArray2d<f32> {
+  type RValue = Rc<Fn(Txn, GPUDeviceConn) -> Self>;
+
+  fn xavier_linear_init(shape: [usize; 2], src_ch: usize, dst_ch: usize, seed_rng: &mut R) -> Self::RValue {
+    //let seed = seed_rng.next_u64();
+    Rc::new(move |_, conn: GPUDeviceConn| {
+      // TODO: seed the local rng here.
+      let mut h_arr = MemArray2d::<f32>::zeros(shape);
+      {
+        let half_width = (6.0 / (src_ch + dst_ch) as f64).sqrt();
+        let dist = Uniform::new_inclusive(-half_width, half_width);
+        let mut v = h_arr.as_view_mut();
+        let xs = v.flat_slice_mut().unwrap();
+        for x in xs.iter_mut() {
+          *x = dist.sample(&mut thread_rng()) as f32;
+        }
+      }
+      let mut arr = GPUDeviceArray2d::<f32>::zeros(shape, conn.clone());
+      arr.as_view_mut().sync_copy_mem(h_arr.as_view(), conn.clone());
+      arr
+    })
   }
 }
 
-struct JoinShardsMPI<Data> {
-  all_len:  usize,
-  part_len: usize,
-  offset:   usize,
-  data:     Data,
-  proc:     DistProc,
-  //rm_buf:   MPIWindow<u8>,
-}
+impl<R: Rng> XavierConv2dInit<[usize; 4], f32, R> for GPUDeviceArray4d<f32> {
+  type RValue = Rc<Fn(Txn, GPUDeviceConn) -> Self>;
 
-impl<Data: RandomAccess> JoinShardsMPI<Data> {
-  pub fn new(data: Data, proc: DistProc) -> Self {
-    let mut all_len = [data.len() as u64];
-    proc.barrier();
-    proc.allreduce_sum(&mut all_len);
-    proc.barrier();
-    let all_len = all_len[0] as usize;
-    let rdup_all_len = (all_len + proc.num_ranks() - 1) / proc.num_ranks() * proc.num_ranks();
-    let rdup_part_len = rdup_all_len / proc.num_ranks();
-    let offset = proc.rank() * rdup_part_len;
-    println!("DEBUG: JoinShardsMPI: rank: {} all len: {} part len: {} offset: {} data len: {}",
-        proc.rank(), all_len, rdup_part_len, offset, data.len());
-    //let rm_buf = MPIWindow::new(64 * 1024 * 1024, &mut MPIComm::world()).unwrap();
-    //println!("DEBUG:   rma window created");
-    JoinShardsMPI{
-      all_len:  all_len,
-      part_len: rdup_part_len,
-      offset:   offset,
-      data:     data,
-      proc:     proc,
-    }
+  fn xavier_conv2d_init(shape: [usize; 4], ker_sz: [usize; 2], src_ch: usize, dst_ch: usize, seed_rng: &mut R) -> Self::RValue {
+    //let seed = seed_rng.next_u64();
+    Rc::new(move |_, conn: GPUDeviceConn| {
+      // TODO: seed the local rng here.
+      let mut h_arr = MemArray4d::<f32>::zeros(shape);
+      {
+        // TODO: distribution.
+        let half_width = (6.0 / (ker_sz[0] * ker_sz[1] * (src_ch + dst_ch)) as f64).sqrt();
+        let dist = Uniform::new_inclusive(-half_width, half_width);
+        let mut v = h_arr.as_view_mut();
+        let xs = v.flat_slice_mut().unwrap();
+        for x in xs.iter_mut() {
+          *x = dist.sample(&mut thread_rng()) as f32;
+        }
+      }
+      let mut arr = GPUDeviceArray4d::<f32>::zeros(shape, conn.clone());
+      arr.as_view_mut().sync_copy_mem(h_arr.as_view(), conn.clone());
+      arr
+    })
   }
 }
 
-impl<Data: RandomAccess<Item=(SharedMem<u8>, u32)>> RandomAccess for JoinShardsMPI<Data> {
-  type Item = <Data as RandomAccess>::Item;
+impl<R: Rng> KaimingConv2dInit<[usize; 4], f32, R> for GPUDeviceArray4d<f32> {
+  type RValue = Rc<Fn(Txn, GPUDeviceConn) -> Self>;
 
-  fn len(&self) -> usize {
-    self.all_len
+  fn kaiming_conv2d_init(shape: [usize; 4], ker_sz: [usize; 2], src_ch: usize, dst_ch: usize, seed_rng: &mut R) -> Self::RValue {
+    //let seed = seed_rng.next_u64();
+    Rc::new(move |_, conn: GPUDeviceConn| {
+      // TODO: seed the local rng here.
+      let mut h_arr = MemArray4d::<f32>::zeros(shape);
+      {
+        let mean = 0.0;
+        let std = (2.0 / (ker_sz[0] * ker_sz[1] * src_ch) as f64).sqrt();
+        let dist = Normal::new(mean, std);
+        let mut v = h_arr.as_view_mut();
+        let xs = v.flat_slice_mut().unwrap();
+        for x in xs.iter_mut() {
+          *x = dist.sample(&mut thread_rng()) as f32;
+        }
+      }
+      let mut arr = GPUDeviceArray4d::<f32>::zeros(shape, conn.clone());
+      arr.as_view_mut().sync_copy_mem(h_arr.as_view(), conn.clone());
+      arr
+    })
   }
-
-  fn at(&self, idx: usize) -> Self::Item {
-    let src_rank = idx / self.part_len;
-    let src_idx = idx % self.part_len;
-    if src_rank == self.proc.rank() {
-      self.data.at(src_idx)
-    } else {
-      // TODO
-      self.data.at(src_idx % self.data.len())
-      //unimplemented!();
-      /*
-      let mut dst_buf = ...;
-      */
-    }
-  }
-}*/
-
-fn build_linear(x: Val<GPUDeviceOuterBatchArray1d<f32>>, src: usize, dst: usize, params: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
-  // TODO
-  unimplemented!();
 }
 
-fn build_batch_norm_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, conv_shape: Conv2dShape, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
-  // TODO
-  unimplemented!();
+fn build_linear(x: Val<GPUDeviceOuterBatchArray1d<f32>>, src_ch: usize, dst_ch: usize, params: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
+  let w = src(GPUDeviceArray2d::<f32>::xavier_linear_init([dst_ch, src_ch], src_ch, dst_ch, &mut thread_rng()));
+  let b = src(GPUDeviceArray1d::<f32>::zeros_init(dst_ch));
+  params.push_val(w.clone());
+  params.push_val(b.clone());
+  let x = w.mult_add(x, b);
+  x
 }
 
-fn build_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, conv_shape: Conv2dShape, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+fn build_batch_norm_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: TCell<bool>, avg_rate: TCell<f32>, conv_shape: Conv2dShape, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+  let w = src(GPUDeviceArray4d::<f32>::kaiming_conv2d_init(
+      [conv_shape.ker_size[0], conv_shape.ker_size[1], conv_shape.src_size[2], conv_shape.features],
+      conv_shape.ker_size,
+      conv_shape.src_size[2],
+      conv_shape.features,
+      &mut thread_rng()));
+  let b = src(GPUDeviceArray1d::<f32>::zeros_init(conv_shape.features));
+  params.push_val(w.clone());
+  params.push_val(b.clone());
+  let x = w.conv_add(conv_shape.clone(), x, b);
+  let epsilon = 1.0e-6_f32;
+  let (x, x_mean, x_var, x_avg_mean, x_avg_var) = x.batch_normalize_2d([0, 1], online, avg_rate, epsilon);
+  online_stats.push_val(x_mean);
+  online_stats.push_val(x_var);
+  avg_stats.push_val(x_avg_mean);
+  avg_stats.push_val(x_avg_var);
+  x
+}
+
+fn build_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: TCell<bool>, avg_rate: TCell<f32>, conv_shape: Conv2dShape, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
   // TODO
   let mut conv1 = conv_shape;
-  let y = build_batch_norm_conv(x.clone(), conv1, params, online_stats, avg_stats);
+  let y = build_batch_norm_conv(x.clone(), online.clone(), avg_rate.clone(), conv1, params, online_stats, avg_stats);
   let y = y.positive_clip();
   // TODO
   let mut conv2 = conv_shape;
-  let y = build_batch_norm_conv(y, conv2, params, online_stats, avg_stats);
+  let y = build_batch_norm_conv(y, online.clone(), avg_rate.clone(), conv2, params, online_stats, avg_stats);
   let y = y.positive_clip();
   // TODO
   let mut conv3 = conv_shape;
-  let y = build_batch_norm_conv(y, conv3, params, online_stats, avg_stats);
+  let y = build_batch_norm_conv(y, online.clone(), avg_rate.clone(), conv3, params, online_stats, avg_stats);
   let y = y + x;
   let y = y.positive_clip();
   y
 }
 
-fn build_proj_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, conv_shape: Conv2dShape, src_size: [usize; 2], src_features: usize, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+fn build_proj_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: TCell<bool>, avg_rate: TCell<f32>, conv_shape: Conv2dShape, src_size: [usize; 2], src_features: usize, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
   // TODO
   unimplemented!();
 }
@@ -163,7 +191,7 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   conv1.stride = [2, 2];
   conv1.zero_pad = [1, 1];
 
-  let x = build_batch_norm_conv(x, conv1, &mut params, &mut online_stats, &mut avg_stats);
+  let x = build_batch_norm_conv(x, online.clone(), avg_rate.clone(), conv1, &mut params, &mut online_stats, &mut avg_stats);
   let x = x.positive_clip();
 
   let mut pool1 = Pool2dShape::default_nchw();
@@ -183,9 +211,9 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   conv2.zero_pad = [0, 0];
 
   let mut x = x;
-  x = build_proj_residual3_conv(x, conv2, [56, 56], 64, &mut params, &mut online_stats, &mut avg_stats);
+  x = build_proj_residual3_conv(x, online.clone(), avg_rate.clone(), conv2, [56, 56], 64, &mut params, &mut online_stats, &mut avg_stats);
   for _ in 1 .. 3 {
-    x = build_residual3_conv(x, conv2, &mut params, &mut online_stats, &mut avg_stats);
+    x = build_residual3_conv(x, online.clone(), avg_rate.clone(), conv2, &mut params, &mut online_stats, &mut avg_stats);
   }
 
   let mut conv3 = Conv2dShape::default_nchw();
@@ -196,9 +224,9 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   conv3.zero_pad = [0, 0];
 
   let mut x = x;
-  x = build_proj_residual3_conv(x, conv3, [56, 56], 128, &mut params, &mut online_stats, &mut avg_stats);
+  x = build_proj_residual3_conv(x, online.clone(), avg_rate.clone(), conv3, [56, 56], 128, &mut params, &mut online_stats, &mut avg_stats);
   for _ in 1 .. 4 {
-    x = build_residual3_conv(x, conv3, &mut params, &mut online_stats, &mut avg_stats);
+    x = build_residual3_conv(x, online.clone(), avg_rate.clone(), conv3, &mut params, &mut online_stats, &mut avg_stats);
   }
 
   let mut conv4 = Conv2dShape::default_nchw();
@@ -209,9 +237,9 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   conv4.zero_pad = [0, 0];
 
   let mut x = x;
-  x = build_proj_residual3_conv(x, conv4, [28, 28], 256, &mut params, &mut online_stats, &mut avg_stats);
+  x = build_proj_residual3_conv(x, online.clone(), avg_rate.clone(), conv4, [28, 28], 256, &mut params, &mut online_stats, &mut avg_stats);
   for _ in 1 .. 6 {
-    x = build_residual3_conv(x, conv4, &mut params, &mut online_stats, &mut avg_stats);
+    x = build_residual3_conv(x, online.clone(), avg_rate.clone(), conv4, &mut params, &mut online_stats, &mut avg_stats);
   }
 
   let mut conv5 = Conv2dShape::default_nchw();
@@ -222,9 +250,9 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   conv5.zero_pad = [0, 0];
 
   let mut x = x;
-  x = build_proj_residual3_conv(x, conv5, [14, 14], 512, &mut params, &mut online_stats, &mut avg_stats);
+  x = build_proj_residual3_conv(x, online.clone(), avg_rate.clone(), conv5, [14, 14], 512, &mut params, &mut online_stats, &mut avg_stats);
   for _ in 1 .. 3 {
-    x = build_residual3_conv(x, conv5, &mut params, &mut online_stats, &mut avg_stats);
+    x = build_residual3_conv(x, online.clone(), avg_rate.clone(), conv5, &mut params, &mut online_stats, &mut avg_stats);
   }
 
   let mut avg_pool = Pool2dShape::default_nchw();

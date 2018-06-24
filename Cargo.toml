@@ -23,6 +23,7 @@ walkdir = "*"
 colorimage = { path = "../colorimage" }
 stb_image = { path = "../rust-stb-image" }
 superdata = { path = "../superdata" }
+time = "*"
 
 [dependencies]
 arithmetic = { path = "../arithmetic" }
@@ -45,5 +46,5 @@ rand = "^0.5"
 #rng = "*"
 rng = { path = "../rng" }
 sharedmem = { path = "../sharedmem" }
-time = "*"
+#time = "*"
 typemap = "*"

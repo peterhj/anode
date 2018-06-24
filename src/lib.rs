@@ -40,7 +40,7 @@ extern crate memarray;
 extern crate parking_lot;
 extern crate rand;
 extern crate rng;
-extern crate time;
+//extern crate time;
 extern crate typemap;
 
 use analysis::{LivenessAnalysis};
