@@ -62,6 +62,9 @@ pub struct FlatMapOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatMapInplaceOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatJoinOp<FlatJoin> { pub f: FlatJoin }
 pub struct FlatLinearOp;
+pub struct BroadcastLinearOp;
+pub struct BroadcastAffineOp;
+pub struct LinearReduceSumOp;
 pub struct BatchMean2dOp;
 pub struct BatchMean2dBwdOp;
 pub struct BatchVariance2dOp;
@@ -715,19 +718,24 @@ pub trait FlatAffineExt<A, X, Y, B> {
   fn flat_mult(self, x_: Val<X>, b_: Val<B>) -> Val<Y>;
 }
 
-pub trait BroadcastAddExt<A, X, Y> {
-  // TODO: axes.
-  fn broadcast_add(self, axes: (), x_: Val<X>) -> Val<Y>;
+pub trait Broadcast1dAddExt<A, X, Y> {
+  fn broadcast_1d_add(self, axis: isize, x_: Val<X>) -> Val<Y>;
 }
 
-pub trait BroadcastLinearExt<A, X, Y> {
-  // TODO: axes.
-  fn broadcast_mult(self, axes: (), x_: Val<X>) -> Val<Y>;
+pub trait Broadcast1dLinearExt<A, X, Y> {
+  fn broadcast_1d_mult(self, axis: isize, x_: Val<X>) -> Val<Y>;
 }
 
-pub trait BroadcastAffineExt<A, X, Y, B> {
-  // TODO: axes.
-  fn broadcast_mult_add(self, axes: (), x_: Val<X>, b_: Val<B>) -> Val<Y>;
+pub trait Broadcast1dAffineExt<A, X, Y, B> {
+  fn broadcast_1d_mult_add(self, axis: isize, x_: Val<X>, b_: Val<B>) -> Val<Y>;
+}
+
+pub trait Reduce1dSumExt<X, Y> {
+  fn reduce_1d_sum(self, axis: isize, x_: Val<X>) -> Val<Y>;
+}
+
+pub trait MultReduce1dSumExt<X, Y> {
+  fn mult_reduce_1d_sum(self, axis: isize, x1_: Val<X>, x2_: Val<X>) -> Val<Y>;
 }
 
 pub trait LinearExt<A, X, Y> {
