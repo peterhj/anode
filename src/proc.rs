@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#[cfg(feature = "gpu")] use gpudevicemem::*;
 use mpich::*;
 
 use std::sync::{ONCE_INIT, Once};
@@ -34,8 +35,11 @@ impl Drop for DistProcGroup {
 impl Default for DistProcGroup {
   fn default() -> Self {
     DIST_PROC_GROUP_ONCE.call_once(|| {
-      // TODO: use this to init MPI.
-      //MPI::init()
+      #[cfg(feature = "gpu")]
+      {
+        // TODO: do this to initialize CUDA before MPI.
+        println!("DEBUG: DistProcGroup: num gpu devices: {}", GPUDeviceId::count());
+      }
       assert!(mpi_init_multithreaded().is_ok());
     });
     DistProcGroup{

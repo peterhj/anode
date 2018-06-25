@@ -942,8 +942,7 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray3d<T>> where T: Copy + 'static {
   }
 
   fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any) {
-    println!("DEBUG: GPUDeviceOuterBatchArray3d<T>::_deserialize");
-    /*if let Some(src) = src.downcast_mut::<ArrayIO<MemArray3d<T>>>() {
+    if let Some(src) = src.downcast_mut::<MemArray4d<T>>() {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
@@ -953,18 +952,15 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray3d<T>> where T: Copy + 'static {
         match cap {
           WriteCap::Assign => {
             let mut x = self.get_mut(txn, xvar, token);
-            guard._wait(x.as_view().async_state());
-            x.set_batch_size(1);
-            // TODO: either upgrade the src view or downgrade the dst view.
-            /*let src_view = src.next_view(x.as_view().size());
-            x.as_view_mut().sync_copy_mem(src_view, conn);*/
-            unimplemented!();
+            guard._wait(x.async_state());
+            x.set_batch_size(src.size()[3]);
+            x.as_view_mut().sync_copy_mem(src.as_view(), conn);
           }
           _ => unimplemented!(),
         }
       }
       return;
-    }*/
+    }
     if let Some(src) = src.downcast_mut::<ArrayIO<MemArray4d<T>>>() {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();

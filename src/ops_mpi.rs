@@ -103,10 +103,11 @@ where A: GPUDeviceAsync + 'static,
       },
       apply: {
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<A>| {
-          if let Some(_) = output.write(txn) {
+          //if let Some(_) = output.write(txn) {
+          output.write_v2(txn, |_, _| {
             // TODO
             unimplemented!();
-          }
+          })
         })
       },
       build: None,
