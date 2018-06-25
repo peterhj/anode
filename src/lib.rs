@@ -288,12 +288,13 @@ pub trait AOp<V>: ANode {
 pub trait AnyRWVal {
   //fn _txn(&self) -> Option<Txn>;
   fn _complete_txn(&self) -> Option<Txn>;
-  fn _persist(&self, txn: Txn, xvar: RWVar);
+  fn _persist(&self, txn: Txn, rvar: RVar, xvar: RWVar);
 }
 
 pub trait IOVal: AnyRWVal {
   fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any);
-  fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any);
+  //fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any);
+  fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &mut Any);
   fn _serialize_vec(&self, txn: Txn, rvar: RVar, off: usize, dst: &mut Any) -> usize;
   fn _deserialize_vec(&self, txn: Txn, rvar: RVar, xvar: RWVar, off: usize, src: &mut Any) -> usize;
 }
@@ -559,19 +560,19 @@ impl Node {
     w
   }
 
-  pub fn _eval_recursive(&self, txn: Txn) {
-    if Some(txn) == self.node._io(txn, &*self.value)._complete_txn() {
-      self.node._eval_recursive(txn, self.rvar, self.xvar);
-    }
+  pub fn persist(&self, txn: Txn) {
+    self.node._io(txn, &*self.value)._persist(txn, self.rvar, self.xvar);
   }
 
-  pub fn persist(&self, txn: Txn) {
-    self.node._io(txn, &*self.value)._persist(txn, self.xvar);
+  pub fn _eval_recursive(&self, txn: Txn) {
+    self.node._eval_recursive(txn, self.rvar, self.xvar);
   }
 
   pub fn eval(&self, txn: Txn) {
-    self._eval_recursive(txn);
-    self._apply(txn);
+    if Some(txn) != self.node._io(txn, &*self.value)._complete_txn() {
+      self._eval_recursive(txn);
+      self._apply(txn);
+    }
   }
 
   pub fn var(&self) -> RWVar {
@@ -585,7 +586,7 @@ impl IONodeExt for Node {
   }
 
   fn deserialize(&self, txn: Txn, src: &mut Any) {
-    self.node._io(txn, &*self.value)._deserialize(txn, self.xvar, src);
+    self.node._io(txn, &*self.value)._deserialize(txn, self.rvar, self.xvar, src);
   }
 }
 
@@ -790,7 +791,8 @@ impl<V> Val<V> where V: 'static {
 
   pub fn accumulate_value(&self, new_value: Option<RWVal<V>>) -> Val<V> {
     let rvar = RVar::default();
-    let xvar = RWVar(rvar);
+    //let xvar = RWVar(rvar);
+    let xvar = self.xvar;
     let val = Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
@@ -801,16 +803,17 @@ impl<V> Val<V> where V: 'static {
       rvar:     rvar,
       name:     None,
     };
-    log_static_graph(|logging| {
+    /*log_static_graph(|logging| {
       logging.insert_node(val._graph_key());
       logging.insert_alias_edge(self._graph_key(), val._graph_key());
-    });
+    });*/
     val
   }
 
   pub fn accumulate(&self) -> Val<V> {
     let rvar = RVar::default();
-    let xvar = RWVar(rvar);
+    //let xvar = RWVar(rvar);
+    let xvar = self.xvar;
     let val = Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
@@ -821,16 +824,17 @@ impl<V> Val<V> where V: 'static {
       rvar:     rvar,
       name:     None,
     };
-    log_static_graph(|logging| {
+    /*log_static_graph(|logging| {
       logging.insert_node(val._graph_key());
       logging.insert_alias_edge(self._graph_key(), val._graph_key());
-    });
+    });*/
     val
   }
 
   pub fn clobber(&self) -> Val<V> {
     let rvar = RVar::default();
-    let xvar = RWVar(rvar);
+    //let xvar = RWVar(rvar);
+    let xvar = self.xvar;
     let val = Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
@@ -841,10 +845,10 @@ impl<V> Val<V> where V: 'static {
       rvar:     rvar,
       name:     None,
     };
-    log_static_graph(|logging| {
+    /*log_static_graph(|logging| {
       logging.insert_node(val._graph_key());
       logging.insert_alias_edge(self._graph_key(), val._graph_key());
-    });
+    });*/
     val
   }
 
@@ -916,27 +920,14 @@ impl<V> Val<V> where V: 'static {
   }
 
   pub fn _eval_recursive(&self, txn: Txn) {
-    if 80 == self.xvar._raw() {
-      println!("DEBUG: Val: eval_recursive: this is {:?}", self._graph_key());
-    }
-    if 89 == self.xvar._raw() {
-      println!("DEBUG: Val: eval_recursive: this is {:?}", self._graph_key());
-    }
-    //if Some(txn) != self._value3(txn).txn() || self._value3(txn).incomplete() {
-    if Some(txn) != self._value3(txn)._complete_txn() {
-      if 80 == self.xvar._raw() {
-        println!("DEBUG: Val: eval_recursive:   enter");
-      }
-      if 89 == self.xvar._raw() {
-        println!("DEBUG: Val: eval_recursive:   enter");
-      }
-      self.op._eval_recursive(txn, self.rvar, self.xvar);
-    }
+    self.op._eval_recursive(txn, self.rvar, self.xvar);
   }
 
   pub fn eval(&self, txn: Txn) {
-    self._eval_recursive(txn);
-    self._apply(txn);
+    if Some(txn) != self._value3(txn)._complete_txn() {
+      self._eval_recursive(txn);
+      self._apply(txn);
+    }
   }
 
   pub fn _valref(&self) -> Option<RWValRef> {
@@ -967,7 +958,7 @@ impl<V> Val<V> where V: 'static {
     //self.op._value().persist(txn, self.xvar);
     //self.op._persist_output(txn, self.xvar, self._clone_value());
     let xvalue = self.op._value3(txn, self.value.as_ref());
-    xvalue.persist(txn, self.xvar);
+    xvalue.persist(txn, self.rvar, self.xvar);
   }
 
   pub fn write(&self, txn: Txn) -> Option<(WriteCap, WriteToken)> {
@@ -975,7 +966,7 @@ impl<V> Val<V> where V: 'static {
     //self.op._write_output(txn, self.xvar, self.mode, self._clone_value());
     //let xvalue = self.op._value2(txn, self._static_value());
     let xvalue = self.op._value3(txn, self.value.as_ref());
-    xvalue.write(txn, self.xvar, self.mode)
+    xvalue.write(txn, self.rvar, self.xvar, self.mode)
   }
 
   pub fn get(&self, txn: Txn) -> RwLockReadGuard<V> {
@@ -992,19 +983,19 @@ impl<V> Val<V> where V: 'static {
     //self.op._get_mut_output(txn, self.xvar, token, self._clone_value());
     //let xvalue = self.op._value2(txn, self._static_value());
     let xvalue = self.op._value3(txn, self.value.as_ref());
-    xvalue.get_mut(txn, self.xvar, token)
+    xvalue.get_mut(txn, self.rvar, self.xvar, token)
   }
 
   pub fn finish_write(&self, txn: Txn, token: WriteToken) {
     let xvalue = self.op._value3(txn, self.value.as_ref());
-    xvalue.finish_write(txn, self.xvar, token);
+    xvalue.finish_write(txn, self.rvar, self.xvar, token);
   }
 
   pub fn set<F: FnOnce(RwLockWriteGuard<V>)>(&self, txn: Txn, f: F) {
     //self.op._value().set(txn, self.xvar, self.mode, f);
     //self.op._set_output(txn, self.xvar, self.mode, self._clone_value());
     let xvalue = self.op._value3(txn, self.value.as_ref());
-    xvalue.set(txn, self.xvar, self.mode, f);
+    xvalue.set(txn, self.rvar, self.xvar, self.mode, f);
   }
 
   fn _io<'a>(&'a self, txn: Txn) -> &'a IOVal {
@@ -1071,7 +1062,7 @@ impl<V> IONodeExt for Val<V> where V: 'static {
   }
 
   fn deserialize(&self, txn: Txn, src: &mut Any) {
-    self._value3(txn)._deserialize(txn, self.xvar, src);
+    self._value3(txn)._deserialize(txn, self.rvar, self.xvar, src);
   }
 }
 
@@ -1121,17 +1112,17 @@ impl<V> OVal<V> where V: 'static {
 
   pub fn persist(&self, txn: Txn) {
     assert!(self.value.is_some());
-    self.value.as_ref().unwrap().persist(txn, self.xvar);
+    self.value.as_ref().unwrap().persist(txn, self.rvar, self.xvar);
   }
 
   pub fn write(&self, txn: Txn) -> Option<(WriteCap, WriteToken)> {
     assert!(self.value.is_some());
-    self.value.as_ref().unwrap().write(txn, self.xvar, self.mode)
+    self.value.as_ref().unwrap().write(txn, self.rvar, self.xvar, self.mode)
   }
 
   pub fn write_v2<F>(&self, txn: Txn, f: F) -> bool where F: FnOnce(WriteCap, WriteToken) {
     assert!(self.value.is_some());
-    match self.value.as_ref().unwrap().write(txn, self.xvar, self.mode) {
+    match self.value.as_ref().unwrap().write(txn, self.rvar, self.xvar, self.mode) {
       Some((cap, token)) => {
         f(cap, token);
         true
@@ -1149,17 +1140,17 @@ impl<V> OVal<V> where V: 'static {
 
   pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwLockWriteGuard<V> {
     assert!(self.value.is_some());
-    self.value.as_ref().unwrap().get_mut(txn, self.xvar, token)
+    self.value.as_ref().unwrap().get_mut(txn, self.rvar, self.xvar, token)
   }
 
   pub fn finish_write(&self, txn: Txn, token: WriteToken) {
     assert!(self.value.is_some());
-    self.value.as_ref().unwrap().finish_write(txn, self.xvar, token);
+    self.value.as_ref().unwrap().finish_write(txn, self.rvar, self.xvar, token);
   }
 
   pub fn set<F: FnOnce(RwLockWriteGuard<V>)>(&self, txn: Txn, f: F) -> bool {
     assert!(self.value.is_some());
-    self.value.as_ref().unwrap().set(txn, self.xvar, self.mode, f)
+    self.value.as_ref().unwrap().set(txn, self.rvar, self.xvar, self.mode, f)
   }
 }
 
@@ -1650,6 +1641,7 @@ pub enum WriteMode {
 #[derive(Clone, Copy)]
 pub struct WriteToken<'a> {
   xvar:     RWVar,
+  rvar:     RVar,
   first:    bool,
   borrow:   &'a (),
 }
@@ -1666,8 +1658,10 @@ pub struct RWValBuf<T> {
   complete:     bool,
   l_consumers:  Mutex<HashSet<RVar>>,
   d_consumers:  HashSet<RVar>,
-  l_producers:  HashSet<RWVar>,
-  d_producers:  HashSet<RWVar>,
+  //l_producers:  HashSet<RWVar>,
+  //d_producers:  HashSet<RWVar>,
+  l_producers:  HashSet<(RWVar, RVar)>,
+  d_producers:  HashSet<(RWVar, RVar)>,
   data:         Option<T>,
 }
 
@@ -1720,8 +1714,8 @@ impl<T> AnyRWVal for RWVal<T> where T: 'static {
     }
   }
 
-  fn _persist(&self, txn: Txn, xvar: RWVar) {
-    self.persist(txn, xvar);
+  fn _persist(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
+    self.persist(txn, rvar, xvar);
   }
 }
 
@@ -1730,7 +1724,8 @@ impl<T> IOVal for RWVal<T> where T: 'static {
     unimplemented!();
   }
 
-  default fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any) {
+  //default fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any) {
+  default fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &mut Any) {
     unimplemented!();
   }
 
@@ -1837,7 +1832,7 @@ impl<T> RWVal<T> where T: 'static {
     buf.data = None;
   }
 
-  pub fn persist(&self, txn: Txn, /*rvar: RVar,*/ xvar: RWVar) {
+  pub fn persist(&self, txn: Txn, rvar: RVar, xvar: RWVar) {
     let mut buf = self.buf.write();
 
     let new_txn = buf.curr_txn.is_none() || buf.curr_txn.unwrap() != txn;
@@ -1850,27 +1845,27 @@ impl<T> RWVal<T> where T: 'static {
       buf.d_producers.clear();
     }
 
-    assert!(!buf.d_producers.contains(&xvar),
+    assert!(!buf.d_producers.contains(&(xvar, rvar)),
         "`persist` should be called before all other writes");
     match buf.l_producers.len() {
       0 => {}
       1 => {
-        assert!(buf.l_producers.contains(&xvar),
-            "`persist` should be called before all other writes");
+        assert!(buf.l_producers.contains(&(xvar, rvar)),
+            "`persist` should be called only once and before all other writes");
         return;
       }
-      _ => panic!("`persist` should be called before all other writes"),
+      _ => panic!("`persist` should be called only once and before all other writes"),
     }
     assert!(buf.l_consumers.lock().is_empty(),
         "`persist` should be called before reads");
-    buf.l_producers.insert(xvar);
+    buf.l_producers.insert((xvar, rvar));
 
     if buf.data.is_none() {
       buf.data = Some((self.alloc)(txn));
     }
   }
 
-  pub fn write(&self, txn: Txn, xvar: RWVar, mode: WriteMode) -> Option<(WriteCap, WriteToken)> {
+  pub fn write(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) -> Option<(WriteCap, WriteToken)> {
     let mut buf = self.buf.write();
     let &mut RWValBuf{
         ref mut curr_txn,
@@ -1897,7 +1892,7 @@ impl<T> RWVal<T> where T: 'static {
         match (l_producers.len(), d_producers.len()) {
           (0, 0) => {}
           (1, 0) => {
-            if l_producers.contains(&xvar) {
+            if l_producers.contains(&(xvar, rvar)) {
               return None;
             }
             panic!("attempting second write to `Exclusive` val");
@@ -1913,7 +1908,7 @@ impl<T> RWVal<T> where T: 'static {
         match (l_producers.len(), d_producers.len()) {
           (0, 0) => {}
           (_, 0) => {
-            if l_producers.contains(&xvar) {
+            if l_producers.contains(&(xvar, rvar)) {
               return None;
             }
           }
@@ -1927,7 +1922,7 @@ impl<T> RWVal<T> where T: 'static {
         match (l_producers.len(), d_producers.len()) {
           (0, 0) => {}
           (1, _) => {
-            if l_producers.contains(&xvar) {
+            if l_producers.contains(&(xvar, rvar)) {
               return None;
             }
           }
@@ -1945,8 +1940,8 @@ impl<T> RWVal<T> where T: 'static {
       (_, true) => WriteCap::Assign,
       _ => unreachable!(),
     };
-    l_producers.insert(xvar);
-    Some((cap, WriteToken{xvar: xvar, first: first, borrow: &self.borrow}))
+    l_producers.insert((xvar, rvar));
+    Some((cap, WriteToken{xvar: xvar, rvar: rvar, first: first, borrow: &self.borrow}))
   }
 
   pub fn get(&self, txn: Txn, rvar: RVar) -> RwLockReadGuard<T> {
@@ -1982,8 +1977,9 @@ impl<T> RWVal<T> where T: 'static {
     RwLockReadGuard::map(buf, |buf| buf.data.as_ref().unwrap())
   }
 
-  pub fn get_mut(&self, txn: Txn, xvar: RWVar, token: WriteToken) -> RwLockWriteGuard<T> {
+  pub fn get_mut(&self, txn: Txn, rvar: RVar, xvar: RWVar, token: WriteToken) -> RwLockWriteGuard<T> {
     let mut buf = self.buf.write();
+    assert_eq!(rvar, token.rvar);
     assert_eq!(xvar, token.xvar);
 
     let mut valid_txn = false;
@@ -1997,9 +1993,9 @@ impl<T> RWVal<T> where T: 'static {
 
     assert!(buf.l_consumers.lock().is_empty(),
         "attempting a write-after-read (check your `get` and `get_mut` order)");
-    assert!(!buf.d_producers.contains(&xvar),
+    assert!(!buf.d_producers.contains(&(xvar, rvar)),
         "attempting an invalid write (the value has been clobbered)");
-    assert!(buf.l_producers.contains(&xvar),
+    assert!(buf.l_producers.contains(&(xvar, rvar)),
         "attempting an invalid write (did you forget to `write`?)");
 
     if buf.data.is_none() {
@@ -2009,8 +2005,9 @@ impl<T> RWVal<T> where T: 'static {
     RwLockWriteGuard::map(buf, |buf| buf.data.as_mut().unwrap())
   }
 
-  pub fn finish_write(&self, txn: Txn, xvar: RWVar, token: WriteToken) {
+  pub fn finish_write(&self, txn: Txn, rvar: RVar, xvar: RWVar, token: WriteToken) {
     let mut buf = self.buf.write();
+    assert_eq!(rvar, token.rvar);
     assert_eq!(xvar, token.xvar);
 
     let mut valid_txn = false;
@@ -2027,22 +2024,22 @@ impl<T> RWVal<T> where T: 'static {
     buf.complete = true;
     assert!(buf.l_consumers.lock().is_empty(),
         "attempting a write-after-read (check your `get` and `get_mut` order)");
-    assert!(!buf.d_producers.contains(&xvar),
+    assert!(!buf.d_producers.contains(&(xvar, rvar)),
         "attempting an invalid write (the value has been clobbered)");
-    assert!(buf.l_producers.contains(&xvar),
+    assert!(buf.l_producers.contains(&(xvar, rvar)),
         "attempting an invalid write (did you forget to `write`?)");
 
     assert!(buf.data.is_some(),
         "attempting to finish write on empty data");
   }
 
-  pub fn set<F>(&self, txn: Txn, xvar: RWVar, mode: WriteMode, f: F) -> bool where F: FnOnce(RwLockWriteGuard<T>) {
+  pub fn set<F>(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, f: F) -> bool where F: FnOnce(RwLockWriteGuard<T>) {
     //if let Some((cap, token)) = self.write(txn, xvar, mode) {
-    match self.write(txn, xvar, mode) {
+    match self.write(txn, rvar, xvar, mode) {
       Some((cap, token)) => {
         match cap {
           WriteCap::Assign => {
-            f(self.get_mut(txn, xvar, token));
+            f(self.get_mut(txn, rvar, xvar, token));
           }
           _ => unimplemented!(),
         }

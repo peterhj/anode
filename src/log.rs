@@ -11,6 +11,7 @@ use std::path::{PathBuf};
 thread_local! {
   static STATIC_GRAPH_LOGGING:  RefCell<Option<GraphLogging<(u64, String)>>> = RefCell::new(None);
   static DYNAMIC_GRAPH_LOGGING: RefCell<Option<GraphLogging<(u64, String)>>> = RefCell::new(None);
+  static CONTEXT_LOGGING:       RefCell<Option<ContextLogging>> = RefCell::new(None);
 }
 
 pub fn enable_static_graph_logging() {
@@ -120,4 +121,18 @@ impl<K: Clone + PartialEq + Eq + Hash + Debug> GraphLogging<K> {
 
   pub fn dump(&mut self) {
   }
+}
+
+pub fn enable_ctx_logging() {
+  enable_context_logging();
+}
+
+pub fn enable_context_logging() {
+  CONTEXT_LOGGING.with(|maybe_logging| {
+    let mut maybe_logging = maybe_logging.borrow_mut();
+    *maybe_logging = Some(ContextLogging{});
+  });
+}
+
+pub struct ContextLogging {
 }
