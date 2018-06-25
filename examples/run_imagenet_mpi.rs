@@ -28,6 +28,7 @@ use superdata::utils::*;
 use std::cmp::{max, min};
 use std::path::{PathBuf};
 use std::rc::{Rc};
+use std::sync::{Arc};
 
 pub trait XavierLinearInit<Shape, T, R: Rng> {
   type RValue;
@@ -185,7 +186,7 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
 
   let x = image_var.clone().dequantize(0.0_f32, 1.0_f32);
 
-  let mut conv1 = Conv2dShape::default_nchw();
+  /*let mut conv1 = Conv2dShape::default_nchw();
   conv1.src_size = [224, 224, 3];
   conv1.ker_size = [3, 3];
   conv1.features = 64;
@@ -254,14 +255,14 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   x = build_proj_residual3_conv(x, online.clone(), avg_rate.clone(), conv5, [14, 14], 512, &mut params, &mut online_stats, &mut avg_stats);
   for _ in 1 .. 3 {
     x = build_residual3_conv(x, online.clone(), avg_rate.clone(), conv5, &mut params, &mut online_stats, &mut avg_stats);
-  }
+  }*/
 
   let mut avg_pool = Pool2dShape::default_nchw();
-  pool1.src_size = [7, 7];
-  pool1.src_features = 2048;
-  pool1.ker_size = [7, 7];
-  pool1.stride = [7, 7];
-  pool1.zero_pad = [0, 0];
+  avg_pool.src_size = [7, 7];
+  avg_pool.src_features = 2048;
+  avg_pool.ker_size = [7, 7];
+  avg_pool.stride = [7, 7];
+  avg_pool.zero_pad = [0, 0];
 
   let x = x.average_pool(avg_pool);
   let x = x.flatten();
@@ -312,6 +313,7 @@ fn main() {
       let train_shard = train_dataset.partition(proc.rank(), proc.num_ranks());
       println!("DEBUG: rank: {} train part len: {}", proc.rank(), train_shard.len());*/
 
+      //let num_data_workers = 10;
       let num_data_workers = 20;
       let num_classes = 1000;
       let batch_sz = 32;
@@ -327,7 +329,7 @@ fn main() {
             let mut rng = worker_rngs[worker_rank].clone();
             train_dataset.clone()
               .uniform_random(&mut rng)
-              .map_data(|(value, label)| {
+              .map_data(move |(value, label)| {
                 let maybe_image = match ColorImage::decode(&value) {
                   Ok(mut image) => {
                     //println!("DEBUG: image: dims: {} {}", image.width(), image.height());
@@ -349,10 +351,10 @@ fn main() {
       };
 
       // TODO
-      //let (image_var, label_var, logit_var, loss_var, online, avg_rate, params, online_stats, avg_stats) = build_resnet(batch_sz);
+      let (image_var, label_var, logit_var, loss_var, online, avg_rate, params, online_stats, avg_stats) = build_resnet(batch_sz);
 
       let mut stopwatch = Stopwatch::new();
-      let mut images = Vec::with_capacity(batch_sz);
+      //let mut images = Vec::with_capacity(batch_sz);
       let mut labels = Vec::with_capacity(batch_sz);
 
       let mut image_batch = MemArray4d::<u8>::zeros([224, 224, 3, batch_sz]);
@@ -361,25 +363,31 @@ fn main() {
       let mut loss: f32 = 0.0;
 
       for (iter_nr, batch) in train_iter.enumerate() {
-        images.clear();
+        //images.clear();
         labels.clear();
         for (idx, (maybe_image, label)) in batch.into_iter().enumerate() {
-          images.push(maybe_image);
+          //images.push(maybe_image);
+          if let Some(ref image) = maybe_image {
+            image.dump_planes(
+                &mut image_batch.flat_view_mut().unwrap()
+                  .as_mut_slice()[idx * 224 * 224 * 3 .. (idx + 1) * 224 * 224 * 3]);
+          } else {
+            println!("WARNING: train: image decode error, missing image in iter: {} batch idx: {}", iter_nr, idx);
+          }
           labels.push(label);
           label_batch.as_view_mut().as_mut_slice()[idx] = label;
         }
 
         let batch_txn = txn();
         // TODO: evaluate the batch.
-        /*
         image_var.deserialize(batch_txn, &mut image_batch);
         label_var.deserialize(batch_txn, &mut label_batch);
-        online_var.propose(batch_txn, |_| true);
-        loss_var.eval(batch_txn);
+        online.propose(batch_txn, |_| true);
+        params.persist(batch_txn);
+        /*loss_var.eval(batch_txn);
         grads.eval(batch_txn);
         logit_var.serialize(batch_txn, &mut logit_batch);
-        loss_var.serialize(batch_txn, &mut loss);
-        */
+        loss_var.serialize(batch_txn, &mut loss);*/
 
         let mut acc_ct = 0;
         for idx in 0 .. batch_sz {
@@ -404,8 +412,8 @@ fn main() {
         //continue;
 
         if (iter_nr + 1) % eval_interval == 0 {
-          // TODO: validation.
-          let val_shard = val_dataset.range_shard(proc.rank(), proc.num_ranks());
+          println!("DEBUG: eval: evaluating...");
+          let val_shard = val_dataset.clone().range_shard(proc.rank(), proc.num_ranks());
           let shard_len = val_shard.len();
           let val_iter = {
             let mut val_splits = async_split_data(num_data_workers, || {
@@ -419,13 +427,13 @@ fn main() {
                     Ok(mut image) => {
                       scale_resize(256, &mut image);
                       center_crop(224, 224, &mut image);
-                      Some(image)
+                      Arc::new(image)
                     }
                     Err(_) => {
                       panic!("WARNING: image decode error");
                     }
                   };
-                  (maybe_image, label)
+                  (image, label)
                 })
             })
             .round_up_data(batch_sz)
@@ -434,8 +442,20 @@ fn main() {
           let mut eval_ctr = 0;
           let mut eval_acc_ct = 0;
           'eval_batch_loop: for eval_batch in val_iter {
+            labels.clear();
+            for (idx, ((image, label), _)) in eval_batch.into_iter().enumerate() {
+              image.dump_planes(
+                  &mut image_batch.flat_view_mut().unwrap()
+                    .as_mut_slice()[idx * 224 * 224 * 3 .. (idx + 1) * 224 * 224 * 3]);
+              labels.push(label);
+              label_batch.as_view_mut().as_mut_slice()[idx] = label;
+            }
             let batch_txn = txn();
             // TODO: evaluate the batch.
+            image_var.deserialize(batch_txn, &mut image_batch);
+            label_var.deserialize(batch_txn, &mut label_batch);
+            online.propose(batch_txn, |_| false);
+            params.persist(batch_txn);
             for idx in 0 .. batch_sz {
               let k = _arg_max(&logit_batch.flat_view().unwrap().as_slice()[num_classes * idx .. num_classes * (idx + 1)]);
               if k == labels[idx] as _ {
