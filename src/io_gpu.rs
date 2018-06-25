@@ -247,7 +247,7 @@ impl<T> IOVal for RWVal<GPUDeviceScalar<T>> where T: ZeroBits + 'static {
     unimplemented!();
   }
 
-  fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any) {
+  fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &mut Any) {
     // TODO
     unimplemented!();
   }
@@ -279,15 +279,15 @@ impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
     unimplemented!();
   }
 
-  fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any) {
+  fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &mut Any) {
     if let Some(src) = src.downcast_mut::<MemArray1d<T>>() {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
-        let mut x = self.get_mut(txn, xvar, token);
+        let mut x = self.get_mut(txn, rvar, xvar, token);
         guard._wait(x.async_state());
         x.as_view_mut().sync_copy_mem(src.as_view(), conn);
       }
@@ -297,12 +297,12 @@ impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
           WriteCap::Assign => {
-            let mut x = self.get_mut(txn, xvar, token);
+            let mut x = self.get_mut(txn, rvar, xvar, token);
             guard._wait(x.async_state());
             let src_view = src.next_view(x.size());
             x.as_view_mut().sync_copy_mem(src_view, conn);
@@ -355,12 +355,12 @@ impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
           WriteCap::Assign => {
-            let mut x = self.get_mut(txn, xvar, token);
+            let mut x = self.get_mut(txn, rvar, xvar, token);
             guard._wait(x.async_state());
             //let src_slice = src.next_slice(x.size());
             let src_view = src.as_view().view(off .. off + x.size());
@@ -376,12 +376,12 @@ impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
           WriteCap::Assign => {
-            let mut x = self.get_mut(txn, xvar, token);
+            let mut x = self.get_mut(txn, rvar, xvar, token);
             guard._wait(x.async_state());
             //let src_slice = src.next_slice(x.size());
             let src_view = src.as_view().view(off .. off + x.size());
@@ -428,7 +428,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
     unimplemented!();
   }
 
-  fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any) {
+  fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &mut Any) {
     if let Some(src) = src.downcast_mut::<ArrayIO<MemArray2d<T>>>() {
       // TODO
       unimplemented!();
@@ -437,12 +437,12 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
           WriteCap::Assign => {
-            let mut x = self.get_mut(txn, xvar, token);
+            let mut x = self.get_mut(txn, rvar, xvar, token);
             guard._wait(x.async_state());
             let src_slice = src.next_slice(x.flat_size());
             guard._wait(src_slice.async_state());
@@ -498,12 +498,12 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
           WriteCap::Assign => {
-            let mut x = self.get_mut(txn, xvar, token);
+            let mut x = self.get_mut(txn, rvar, xvar, token);
             guard._wait(x.async_state());
             let src_view = src.as_view().view(off .. off + x.flat_size());
             x.flat_view_mut().unwrap().sync_copy_mem(src_view, conn);
@@ -518,12 +518,12 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
           WriteCap::Assign => {
-            let mut x = self.get_mut(txn, xvar, token);
+            let mut x = self.get_mut(txn, rvar, xvar, token);
             guard._wait(x.async_state());
             let src_view = src.as_view().view(off .. off + x.flat_size());
             guard._wait(src_view.async_state());
@@ -569,7 +569,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
     unimplemented!();
   }
 
-  fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any) {
+  fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &mut Any) {
     if let Some(src) = src.downcast_mut::<ArrayIO<MemArray3d<T>>>() {
       // TODO
       unimplemented!();
@@ -578,12 +578,12 @@ impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
           WriteCap::Assign => {
-            let mut x = self.get_mut(txn, xvar, token);
+            let mut x = self.get_mut(txn, rvar, xvar, token);
             guard._wait(x.async_state());
             let src_slice = src.next_slice(x.flat_size());
             guard._wait(src_slice.async_state());
@@ -639,12 +639,12 @@ impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
           WriteCap::Assign => {
-            let mut x = self.get_mut(txn, xvar, token);
+            let mut x = self.get_mut(txn, rvar, xvar, token);
             guard._wait(x.async_state());
             let src_view = src.as_view().view(off .. off + x.flat_size());
             x.flat_view_mut().unwrap().sync_copy_mem(src_view, conn);
@@ -659,12 +659,12 @@ impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
           WriteCap::Assign => {
-            let mut x = self.get_mut(txn, xvar, token);
+            let mut x = self.get_mut(txn, rvar, xvar, token);
             guard._wait(x.async_state());
             let src_view = src.as_view().view(off .. off + x.flat_size());
             guard._wait(src_view.async_state());
@@ -698,17 +698,17 @@ impl<T> IOVal for RWVal<GPUDeviceArray4d<T>> where T: Copy + 'static {
     unimplemented!();
   }
 
-  fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any) {
+  fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &mut Any) {
     if let Some(src) = src.downcast_mut::<FlatIO<GPUDeviceArray1d<T>>>() {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
           WriteCap::Assign => {
-            let mut x = self.get_mut(txn, xvar, token);
+            let mut x = self.get_mut(txn, rvar, xvar, token);
             guard._wait(x.async_state());
             let src_slice = src.next_slice(x.flat_size());
             guard._wait(src_slice.async_state());
@@ -764,12 +764,12 @@ impl<T> IOVal for RWVal<GPUDeviceArray4d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
           WriteCap::Assign => {
-            let mut x = self.get_mut(txn, xvar, token);
+            let mut x = self.get_mut(txn, rvar, xvar, token);
             guard._wait(x.async_state());
             let src_view = src.as_view().view(off .. off + x.flat_size());
             x.flat_view_mut().unwrap().sync_copy_mem(src_view, conn);
@@ -784,12 +784,12 @@ impl<T> IOVal for RWVal<GPUDeviceArray4d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
           WriteCap::Assign => {
-            let mut x = self.get_mut(txn, xvar, token);
+            let mut x = self.get_mut(txn, rvar, xvar, token);
             guard._wait(x.async_state());
             let src_view = src.as_view().view(off .. off + x.flat_size());
             guard._wait(src_view.async_state());
@@ -821,15 +821,15 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchScalar<T>> where T: Copy + 'static {
     unimplemented!();
   }
 
-  fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any) {
+  fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &mut Any) {
     if let Some(src) = src.downcast_mut::<MemArray1d<T>>() {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
-        let mut x = self.get_mut(txn, xvar, token);
+        let mut x = self.get_mut(txn, rvar, xvar, token);
         guard._wait(x.async_state());
         x.as_view_mut().sync_copy_mem(src.as_view(), conn);
       }
@@ -865,15 +865,15 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray1d<T>> where T: Copy + 'static {
     unimplemented!();
   }
 
-  fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any) {
+  fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &mut Any) {
     if let Some(src) = src.downcast_mut::<MemArray2d<T>>() {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
-        let mut x = self.get_mut(txn, xvar, token);
+        let mut x = self.get_mut(txn, rvar, xvar, token);
         guard._wait(x.async_state());
         x.as_view_mut().sync_copy_mem(src.as_view(), conn);
       }
@@ -883,12 +883,12 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray1d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
           WriteCap::Assign => {
-            let mut x = self.get_mut(txn, xvar, token);
+            let mut x = self.get_mut(txn, rvar, xvar, token);
             guard._wait(x.as_view().async_state());
             x.set_batch_size(src.size()[1]);
             let src_view = src.next_view(x.as_view().size());
@@ -941,18 +941,18 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray3d<T>> where T: Copy + 'static {
     unimplemented!();
   }
 
-  fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any) {
+  fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &mut Any) {
     if let Some(src) = src.downcast_mut::<MemArray4d<T>>() {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
           WriteCap::Assign => {
-            let mut x = self.get_mut(txn, xvar, token);
-            guard._wait(x.async_state());
+            let mut x = self.get_mut(txn, rvar, xvar, token);
+            guard._wait(x.as_view().async_state());
             x.set_batch_size(src.size()[3]);
             x.as_view_mut().sync_copy_mem(src.as_view(), conn);
           }
@@ -965,12 +965,12 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray3d<T>> where T: Copy + 'static {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
-      if let Some((cap, token)) = self.write(txn, xvar, WriteMode::Exclusive) {
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
         let mut section = GPULazyAsyncSection::default();
         let mut guard = section.enter(conn.clone());
         match cap {
           WriteCap::Assign => {
-            let mut x = self.get_mut(txn, xvar, token);
+            let mut x = self.get_mut(txn, rvar, xvar, token);
             guard._wait(x.as_view().async_state());
             x.set_batch_size(src.size()[3]);
             let src_view = src.next_view(x.as_view().size());

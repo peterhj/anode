@@ -1920,7 +1920,7 @@ impl SumJoinOp {
         //let xs_ = old_xs_.clone();
         let xs_ = new_xs_.clone();
         Box::new(move |_: Pass, y_: Val<A>, _state: RefMut<_>, sink: &mut Sink| {
-          println!("WARNING: SumJoinAccumulateOp: attempting to build in-place adjoint; please exercise care as this part is known to be buggy outside of controlled workarounds.");
+          println!("WARNING: SumJoinAccumulateOp: attempting to build in-place adjoint; please exercise care as correctness is not yet guaranteed.");
           if let Some(adj_y_) = y_.adjoint(sink) {
             for i in 0 .. xs_.len() {
               xs_[i].put_adjoint(adj_y_.clone(), sink);
