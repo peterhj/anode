@@ -3017,7 +3017,8 @@ impl BatchNormalize2dBwdVarianceOp {
 }
 
 impl OnlineAverageOpExt<f32, GPUDeviceArray1d<f32>> for OnlineAverageOp {
-  fn build(avg_rate: TCell<f32>, x_: Val<GPUDeviceArray1d<f32>>, y_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+  //fn build(avg_rate: TCell<f32>, x_: Val<GPUDeviceArray1d<f32>>, y_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+  fn build(avg_rate: Val<f32>, x_: Val<GPUDeviceArray1d<f32>>, y_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
     let ext = OpExt{
       make_val: {
         //Box::new(move || {
@@ -3030,7 +3031,7 @@ impl OnlineAverageOpExt<f32, GPUDeviceArray1d<f32>> for OnlineAverageOp {
         let avg_rate = avg_rate.clone();
         let x_ = x_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceArray1d<f32>>| {
-          output.set(txn, |mut y| {
+          output.propose(txn, |mut y| {
             //println!("DEBUG: OnlineAverageOp: apply: writing...");
             let mut pool = implicit_ctx().gpu().pool();
             let conn = pool.conn();
@@ -3039,7 +3040,7 @@ impl OnlineAverageOpExt<f32, GPUDeviceArray1d<f32>> for OnlineAverageOp {
             let x = x_.get(txn);
             guard._wait(x.async_state());
             guard._wait(y.async_state());
-            let r = avg_rate.get(txn);
+            let r = *avg_rate.get(txn);
             y.as_view_mut().online_average(r, x.as_view(), conn);
           })
         })

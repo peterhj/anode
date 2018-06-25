@@ -46,7 +46,7 @@ fn main() {
           None
         }
       };
-      (maybe_image, label)
+      (value, maybe_image, label)
     })
   });
   /*let mut count = 0;
@@ -69,7 +69,7 @@ fn main() {
   let mut stopwatch = Stopwatch::new();
 
   let mut write_count = 0;
-  for (idx, (maybe_image, _)) in iter.enumerate() {
+  for (idx, (value, maybe_image, _)) in iter.enumerate() {
     if maybe_image.is_none() {
       println!("DEBUG: image idx: {} skipping...", idx);
       continue;
@@ -87,20 +87,28 @@ fn main() {
       println!("DEBUG: image idx: {} dims: {} {} exif code: {}",
           idx, image.width(), image.height(), exif_rot);
       assert_eq!(3, image.channels());
+
       /*let im_sz = [image.width() as _, image.height() as _, image.channels() as _];
       let mut im_arr = MemArray3d::zeros(im_sz);
       image.dump_planes(im_arr.flat_view_mut().unwrap().as_mut_slice());*/
-      let image_sz = image.width() as usize * image.height() as usize * 3;
+
+      let jpg_path = PathBuf::from(format!("tmp/test_{:04}_{:08}_{}.jpg", write_count, idx, exif_rot));
+      let mut jpg_file = File::create(&jpg_path).unwrap();
+      jpg_file.write_all(&value).unwrap();
+
+      /*let image_sz = image.width() as usize * image.height() as usize * 3;
       let mut image_buf = Vec::with_capacity(image_sz);
       for _ in 0 .. image_sz {
         image_buf.push(0);
       }
       image.dump_pixels(&mut image_buf);
+
       let out_image = Image::new(image.width() as _, image.height() as _, 3, image_buf);
       let png_data = out_image.write_png().unwrap();
       let png_path = PathBuf::from(format!("tmp/test_{:04}_{:08}_{}.png", write_count, idx, exif_rot));
       let mut png_file = File::create(&png_path).unwrap();
-      png_file.write_all(&png_data).unwrap();
+      png_file.write_all(&png_data).unwrap();*/
+
       println!("DEBUG: writing image: idx: {} out idx: {}", idx, write_count);
       write_count += 1;
     }

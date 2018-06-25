@@ -130,9 +130,9 @@ fn test_gpu_zeros_init_uniform() {
 fn test_gpu_io_deserialize() {
   println!();
   let x: Val<_> = src(GPUDeviceOuterBatchArray3d::<f32>::zeros_init(([32, 32, 3], 64)));
-  let src = MemArray4d::<f32>::zeros([32, 32, 3, 64]);
+  let mut src = MemArray4d::<f32>::zeros([32, 32, 3, 64]);
   let t = txn();
-  x.deserialize(t, &mut ArrayIO::new(src));
+  x.deserialize(t, &mut src);
   x.eval(t);
 }
 
@@ -140,9 +140,9 @@ fn test_gpu_io_deserialize() {
 fn test_gpu_io_deserialize_node() {
   println!();
   let x: Val<_> = src(GPUDeviceOuterBatchArray3d::<f32>::zeros_init(([32, 32, 3], 64)));
-  let src = MemArray4d::<f32>::zeros([32, 32, 3, 64]);
+  let mut src = MemArray4d::<f32>::zeros([32, 32, 3, 64]);
   let t = txn();
-  x._to_node().deserialize(t, &mut ArrayIO::new(src));
+  x._to_node().deserialize(t, &mut src);
   x.eval(t);
 }
 
@@ -150,13 +150,11 @@ fn test_gpu_io_deserialize_node() {
 fn test_gpu_io_serialize() {
   println!();
   let x = touch(GPUDeviceOuterBatchArray3d::<f32>::uniform_init(([32, 32, 3], 64), -1.0, 1.0, &mut thread_rng()));
-  let dst = MemArray4d::<f32>::zeros([32, 32, 3, 64]);
+  let mut dst = MemArray4d::<f32>::zeros([32, 32, 3, 64]);
   println!("DEBUG: {:?}", &dst.flat_view().unwrap().as_slice()[.. 10]);
   let t = txn();
   x.eval(t);
-  let mut dst = ArrayIO::new(dst);
   x.serialize(t, &mut dst);
-  let dst = dst.take();
   println!("DEBUG: {:?}", &dst.flat_view().unwrap().as_slice()[.. 10]);
 }
 
@@ -164,13 +162,11 @@ fn test_gpu_io_serialize() {
 fn test_gpu_io_serialize_node() {
   println!();
   let x = touch(GPUDeviceOuterBatchArray3d::<f32>::uniform_init(([32, 32, 3], 64), -1.0, 1.0, &mut thread_rng()));
-  let dst = MemArray4d::<f32>::zeros([32, 32, 3, 64]);
+  let mut dst = MemArray4d::<f32>::zeros([32, 32, 3, 64]);
   println!("DEBUG: {:?}", &dst.flat_view().unwrap().as_slice()[.. 10]);
   let t = txn();
   x.eval(t);
-  let mut dst = ArrayIO::new(dst);
   x._to_node().serialize(t, &mut dst);
-  let dst = dst.take();
   println!("DEBUG: {:?}", &dst.flat_view().unwrap().as_slice()[.. 10]);
 }
 
@@ -218,7 +214,8 @@ fn test_gpu_mux_2() {
 #[test]
 fn test_gpu_op_switch() {
   println!();
-  let flag = TCell::new(false);
+  //let flag = TCell::new(false);
+  let flag = src_init(false);
   let x1 = zeros(Rc::new(|_, conn: GPUDeviceConn| {
     println!("DEBUG: test: allocating...");
     GPUDeviceArray1d::<f32>::zeros(1024, conn)
@@ -229,10 +226,12 @@ fn test_gpu_op_switch() {
   }));
   let y = switch(flag.clone(), x1, x2);
   let t = txn();
-  flag.propose(t, |_| false);
+  //flag.propose(t, |_| false);
+  flag.set(t, false);
   y.eval(t);
   let t = txn();
-  flag.propose(t, |_| true);
+  //flag.propose(t, |_| true);
+  flag.set(t, true);
   y.eval(t);
   // TODO
 }
@@ -240,7 +239,8 @@ fn test_gpu_op_switch() {
 #[test]
 fn test_gpu_op_switch_get() {
   println!();
-  let flag = TCell::new(false);
+  //let flag = TCell::new(false);
+  let flag = src_init(false);
   let x1 = zeros(Rc::new(|_, conn: GPUDeviceConn| {
     println!("DEBUG: test: allocating...");
     GPUDeviceArray1d::<f32>::zeros(1024, conn)
@@ -252,7 +252,8 @@ fn test_gpu_op_switch_get() {
   let y = switch(flag.clone(), x1, x2);
   let mut z = MemArray1d::<f32>::zeros(1024);
   let t = txn();
-  flag.propose(t, |_| false);
+  //flag.propose(t, |_| false);
+  flag.set(t, false);
   y.eval(t);
   let _ = y.get(t);
   y.serialize(t, &mut z);
@@ -261,7 +262,8 @@ fn test_gpu_op_switch_get() {
   }
   println!("DEBUG: {:?}", &z.as_view().as_slice()[.. 10]);
   let t = txn();
-  flag.propose(t, |_| true);
+  //flag.propose(t, |_| true);
+  flag.set(t, true);
   y.eval(t);
   let _ = y.get(t);
   y.serialize(t, &mut z);
@@ -270,7 +272,8 @@ fn test_gpu_op_switch_get() {
   }
   println!("DEBUG: {:?}", &z.as_view().as_slice()[.. 10]);
   let t = txn();
-  flag.propose(t, |_| false);
+  //flag.propose(t, |_| false);
+  flag.set(t, false);
   y.eval(t);
   let _ = y.get(t);
   y.serialize(t, &mut z);
@@ -497,7 +500,8 @@ fn test_gpu_adj_tricky_case3() {
 #[test]
 fn test_gpu_op_switch_adj() {
   println!();
-  let flag = TCell::default();
+  //let flag = TCell::default();
+  let flag = src_init(false);
   let x1 = zeros(Rc::new(|_, conn: GPUDeviceConn| {
     GPUDeviceScalar::<f32>::zeros((), conn)
   })).named("x1");
@@ -513,21 +517,24 @@ fn test_gpu_op_switch_adj() {
   let dx2 = x2.adjoint(&mut y_sink).unwrap();
   println!("DEBUG: ON path (expect 2 allocs)");
   let t = txn();
-  flag.propose(t, |_| true);
+  //flag.propose(t, |_| true);
+  flag.set(t, true);
   dx1.eval(t);
   dx2.eval(t);
   let _ = dx1.get(t);
   let _ = dx2.get(t);
   println!("DEBUG: OFF path (expect 1 alloc)");
   let t2 = txn();
-  flag.propose(t2, |_| false);
+  //flag.propose(t2, |_| false);
+  flag.set(t2, false);
   dx1.eval(t2);
   dx2.eval(t2);
   let _ = dx1.get(t2);
   let _ = dx2.get(t2);
   println!("DEBUG: ON path (expect no allocs)");
   let t3 = txn();
-  flag.propose(t3, |_| true);
+  //flag.propose(t3, |_| true);
+  flag.set(t3, true);
   dx1.eval(t3);
   dx2.eval(t3);
   let _ = dx1.get(t3);
@@ -554,10 +561,12 @@ fn test_gpu_op_online_avg() {
   let y = src(Rc::new(|_, conn: GPUDeviceConn| {
     GPUDeviceArray1d::<f32>::zeros(1024, conn)
   }));
-  let alpha = TCell::default();
-  let y = y.online_average(alpha.clone(), x);
+  let alpha = src_init(0.0_f32);
+  //let y = y.online_average(alpha.clone(), x);
+  let y = <OnlineAverageOp as OnlineAverageOpExt<_, _>>::build(alpha.clone(), x, y);
   let t = txn();
-  alpha.propose(t, |_| 0.25);
+  //alpha.propose(t, |_| 0.25);
+  alpha.set(t, 0.25);
   y.eval(t);
   let mut z = MemArray1d::<f32>::zeros(1024);
   y.serialize(t, &mut z);
@@ -566,7 +575,8 @@ fn test_gpu_op_online_avg() {
   }
   println!("DEBUG: {:?}", &z.as_view().as_slice()[.. 10]);
   let t = txn();
-  alpha.propose(t, |_| 0.25);
+  //alpha.propose(t, |_| 0.25);
+  alpha.set(t, 0.25);
   y.eval(t);
   let mut z = MemArray1d::<f32>::zeros(1024);
   y.serialize(t, &mut z);

@@ -21,15 +21,15 @@ use std::fs::{File};
 use std::io::{Write};
 use std::path::{PathBuf};
 
-fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GPUDeviceOuterBatchScalar<u32>>, TCell<bool>, TCell<f32>, NodeVec, NodeVec, NodeVec) {
+fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GPUDeviceOuterBatchScalar<u32>>, Val<bool>, Val<f32>, NodeVec, NodeVec, NodeVec) {
   let mut params = NodeVec::default();
   let mut online_stats = NodeVec::default();
   let mut avg_stats = NodeVec::default();
 
   let image_var = zeros(([28, 28, 3], batch_sz));
   let label_var = zeros(batch_sz);
-  let online = TCell::default();
-  let avg_rate = TCell::new(0.0);
+  let online = src_init(false);
+  let avg_rate = src_init(0.0);
   let epsilon: f32 = 1.0e-6;
 
   let x = image_var.clone().dequantize(0.0_f32, 1.0_f32);
@@ -114,8 +114,8 @@ fn main() {
     params.persist(batch);
     image_var.deserialize(batch, &mut image_batch);
     label_var.deserialize(batch, &mut label_batch);
-    online_var.propose(batch, |_| true);
-    avg_rate_var.propose(batch, |_| if iter_nr == 0 { 1.0 } else { 0.003 });
+    online_var.set(batch, true);
+    avg_rate_var.set(batch, if iter_nr == 0 { 1.0 } else { 0.003 });
     /*
     logit_var.eval(batch);
     grads.eval(batch);

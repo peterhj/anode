@@ -130,7 +130,7 @@ fn build_linear(x: Val<GPUDeviceOuterBatchArray1d<f32>>, src_ch: usize, dst_ch: 
   x
 }
 
-fn build_batch_norm_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: TCell<bool>, avg_rate: TCell<f32>, conv_shape: Conv2dShape, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+fn build_batch_norm_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<bool>, avg_rate: Val<f32>, conv_shape: Conv2dShape, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
   let w = src(GPUDeviceArray4d::<f32>::kaiming_conv2d_init(
       [conv_shape.ker_size[0], conv_shape.ker_size[1], conv_shape.src_size[2], conv_shape.features],
       conv_shape.ker_size,
@@ -150,7 +150,7 @@ fn build_batch_norm_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: TCell<
   x
 }
 
-fn build_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: TCell<bool>, avg_rate: TCell<f32>, conv_shape: Conv2dShape, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+fn build_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<bool>, avg_rate: Val<f32>, conv_shape: Conv2dShape, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
   // TODO
   let mut conv1 = conv_shape;
   let y = build_batch_norm_conv(x.clone(), online.clone(), avg_rate.clone(), conv1, params, online_stats, avg_stats);
@@ -167,20 +167,20 @@ fn build_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: TCell<b
   y
 }
 
-fn build_proj_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: TCell<bool>, avg_rate: TCell<f32>, conv_shape: Conv2dShape, src_size: [usize; 2], src_features: usize, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+fn build_proj_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<bool>, avg_rate: Val<f32>, conv_shape: Conv2dShape, src_size: [usize; 2], src_features: usize, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
   // TODO
   unimplemented!();
 }
 
-fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GPUDeviceOuterBatchScalar<u32>>, Val<GPUDeviceOuterBatchArray1d<f32>>, Val<GPUDeviceScalar<f32>>, TCell<bool>, TCell<f32>, NodeVec, NodeVec, NodeVec) {
+fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GPUDeviceOuterBatchScalar<u32>>, Val<GPUDeviceOuterBatchArray1d<f32>>, Val<GPUDeviceScalar<f32>>, Val<bool>, Val<f32>, NodeVec, NodeVec, NodeVec) {
   let mut params = NodeVec::default();
   let mut online_stats = NodeVec::default();
   let mut avg_stats = NodeVec::default();
 
   let image_var = src(GPUDeviceOuterBatchArray3d::<u8>::zeros_init(([224, 224, 3], batch_sz)));
   let label_var = src(GPUDeviceOuterBatchScalar::<u32>::zeros_init(batch_sz));
-  let online = TCell::new(false);
-  let avg_rate = TCell::new(0.0_f32);
+  let online = src_init(false);
+  let avg_rate = src_init(0.0);
   let epsilon: f32 = 1.0e-6;
 
   let x = image_var.clone().dequantize(0.0_f32, 1.0_f32);
