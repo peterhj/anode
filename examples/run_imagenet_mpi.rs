@@ -131,7 +131,7 @@ fn build_linear(x: Val<GPUDeviceOuterBatchArray1d<f32>>, src_ch: usize, dst_ch: 
   x
 }
 
-fn build_batch_norm_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: TCell<bool>, avg_rate: TCell<f32>, conv_shape: Conv2dShape, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+fn build_batch_norm_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<bool>, avg_rate: Val<f32>, conv_shape: Conv2dShape, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
   let w = src(GPUDeviceArray4d::<f32>::kaiming_conv2d_init(
       [conv_shape.ker_size[0], conv_shape.ker_size[1], conv_shape.src_size[2], conv_shape.features],
       conv_shape.ker_size,
@@ -148,45 +148,96 @@ fn build_batch_norm_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: TCell<
   online_stats.push_val(x_var);
   avg_stats.push_val(x_avg_mean);
   avg_stats.push_val(x_avg_var);
+  // TODO: broadcast mult add here.
+  /*let scale = src(GPUDeviceArray1d::<f32>::ones_init(conv_shape.features));
+  let shift = src(GPUDeviceArray1d::<f32>::zeros_init(conv_shape.features));
+  let x = scale.broadcast_1d_mult_add(2, x, shift);
+  params.push_val(scale.clone());
+  params.push_val(shift.clone());*/
   x
 }
 
-fn build_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: TCell<bool>, avg_rate: TCell<f32>, conv_shape: Conv2dShape, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+fn build_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<bool>, avg_rate: Val<f32>, conv_shape: Conv2dShape, expand: usize, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
   // TODO
   let mut conv1 = conv_shape;
+  conv1.src_size[2] *= expand;
+  conv1.ker_size = [1, 1];
+  conv1.stride = [1, 1];
+  conv1.zero_pad = [0, 0];
   let y = build_batch_norm_conv(x.clone(), online.clone(), avg_rate.clone(), conv1, params, online_stats, avg_stats);
   let y = y.positive_clip();
   // TODO
   let mut conv2 = conv_shape;
+  conv2.ker_size = [3, 3];
+  conv2.stride = [1, 1];
+  conv2.zero_pad = [1, 1];
   let y = build_batch_norm_conv(y, online.clone(), avg_rate.clone(), conv2, params, online_stats, avg_stats);
   let y = y.positive_clip();
   // TODO
   let mut conv3 = conv_shape;
+  conv3.ker_size = [1, 1];
+  conv3.features *= expand;
+  conv3.stride = [1, 1];
+  conv3.zero_pad = [0, 0];
   let y = build_batch_norm_conv(y, online.clone(), avg_rate.clone(), conv3, params, online_stats, avg_stats);
-  let y = y + x;
+  let y = x + y;
+  //let y = sum_inplace_unstable(vec![x, y]);
   let y = y.positive_clip();
   y
 }
 
-fn build_proj_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: TCell<bool>, avg_rate: TCell<f32>, conv_shape: Conv2dShape, src_size: [usize; 2], src_features: usize, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+fn build_proj_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<bool>, avg_rate: Val<f32>, conv_shape: Conv2dShape, src_size: [usize; 2], src_features: usize, expand: usize, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
   // TODO
-  unimplemented!();
+  let mut conv1 = conv_shape;
+  conv1.src_size[0] = src_size[0];
+  conv1.src_size[1] = src_size[1];
+  conv1.src_size[2] = src_features;
+  conv1.ker_size = [1, 1];
+  conv1.zero_pad = [0, 0];
+  let y = build_batch_norm_conv(x.clone(), online.clone(), avg_rate.clone(), conv1, params, online_stats, avg_stats);
+  let y = y.positive_clip();
+  // TODO
+  let mut conv2 = conv_shape;
+  conv2.ker_size = [3, 3];
+  conv2.stride = [1, 1];
+  conv2.zero_pad = [1, 1];
+  let y = build_batch_norm_conv(y, online.clone(), avg_rate.clone(), conv2, params, online_stats, avg_stats);
+  let y = y.positive_clip();
+  // TODO
+  let mut conv3 = conv_shape;
+  conv3.ker_size = [1, 1];
+  conv3.features *= expand;
+  conv3.stride = [1, 1];
+  conv3.zero_pad = [0, 0];
+  let y = build_batch_norm_conv(y, online.clone(), avg_rate.clone(), conv3, params, online_stats, avg_stats);
+  let mut proj_conv = conv_shape;
+  proj_conv.src_size[0] = src_size[0];
+  proj_conv.src_size[1] = src_size[1];
+  proj_conv.src_size[2] = src_features;
+  proj_conv.ker_size = [1, 1];
+  proj_conv.features *= expand;
+  proj_conv.zero_pad = [0, 0];
+  let proj = build_batch_norm_conv(x, online.clone(), avg_rate.clone(), proj_conv, params, online_stats, avg_stats);
+  let y = proj + y;
+  //let y = sum_inplace_unstable(vec![x, y]);
+  let y = y.positive_clip();
+  y
 }
 
-fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GPUDeviceOuterBatchScalar<u32>>, Val<GPUDeviceOuterBatchArray1d<f32>>, Val<GPUDeviceScalar<f32>>, TCell<bool>, TCell<f32>, NodeVec, NodeVec, NodeVec) {
+fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GPUDeviceOuterBatchScalar<u32>>, Val<GPUDeviceOuterBatchArray1d<f32>>, Val<GPUDeviceScalar<f32>>, Val<bool>, Val<f32>, NodeVec, NodeVec, NodeVec) {
   let mut params = NodeVec::default();
   let mut online_stats = NodeVec::default();
   let mut avg_stats = NodeVec::default();
 
   let image_var = src(GPUDeviceOuterBatchArray3d::<u8>::zeros_init(([224, 224, 3], batch_sz)));
   let label_var = src(GPUDeviceOuterBatchScalar::<u32>::zeros_init(batch_sz));
-  let online = TCell::new(false);
-  let avg_rate = TCell::new(0.0_f32);
+  let online = src_init(false);
+  let avg_rate = src_init(0.0);
   let epsilon: f32 = 1.0e-6;
 
   let x = image_var.clone().dequantize(0.0_f32, 1.0_f32);
 
-  /*let mut conv1 = Conv2dShape::default_nchw();
+  let mut conv1 = Conv2dShape::default_nchw();
   conv1.src_size = [224, 224, 3];
   conv1.ker_size = [3, 3];
   conv1.features = 64;
@@ -210,64 +261,68 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   conv2.ker_size = [3, 3];
   conv2.features = 128;
   conv2.stride = [1, 1];
+  //conv2.stride = [2, 2];
   conv2.zero_pad = [0, 0];
 
   let mut x = x;
-  x = build_proj_residual3_conv(x, online.clone(), avg_rate.clone(), conv2, [56, 56], 64, &mut params, &mut online_stats, &mut avg_stats);
+  x = build_proj_residual3_conv(x, online.clone(), avg_rate.clone(), conv2, [56, 56], 64, 4, &mut params, &mut online_stats, &mut avg_stats);
   for _ in 1 .. 3 {
-    x = build_residual3_conv(x, online.clone(), avg_rate.clone(), conv2, &mut params, &mut online_stats, &mut avg_stats);
+    x = build_residual3_conv(x, online.clone(), avg_rate.clone(), conv2, 4, &mut params, &mut online_stats, &mut avg_stats);
   }
 
   let mut conv3 = Conv2dShape::default_nchw();
   conv3.src_size = [28, 28, 256];
   conv3.ker_size = [3, 3];
   conv3.features = 256;
-  conv3.stride = [1, 1];
+  //conv3.stride = [1, 1];
+  conv3.stride = [2, 2];
   conv3.zero_pad = [0, 0];
 
   let mut x = x;
-  x = build_proj_residual3_conv(x, online.clone(), avg_rate.clone(), conv3, [56, 56], 128, &mut params, &mut online_stats, &mut avg_stats);
+  x = build_proj_residual3_conv(x, online.clone(), avg_rate.clone(), conv3, [56, 56], 128 * 4, 4, &mut params, &mut online_stats, &mut avg_stats);
   for _ in 1 .. 4 {
-    x = build_residual3_conv(x, online.clone(), avg_rate.clone(), conv3, &mut params, &mut online_stats, &mut avg_stats);
+    x = build_residual3_conv(x, online.clone(), avg_rate.clone(), conv3, 4, &mut params, &mut online_stats, &mut avg_stats);
   }
 
   let mut conv4 = Conv2dShape::default_nchw();
   conv4.src_size = [14, 14, 512];
   conv4.ker_size = [3, 3];
   conv4.features = 512;
-  conv4.stride = [1, 1];
+  //conv4.stride = [1, 1];
+  conv4.stride = [2, 2];
   conv4.zero_pad = [0, 0];
 
   let mut x = x;
-  x = build_proj_residual3_conv(x, online.clone(), avg_rate.clone(), conv4, [28, 28], 256, &mut params, &mut online_stats, &mut avg_stats);
+  x = build_proj_residual3_conv(x, online.clone(), avg_rate.clone(), conv4, [28, 28], 256 * 4, 4, &mut params, &mut online_stats, &mut avg_stats);
   for _ in 1 .. 6 {
-    x = build_residual3_conv(x, online.clone(), avg_rate.clone(), conv4, &mut params, &mut online_stats, &mut avg_stats);
+    x = build_residual3_conv(x, online.clone(), avg_rate.clone(), conv4, 4, &mut params, &mut online_stats, &mut avg_stats);
   }
 
   let mut conv5 = Conv2dShape::default_nchw();
   conv5.src_size = [7, 7, 512];
   conv5.ker_size = [3, 3];
   conv5.features = 512;
-  conv5.stride = [1, 1];
+  //conv5.stride = [1, 1];
+  conv5.stride = [2, 2];
   conv5.zero_pad = [0, 0];
 
   let mut x = x;
-  x = build_proj_residual3_conv(x, online.clone(), avg_rate.clone(), conv5, [14, 14], 512, &mut params, &mut online_stats, &mut avg_stats);
+  x = build_proj_residual3_conv(x, online.clone(), avg_rate.clone(), conv5, [14, 14], 512 * 4, 4, &mut params, &mut online_stats, &mut avg_stats);
   for _ in 1 .. 3 {
-    x = build_residual3_conv(x, online.clone(), avg_rate.clone(), conv5, &mut params, &mut online_stats, &mut avg_stats);
-  }*/
+    x = build_residual3_conv(x, online.clone(), avg_rate.clone(), conv5, 4, &mut params, &mut online_stats, &mut avg_stats);
+  }
 
   let mut avg_pool = Pool2dShape::default_nchw();
-  avg_pool.src_size = [7, 7];
-  avg_pool.src_features = 2048;
-  avg_pool.ker_size = [7, 7];
-  avg_pool.stride = [7, 7];
-  avg_pool.zero_pad = [0, 0];
+  pool1.src_size = [7, 7];
+  pool1.src_features = 512 * 4;
+  pool1.ker_size = [7, 7];
+  pool1.stride = [7, 7];
+  pool1.zero_pad = [0, 0];
 
   let x = x.average_pool(avg_pool);
   let x = x.flatten();
 
-  let x = build_linear(x, 2048, 1000, &mut params);
+  let x = build_linear(x, 512 * 4, 1000, &mut params);
 
   let logit_var = x.clone();
 
@@ -382,7 +437,7 @@ fn main() {
         // TODO: evaluate the batch.
         image_var.deserialize(batch_txn, &mut image_batch);
         label_var.deserialize(batch_txn, &mut label_batch);
-        online.propose(batch_txn, |_| true);
+        online.set(batch_txn, true);
         params.persist(batch_txn);
         /*loss_var.eval(batch_txn);
         grads.eval(batch_txn);
@@ -454,7 +509,7 @@ fn main() {
             // TODO: evaluate the batch.
             image_var.deserialize(batch_txn, &mut image_batch);
             label_var.deserialize(batch_txn, &mut label_batch);
-            online.propose(batch_txn, |_| false);
+            online.set(batch_txn, false);
             params.persist(batch_txn);
             for idx in 0 .. batch_sz {
               let k = _arg_max(&logit_batch.flat_view().unwrap().as_slice()[num_classes * idx .. num_classes * (idx + 1)]);

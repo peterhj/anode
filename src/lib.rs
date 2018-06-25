@@ -60,6 +60,7 @@ use std::collections::{HashMap, HashSet};
 //use std::collections::hash_map::{Entry};
 use std::intrinsics::{type_name};
 //use std::ops::{Deref, DerefMut};
+//use std::ops::{AddAssign};
 use std::rc::{Rc};
 use std::sync::{Arc};
 use std::sync::mpsc::{SyncSender, Receiver};
@@ -646,6 +647,10 @@ impl<V> Val<V> where V: 'static {
   }
 
   pub fn from<Op>(op: Rc<Op>) -> Self where Op: AOp<V> + 'static {
+    Val::new(op)
+  }
+
+  pub fn new<Op>(op: Rc<Op>) -> Self where Op: AOp<V> + 'static {
     let rvar = RVar::default();
     let xvar = RWVar(rvar);
     let val = Val{
@@ -991,11 +996,16 @@ impl<V> Val<V> where V: 'static {
     xvalue.finish_write(txn, self.rvar, self.xvar, token);
   }
 
-  pub fn set<F: FnOnce(RwLockWriteGuard<V>)>(&self, txn: Txn, f: F) {
+  pub fn propose<F: FnOnce(RwLockWriteGuard<V>)>(&self, txn: Txn, f: F) {
     //self.op._value().set(txn, self.xvar, self.mode, f);
     //self.op._set_output(txn, self.xvar, self.mode, self._clone_value());
     let xvalue = self.op._value3(txn, self.value.as_ref());
-    xvalue.set(txn, self.rvar, self.xvar, self.mode, f);
+    xvalue.propose(txn, self.rvar, self.xvar, self.mode, f);
+  }
+
+  pub fn set(&self, txn: Txn, new_value: V) {
+    let xvalue = self.op._value3(txn, self.value.as_ref());
+    xvalue.set(txn, self.rvar, self.xvar, self.mode, new_value);
   }
 
   fn _io<'a>(&'a self, txn: Txn) -> &'a IOVal {
@@ -1148,10 +1158,44 @@ impl<V> OVal<V> where V: 'static {
     self.value.as_ref().unwrap().finish_write(txn, self.rvar, self.xvar, token);
   }
 
-  pub fn set<F: FnOnce(RwLockWriteGuard<V>)>(&self, txn: Txn, f: F) -> bool {
+  pub fn propose<F: FnOnce(RwLockWriteGuard<V>)>(&self, txn: Txn, f: F) -> bool {
     assert!(self.value.is_some());
-    self.value.as_ref().unwrap().set(txn, self.rvar, self.xvar, self.mode, f)
+    self.value.as_ref().unwrap().propose(txn, self.rvar, self.xvar, self.mode, f)
   }
+
+  pub fn set(&self, txn: Txn, new_value: V) -> bool {
+    assert!(self.value.is_some());
+    self.value.as_ref().unwrap().set(txn, self.rvar, self.xvar, self.mode, new_value)
+  }
+}
+
+pub struct _Node {
+  xvar:     RWVar,
+  pvar:     RVar,
+  rvar:     RVar,
+  inner:    RefCell<_IndirectNode>,
+}
+
+pub struct _Val<V> {
+  xvar:     RWVar,
+  pvar:     RVar,
+  rvar:     RVar,
+  inner:    RefCell<_IndirectVal<V>>,
+}
+
+pub enum _IndirectNode {
+  Direct(Node),
+  Indirect(Rc<RefCell<_NodeRemap>>, RWVar, RVar),
+}
+
+pub enum _IndirectVal<V> {
+  Direct(Val<V>),
+  Indirect(Rc<RefCell<_NodeRemap>>, RWVar, RVar),
+}
+
+pub struct _NodeRemap {
+  indirect: HashMap<(RWVar, RVar), (Node, Rc<Any>)>,
+  alias:    HashMap<(RWVar, RVar), (RWVar, RVar)>,
 }
 
 pub struct FeedFwd {
@@ -2033,7 +2077,7 @@ impl<T> RWVal<T> where T: 'static {
         "attempting to finish write on empty data");
   }
 
-  pub fn set<F>(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, f: F) -> bool where F: FnOnce(RwLockWriteGuard<T>) {
+  pub fn propose<F>(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, f: F) -> bool where F: FnOnce(RwLockWriteGuard<T>) {
     //if let Some((cap, token)) = self.write(txn, xvar, mode) {
     match self.write(txn, rvar, xvar, mode) {
       Some((cap, token)) => {
@@ -2042,6 +2086,25 @@ impl<T> RWVal<T> where T: 'static {
             f(self.get_mut(txn, rvar, xvar, token));
           }
           _ => unimplemented!(),
+        }
+        true
+      }
+      None => {
+        false
+      }
+    }
+  }
+
+  pub fn set(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, new_value: T) -> bool {
+    match self.write(txn, rvar, xvar, mode) {
+      Some((cap, token)) => {
+        match cap {
+          WriteCap::Assign => {
+            *self.get_mut(txn, rvar, xvar, token) = new_value;
+          }
+          WriteCap::Accumulate => {
+            panic!("attempting to `set` an accumulate-mode value");
+          }
         }
         true
       }
@@ -3673,15 +3736,18 @@ pub struct FSwitchOp<F, V> {
   ext:  OpExt<F, V>,
   cfg:  RefCell<F>,
   ctrl: Vec<Node>,
-  flag: TCell<bool>,
+  //flag: TCell<bool>,
+  flag: Val<bool>,
   x1_:  Val<V>,
   x2_:  Val<V>,
   done: TCell<()>,
 }
 
 impl<F, V> FSwitchOp<F, V> where V: 'static {
-  pub fn new(cfg: F, ext: OpExt<F, V>, flag: TCell<bool>, x1_: Val<V>, x2_: Val<V>) -> Self {
+  //pub fn new(cfg: F, ext: OpExt<F, V>, flag: TCell<bool>, x1_: Val<V>, x2_: Val<V>) -> Self {
+  pub fn new(cfg: F, ext: OpExt<F, V>, flag: Val<bool>, x1_: Val<V>, x2_: Val<V>) -> Self {
     log_static_graph(|logging| {
+      logging.push_pred(flag._graph_key());
       logging.push_pred(x1_._graph_key());
       logging.push_pred(x2_._graph_key());
     });
@@ -3725,6 +3791,7 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, V: 'static {
   }
 
   fn _pred_fwd(&self, pred_buf: &mut Vec<Node>) {
+    pred_buf.push(self.flag._to_node());
     pred_buf.push(self.x1_._to_node());
     pred_buf.push(self.x2_._to_node());
   }
@@ -3732,11 +3799,13 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, V: 'static {
   fn _pred_rev(&self, pred_buf: &mut Vec<Node>) {
     pred_buf.push(self.x2_._to_node());
     pred_buf.push(self.x1_._to_node());
+    pred_buf.push(self.flag._to_node());
   }
 
   fn _push(&self, stop_txn: Option<Txn>, pass: Pass, /*filter: &Fn(&ANode) -> bool,*/ apply: &mut FnMut(&ANode)) {
     if self.base.stack.push(pass) {
       //if stop_txn.is_none() || stop_txn != self._txn() {
+        self.flag._node()._push(stop_txn, pass, apply);
         self.x1_._node()._push(stop_txn, pass, apply);
         self.x2_._node()._push(stop_txn, pass, apply);
       //}
@@ -3750,6 +3819,7 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, V: 'static {
       //if stop_txn.is_none() || stop_txn != self._txn() {
         self.x2_._node()._pop(stop_txn, pass, apply);
         self.x1_._node()._pop(stop_txn, pass, apply);
+        self.flag._node()._pop(stop_txn, pass, apply);
       //}
     }
   }
@@ -3757,6 +3827,7 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, V: 'static {
   fn _push_fwd(&self, stop_txn: Option<Txn>, pass: Pass, rvar: RVar, xvar: RWVar, apply: &mut FnMut(&ANode, RVar, RWVar)) {
     if self.base.stack.push(pass) {
       //if stop_txn.is_none() || stop_txn != self._txn() {
+        self.flag._push_fwd(stop_txn, pass, apply);
         self.x1_._push_fwd(stop_txn, pass, apply);
         self.x2_._push_fwd(stop_txn, pass, apply);
       //}
@@ -3770,6 +3841,7 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, V: 'static {
       //if stop_txn.is_none() || stop_txn != self._txn() {
         self.x2_._pop_rev(stop_txn, pass, apply);
         self.x1_._pop_rev(stop_txn, pass, apply);
+        self.flag._pop_rev(stop_txn, pass, apply);
       //}
     }
   }
@@ -3791,7 +3863,7 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, V: 'static {
       if static_value.is_some() {
         return static_value.as_ref().unwrap();
       } else {
-        match self.flag.get(txn) {
+        match *self.flag.get(txn) {
           false => self.x1_._io(txn),
           true  => self.x2_._io(txn),
         }
@@ -3822,7 +3894,7 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, V: 'static {
       for node in self.ctrl.iter() {
         node.eval(txn);
       }
-      match self.flag.get(txn) {
+      match *self.flag.get(txn) {
         false   => self.x1_.eval(txn),
         true    => self.x2_.eval(txn),
       }
@@ -3835,7 +3907,7 @@ impl<F, V> AOp<V> for FSwitchOp<F, V> where V: 'static, V: 'static {
     if static_value.is_some() {
       return static_value.as_ref().unwrap()._clone();
     } else {
-      match self.flag.get(txn) {
+      match *self.flag.get(txn) {
         false => self.x1_._value2(txn),
         true  => self.x2_._value2(txn),
       }
@@ -3846,7 +3918,7 @@ impl<F, V> AOp<V> for FSwitchOp<F, V> where V: 'static, V: 'static {
     if static_value.is_some() {
       return static_value.unwrap();
     } else {
-      match self.flag.get(txn) {
+      match *self.flag.get(txn) {
         false => self.x1_._value3(txn),
         true  => self.x2_._value3(txn),
       }
@@ -3879,13 +3951,18 @@ impl<F, V> AOp<V> for FSwitchOp<F, V> where V: 'static, V: 'static {
   fn _pop_adjoint(&self, pass: Pass, this: Val<V>, sink: &mut Sink) {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
-        None => {}
+        None => {
+          self.x2_._pop_rev(None, pass, &mut |_, _, _| {});
+          self.x1_._pop_rev(None, pass, &mut |_, _, _| {});
+          self.flag._pop_rev(None, pass, &mut |_, _, _| {});
+        }
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
+          self.x2_._pop_adjoint(pass, sink);
+          self.x1_._pop_adjoint(pass, sink);
+          self.flag._pop_adjoint(pass, sink);
         }
       }
-      self.x2_._pop_adjoint(pass, sink);
-      self.x1_._pop_adjoint(pass, sink);
     }
   }
 }

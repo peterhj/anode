@@ -62,6 +62,9 @@ pub struct FlatMapOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatMapInplaceOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatJoinOp<FlatJoin> { pub f: FlatJoin }
 pub struct FlatLinearOp;
+pub struct BroadcastLinearOp;
+pub struct BroadcastAffineOp;
+pub struct LinearReduceSumOp;
 pub struct BatchMean2dOp;
 pub struct BatchMean2dBwdOp;
 pub struct BatchVariance2dOp;
@@ -351,10 +354,12 @@ impl<T, V, W> DequantizeExt<T, V, W> for Val<V> where DequantizeOp<T>: Dequantiz
 }
 
 pub trait SwitchOpExt<V> {
-  fn build(flag: TCell<bool>, off_: Val<V>, on_: Val<V>) -> Val<V>;
+  //fn build(flag: TCell<bool>, off_: Val<V>, on_: Val<V>) -> Val<V>;
+  fn build(flag: Val<bool>, off_: Val<V>, on_: Val<V>) -> Val<V>;
 }
 
-pub fn switch<V>(flag: TCell<bool>, off_: Val<V>, on_: Val<V>) -> Val<V> where SwitchOp: SwitchOpExt<V> {
+//pub fn switch<V>(flag: TCell<bool>, off_: Val<V>, on_: Val<V>) -> Val<V> where SwitchOp: SwitchOpExt<V> {
+pub fn switch<V>(flag: Val<bool>, off_: Val<V>, on_: Val<V>) -> Val<V> where SwitchOp: SwitchOpExt<V> {
   <SwitchOp as SwitchOpExt<V>>::build(flag, off_, on_)
 }
 
@@ -362,8 +367,47 @@ pub trait SrcOpExt<V, Init> {
   fn build(init: Init) -> Val<V>;
 }
 
+pub trait SrcOpCloneExt<V: Clone + 'static> {
+  fn build_clone(init_value: V) -> Val<V>;
+}
+
 pub fn src<V, Init>(init: Init) -> Val<V> where SrcOp: SrcOpExt<V, Init> {
   <SrcOp as SrcOpExt<V, Init>>::build(init)
+}
+
+pub fn src_init<V>(init_value: V) -> Val<V> where V: Clone + 'static, SrcOp: SrcOpCloneExt<V> {
+  <SrcOp as SrcOpCloneExt<V>>::build_clone(init_value)
+}
+
+impl<T: Clone + 'static> SrcOpCloneExt<T> for SrcOp {
+  fn build_clone(init_value: T) -> Val<T> {
+    let ext = OpExt{
+      make_val: {
+        Box::new(move |_: RefMut<_>| {
+          let init_value = init_value.clone();
+          RWVal::from(Arc::new(move |_txn: Txn| {
+            init_value.clone()
+          }))
+        })
+      },
+      apply: {
+        Box::new(move |txn: Txn, _: RefMut<_>, output: OVal<_>| {
+          output.write_v2(txn, |_, _| {
+            panic!("WARNING: SrcOpExt: should never write");
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, _this: Val<_>, _: RefMut<_>, _sink: &mut Sink| {
+          // Do nothing.
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(FSrcOp::new(SrcOp, ext)))
+  }
 }
 
 pub trait TouchSrcOpExt<V, Init> {
@@ -563,11 +607,12 @@ pub trait BatchNormalize2dOpExt<T, X, M> {
 }
 
 pub trait BatchNormalizeExt<T, X, M> where T: Copy {
-  fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, avg_rate: TCell<T>, epsilon: T) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>);
+  //fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, avg_rate: TCell<T>, epsilon: T) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>);
+  fn batch_normalize_2d(self, axes: [isize; 2], online: Val<bool>, avg_rate: Val<T>, epsilon: T) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>);
 }
 
 impl<T, X, M> BatchNormalizeExt<T, X, M> for Val<X>
-where T: Copy,
+where T: Copy + 'static,
       X: 'static,
       M: 'static,
       BatchMean2dOp: BatchMean2dOpExt<T, X, M>,
@@ -576,7 +621,8 @@ where T: Copy,
       OnlineAverageOp: OnlineAverageOpExt<T, M>,
       ZerosSrcOp: ZerosSrcOpLikeExt<M> + ZerosSrcOpLikeExt<X>,
 {
-  fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, avg_rate: TCell<T>, epsilon: T) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>) {
+  //fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, avg_rate: TCell<T>, epsilon: T) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>) {
+  fn batch_normalize_2d(self, axes: [isize; 2], online: Val<bool>, avg_rate: Val<T>, epsilon: T) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>) {
     let mean_ = <BatchMean2dOp as BatchMean2dOpExt<T, X, M>>::build(axes, self.clone());
     let var_ = <BatchVariance2dOp as BatchVariance2dOpExt<T, X, M>>::build(axes, epsilon, self.clone(), mean_.clone());
     let avg_mean_ = zeros_like(mean_.clone()).online_average(avg_rate.clone(), mean_.clone());
@@ -589,18 +635,18 @@ where T: Copy,
 }
 
 pub trait OnlineAverageOpExt<T, V> where T: Copy {
-  fn build(avg_rate: TCell<T>, x_: Val<V>, y_: Val<V>) -> Val<V>;
+  fn build(avg_rate: Val<T>, x_: Val<V>, y_: Val<V>) -> Val<V>;
 }
 
 pub trait OnlineAverageExt<T, V> where T: Copy {
-  fn online_average(self, avg_rate: TCell<T>, x_: Val<V>) -> Val<V>;
+  fn online_average(self, avg_rate: Val<T>, x_: Val<V>) -> Val<V>;
 }
 
 impl<T, V> OnlineAverageExt<T, V> for Val<V>
 where T: Copy,
       OnlineAverageOp: OnlineAverageOpExt<T, V>,
 {
-  fn online_average(self, avg_rate: TCell<T>, x_: Val<V>) -> Val<V> {
+  fn online_average(self, avg_rate: Val<T>, x_: Val<V>) -> Val<V> {
     <OnlineAverageOp as OnlineAverageOpExt<T, V>>::build(avg_rate, x_, self)
   }
 }
@@ -672,19 +718,24 @@ pub trait FlatAffineExt<A, X, Y, B> {
   fn flat_mult(self, x_: Val<X>, b_: Val<B>) -> Val<Y>;
 }
 
-pub trait BroadcastAddExt<A, X, Y> {
-  // TODO: axes.
-  fn broadcast_add(self, axes: (), x_: Val<X>) -> Val<Y>;
+pub trait Broadcast1dAddExt<A, X, Y> {
+  fn broadcast_1d_add(self, axis: isize, x_: Val<X>) -> Val<Y>;
 }
 
-pub trait BroadcastLinearExt<A, X, Y> {
-  // TODO: axes.
-  fn broadcast_mult(self, axes: (), x_: Val<X>) -> Val<Y>;
+pub trait Broadcast1dLinearExt<A, X, Y> {
+  fn broadcast_1d_mult(self, axis: isize, x_: Val<X>) -> Val<Y>;
 }
 
-pub trait BroadcastAffineExt<A, X, Y, B> {
-  // TODO: axes.
-  fn broadcast_mult_add(self, axes: (), x_: Val<X>, b_: Val<B>) -> Val<Y>;
+pub trait Broadcast1dAffineExt<A, X, Y, B> {
+  fn broadcast_1d_mult_add(self, axis: isize, x_: Val<X>, b_: Val<B>) -> Val<Y>;
+}
+
+pub trait Reduce1dSumExt<X, Y> {
+  fn reduce_1d_sum(self, axis: isize, x_: Val<X>) -> Val<Y>;
+}
+
+pub trait MultReduce1dSumExt<X, Y> {
+  fn mult_reduce_1d_sum(self, axis: isize, x1_: Val<X>, x2_: Val<X>) -> Val<Y>;
 }
 
 pub trait LinearExt<A, X, Y> {
@@ -799,7 +850,7 @@ impl<A: 'static> WriteSectionExt<A> for WriteSection {
 
 pub fn pass_apply<F, A: 'static>(x_: Val<A>) -> Box<Fn(Txn, RefMut<F>, OVal<A>) -> bool> {
   let section = match <WriteSection as WriteSectionExt<A>>::maybe() {
-    None => unimplemented!("PassOp: missing WriteSection impl for data type '{}'", unsafe { type_name::<A>() }),
+    None => unimplemented!("pass_apply: missing WriteSection impl for data type '{}'", unsafe { type_name::<A>() }),
     Some(section) => section,
   };
   Box::new(move |txn: Txn, _state: RefMut<_>, output: OVal<A>| {
@@ -894,13 +945,14 @@ impl<A: 'static> FixOpExt<A> for FixOp {
   }
 }
 
-pub fn switch_apply<F, A: 'static>(flag: TCell<bool>, off_: Val<A>, on_: Val<A>) -> Box<Fn(Txn, RefMut<F>, OVal<A>) -> bool> {
+//pub fn switch_apply<F, A: 'static>(flag: TCell<bool>, off_: Val<A>, on_: Val<A>) -> Box<Fn(Txn, RefMut<F>, OVal<A>) -> bool> {
+pub fn switch_apply<F, A: 'static>(flag: Val<bool>, off_: Val<A>, on_: Val<A>) -> Box<Fn(Txn, RefMut<F>, OVal<A>) -> bool> {
   let section = match <WriteSection as WriteSectionExt<A>>::maybe() {
-    None => unimplemented!("PassOp: missing WriteSection impl for data type '{}'", unsafe { type_name::<A>() }),
+    None => unimplemented!("switch_apply: missing WriteSection impl for data type '{}'", unsafe { type_name::<A>() }),
     Some(section) => section,
   };
   Box::new(move |txn: Txn, _state: RefMut<_>, output: OVal<A>| {
-    let x_ = match flag.get(txn) {
+    let x_ = match *flag.get(txn) {
       false => &off_,
       true  => &on_,
     };
@@ -929,7 +981,8 @@ impl<A> SwitchOpExt<A> for SwitchOp
 where A: 'static,
       ZerosSrcOp: ZerosSrcOpLikeExt<A>,
 {
-  fn build(flag: TCell<bool>, off_: Val<A>, on_: Val<A>) -> Val<A> {
+  //fn build(flag: TCell<bool>, off_: Val<A>, on_: Val<A>) -> Val<A> {
+  fn build(flag: Val<bool>, off_: Val<A>, on_: Val<A>) -> Val<A> {
     let ext = OpExt{
       make_val: {
         //Box::new(move || {
@@ -945,7 +998,6 @@ where A: 'static,
         switch_apply::<_, A>(flag.clone(), off_.clone(), on_.clone())
       },
       build: Some({
-        let flag = flag.clone();
         Box::new(move |args| {
           // TODO
           unimplemented!();
