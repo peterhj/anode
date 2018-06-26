@@ -43,6 +43,9 @@ extern crate rng;
 //extern crate time;
 extern crate typemap;
 
+#[cfg(not(feature = "mpi"))] pub use proc_single as proc;
+#[cfg(feature = "mpi")] pub use proc_mpi as proc;
+
 use analysis::{LivenessAnalysis};
 use log::*;
 use ops::{OnesSrcOp, OnesSrcOpMaybeExt, SumJoinOp, SumJoinOpMaybeExt, PassExt};
@@ -74,7 +77,8 @@ pub mod log;
 pub mod ops;
 #[cfg(feature = "gpu")] pub mod ops_gpu;
 #[cfg(feature = "mpi")] pub mod ops_mpi;
-#[cfg(feature = "mpi")] pub mod proc;
+#[cfg(not(feature = "mpi"))] pub mod proc_single;
+#[cfg(feature = "mpi")] pub mod proc_mpi;
 pub mod templates;
 pub mod utils;
 

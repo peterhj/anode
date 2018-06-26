@@ -4156,7 +4156,7 @@ impl LinearReduceSumOp {
 
 impl<T> LinearExt<GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>> for Val<GPUDeviceArray2d<T>>
 where T: PseudoField + ZeroBits + Copy + 'static,
-      GPUDeviceArrayViewMut1d<T>: GPUVectorOps<T>,
+      GPUDeviceArrayViewMut1d<T>: GPUVectorMutOps<T>,
 {
   fn mult(self, x: Val<GPUDeviceArray1d<T>>) -> Val<GPUDeviceArray1d<T>> {
     LinearOp::build_device_val(self, x)
@@ -4183,7 +4183,7 @@ where T: PseudoField + ZeroBits + Copy + 'static,
 
 impl<T> LeftTransposeLinearExt<GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>> for Val<GPUDeviceArray2d<T>>
 where T: PseudoField + ZeroBits + Copy + 'static,
-      GPUDeviceArrayViewMut1d<T>: GPUVectorOps<T>,
+      GPUDeviceArrayViewMut1d<T>: GPUVectorMutOps<T>,
 {
   fn left_transpose_mult(self, y: Val<GPUDeviceArray1d<T>>) -> Val<GPUDeviceArray1d<T>> {
     // TODO
@@ -4202,7 +4202,7 @@ where T: PseudoField + ZeroBits + Copy + 'static,
 
 impl<T> OuterLinearExt<GPUDeviceArray1d<T>, GPUDeviceArray1d<T>, GPUDeviceArray2d<T>> for Val<GPUDeviceArray1d<T>>
 where T: PseudoField + ZeroBits + Copy + 'static,
-      GPUDeviceArrayViewMut1d<T>: GPUVectorOps<T>,
+      GPUDeviceArrayViewMut1d<T>: GPUVectorMutOps<T>,
 {
   fn outer_mult(self, x: Val<GPUDeviceArray1d<T>>) -> Val<GPUDeviceArray2d<T>> {
     // TODO
@@ -4224,7 +4224,7 @@ impl LinearOp {
       -> Val<GPUDeviceArray1d<T>>
   // TODO: `ZeroBits` should not be necessary here.
   where T: PseudoField + ZeroBits + Copy + 'static,
-        GPUDeviceArrayViewMut1d<T>: GPUVectorOps<T>,
+        GPUDeviceArrayViewMut1d<T>: GPUVectorMutOps<T>,
   {
     let ext = OpExt{
       make_val: {
