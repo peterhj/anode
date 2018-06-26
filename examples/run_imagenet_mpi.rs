@@ -210,6 +210,7 @@ fn build_proj_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Va
   conv3.stride = [1, 1];
   conv3.zero_pad = [0, 0];
   let y = build_batch_norm_conv(y, online.clone(), avg_rate.clone(), conv3, params, online_stats, avg_stats);
+  // TODO
   let mut proj_conv = conv_shape;
   proj_conv.src_size[0] = src_size[0];
   proj_conv.src_size[1] = src_size[1];
@@ -228,6 +229,15 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   let mut params = NodeVec::default();
   let mut online_stats = NodeVec::default();
   let mut avg_stats = NodeVec::default();
+
+  let n2 = 2;
+  let n3 = 2;
+  let n4 = 2;
+  let n5 = 2;
+  /*let n2 = 3;
+  let n3 = 4;
+  let n4 = 6;
+  let n5 = 3;*/
 
   let image_var = src(GPUDeviceOuterBatchArray3d::<u8>::zeros_init(([224, 224, 3], batch_sz)));
   let label_var = src(GPUDeviceOuterBatchScalar::<u32>::zeros_init(batch_sz));
@@ -266,7 +276,7 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
 
   let mut x = x;
   x = build_proj_residual3_conv(x, online.clone(), avg_rate.clone(), conv2, [56, 56], 64, 4, &mut params, &mut online_stats, &mut avg_stats);
-  for _ in 1 .. 3 {
+  for _ in 1 .. n2 {
     x = build_residual3_conv(x, online.clone(), avg_rate.clone(), conv2, 4, &mut params, &mut online_stats, &mut avg_stats);
   }
 
@@ -280,7 +290,7 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
 
   let mut x = x;
   x = build_proj_residual3_conv(x, online.clone(), avg_rate.clone(), conv3, [56, 56], 128 * 4, 4, &mut params, &mut online_stats, &mut avg_stats);
-  for _ in 1 .. 4 {
+  for _ in 1 .. n3 {
     x = build_residual3_conv(x, online.clone(), avg_rate.clone(), conv3, 4, &mut params, &mut online_stats, &mut avg_stats);
   }
 
@@ -294,7 +304,7 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
 
   let mut x = x;
   x = build_proj_residual3_conv(x, online.clone(), avg_rate.clone(), conv4, [28, 28], 256 * 4, 4, &mut params, &mut online_stats, &mut avg_stats);
-  for _ in 1 .. 6 {
+  for _ in 1 .. n4 {
     x = build_residual3_conv(x, online.clone(), avg_rate.clone(), conv4, 4, &mut params, &mut online_stats, &mut avg_stats);
   }
 
@@ -308,16 +318,16 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
 
   let mut x = x;
   x = build_proj_residual3_conv(x, online.clone(), avg_rate.clone(), conv5, [14, 14], 512 * 4, 4, &mut params, &mut online_stats, &mut avg_stats);
-  for _ in 1 .. 3 {
+  for _ in 1 .. n5 {
     x = build_residual3_conv(x, online.clone(), avg_rate.clone(), conv5, 4, &mut params, &mut online_stats, &mut avg_stats);
   }
 
   let mut avg_pool = Pool2dShape::default_nchw();
-  pool1.src_size = [7, 7];
-  pool1.src_features = 512 * 4;
-  pool1.ker_size = [7, 7];
-  pool1.stride = [7, 7];
-  pool1.zero_pad = [0, 0];
+  avg_pool.src_size = [7, 7];
+  avg_pool.src_features = 512 * 4;
+  avg_pool.ker_size = [7, 7];
+  avg_pool.stride = [7, 7];
+  avg_pool.zero_pad = [0, 0];
 
   let x = x.average_pool(avg_pool);
   let x = x.flatten();
@@ -372,6 +382,8 @@ fn main() {
       let num_data_workers = 20;
       let num_classes = 1000;
       let batch_sz = 32;
+      let display_interval = 1;
+      //let display_interval = 100;
       let eval_interval = 5000;
 
       // TODO: sharding.
@@ -439,10 +451,10 @@ fn main() {
         label_var.deserialize(batch_txn, &mut label_batch);
         online.set(batch_txn, true);
         params.persist(batch_txn);
-        /*loss_var.eval(batch_txn);
-        grads.eval(batch_txn);
+        loss_var.eval(batch_txn);
+        //grads.eval(batch_txn);
         logit_var.serialize(batch_txn, &mut logit_batch);
-        loss_var.serialize(batch_txn, &mut loss);*/
+        loss_var.serialize(batch_txn, &mut loss);
 
         let mut acc_ct = 0;
         for idx in 0 .. batch_sz {
@@ -456,7 +468,7 @@ fn main() {
         // TODO: gradient step.
         // TODO: update moving average stats.
 
-        if (iter_nr + 1) % 100 == 0 {
+        if (iter_nr + 1) % display_interval == 0 {
           println!("DEBUG: train: iters: {} acc: {:.4} ({}/{}) loss: {:.6} elapsed: {:.6} s",
               iter_nr + 1,
               acc_ct as f64 / batch_sz as f64,

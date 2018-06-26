@@ -4751,7 +4751,7 @@ impl Conv2dAffineOp {
                   cross:    true,
                 });
                 let (cfg, mut state) = match query_gpu_conv_fwd_algo(conn.device(), None, None, xconv_shape, conn.clone()) {
-                  None => panic!("invalid conv2d config"),
+                  None => panic!("invalid conv2d config: {:?}", xconv_shape),
                   Some((cfg, state)) => (cfg, state),
                 };
                 let mut workspace = GPUDeviceArray1d::zeros_with_alloc(conn.burst_arena(), cfg.workspace_size(), conn.clone());
@@ -5314,12 +5314,21 @@ impl<Pool: PoolOp + 'static> Pool2dOp<Pool> {
                 let mut y = output.get_mut(txn, token).as_view_mut();
                 guard._wait(x.async_state());
                 guard._wait(y.async_state());
+                assert_eq!(x.size()[0], pool_shape.src_size[0]);
+                assert_eq!(x.size()[1], pool_shape.src_size[1]);
+                assert_eq!(x.size()[2], pool_shape.src_features);
                 // TODO: assumes NCHW layout.
                 let y_size = pool_shape.calculate_output_size([
                     pool_shape.src_size[0],
                     pool_shape.src_size[1],
                     pool_shape.src_features,
                 ]);
+                assert_eq!(y.size()[0], y_size[0]);
+                assert_eq!(y.size()[1], y_size[1]);
+                assert_eq!(y.size()[2], y_size[2]);
+                // TODO: set batch size.
+                assert_eq!(x.size()[3], y.size()[3]);
+                //y.set_batch_size(x.batch_size());
                 let xpool_shape = XPoolFullShape::Pool2d(Pool2dFullShape{
                   src_space_axes:   pool_shape.src_space_axes,
                   src_feature_axis: pool_shape.src_feature_axis,
@@ -5329,7 +5338,7 @@ impl<Pool: PoolOp + 'static> Pool2dOp<Pool> {
                     pool_shape.src_size[0],
                     pool_shape.src_size[1],
                     pool_shape.src_features,
-                    pool_shape.src_features,
+                    x.size()[3],
                   ],
                   dst_space_axes:   pool_shape.dst_space_axes,
                   dst_feature_axis: pool_shape.dst_feature_axis,
@@ -5339,7 +5348,7 @@ impl<Pool: PoolOp + 'static> Pool2dOp<Pool> {
                     y_size[0],
                     y_size[1],
                     pool_shape.src_features,
-                    pool_shape.src_features,
+                    y.size()[3],
                   ],
                   ker_size:         pool_shape.ker_size,
                   stride:           pool_shape.stride,
