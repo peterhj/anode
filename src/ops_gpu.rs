@@ -4641,9 +4641,10 @@ impl AffineOp {
 }
 
 impl<T> ConvLinearExt<GPUDeviceArray4d<T>, GPUDeviceOuterBatchArray3d<T>, GPUDeviceOuterBatchArray3d<T>> for Val<GPUDeviceArray4d<T>>
-where T: GPUDataTyped + CudnnDataTypeExt + PseudoField + ZeroBits + Copy + 'static,
+where T: GPUDataTyped + CudnnDataTypeExt + PseudoField + ZeroBits + Copy + 'static + Into<f32>,
       //CudnnHandle: CudnnConvExt<T, T, T>,
       CudnnHandle: CudnnConvExt<T, T, T, HostScalar=T>,
+      GPUDeviceArrayView1d<T>: GPUVectorOps<T>,
       GPUDeviceArrayViewMut4d<T>: GPUTensorMutOps<T> + GPUBatchConvOps<T, T, T>,
 {
   type ConvShape = Conv2dShape;
@@ -4656,9 +4657,10 @@ where T: GPUDataTyped + CudnnDataTypeExt + PseudoField + ZeroBits + Copy + 'stat
 }
 
 impl<T> ConvAffineExt<GPUDeviceArray4d<T>, GPUDeviceOuterBatchArray3d<T>, GPUDeviceOuterBatchArray3d<T>, GPUDeviceArray1d<T>> for Val<GPUDeviceArray4d<T>>
-where T: GPUDataTyped + CudnnDataTypeExt + PseudoField + ZeroBits + Copy + 'static,
+where T: GPUDataTyped + CudnnDataTypeExt + PseudoField + ZeroBits + Copy + 'static + Into<f32>,
       //CudnnHandle: CudnnConvExt<T, T, T>,
       CudnnHandle: CudnnConvExt<T, T, T, HostScalar=T>,
+      GPUDeviceArrayView1d<T>: GPUVectorOps<T>,
       GPUDeviceArrayViewMut4d<T>: GPUTensorMutOps<T> + GPUBatchConvOps<T, T, T>,
       Val<GPUDeviceOuterBatchArray3d<T>>: OuterConvLinearExt<GPUDeviceArray4d<T>, GPUDeviceOuterBatchArray3d<T>, GPUDeviceOuterBatchArray3d<T>, ConvShape=Conv2dShape>,
       Val<GPUDeviceArray4d<T>>: LeftTransposeConvLinearExt<GPUDeviceArray4d<T>, GPUDeviceOuterBatchArray3d<T>, GPUDeviceOuterBatchArray3d<T>, ConvShape=Conv2dShape>,
@@ -4677,9 +4679,10 @@ impl Conv2dAffineOp {
       b_: Val<GPUDeviceArray1d<T>>)
   -> Val<GPUDeviceOuterBatchArray3d<T>>
   // TODO: `ZeroBits` should not be necessary here.
-  where T: GPUDataTyped + CudnnDataTypeExt + PseudoField + ZeroBits + Copy + 'static,
+  where T: GPUDataTyped + CudnnDataTypeExt + PseudoField + ZeroBits + Copy + 'static + Into<f32>,
         //CudnnHandle: CudnnConvExt<T, T, T>,
         CudnnHandle: CudnnConvExt<T, T, T, HostScalar=T>,
+        GPUDeviceArrayView1d<T>: GPUVectorOps<T>,
         GPUDeviceArrayViewMut4d<T>: GPUTensorMutOps<T> + GPUBatchConvOps<T, T, T>,
         Val<GPUDeviceOuterBatchArray3d<T>>: OuterConvLinearExt<GPUDeviceArray4d<T>, GPUDeviceOuterBatchArray3d<T>, GPUDeviceOuterBatchArray3d<T>, ConvShape=Conv2dShape>,
         Val<GPUDeviceArray4d<T>>: LeftTransposeConvLinearExt<GPUDeviceArray4d<T>, GPUDeviceOuterBatchArray3d<T>, GPUDeviceOuterBatchArray3d<T>, ConvShape=Conv2dShape>,
@@ -4783,6 +4786,7 @@ impl Conv2dAffineOp {
                     workspace.as_view_mut(),
                     conn.clone(),
                 );*/
+                double_check_scalar::<Self, _>(|| y.flat_view().unwrap().sync_vector_norm(conn).into());
               }
               WriteCap::Accumulate => unimplemented!(),
             }
