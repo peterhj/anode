@@ -5,6 +5,7 @@ use std::collections::{HashMap};
 use std::fmt::{Debug};
 use std::fs::{File};
 use std::hash::{Hash};
+use std::intrinsics::{type_name};
 use std::io::{Write};
 use std::path::{PathBuf};
 
@@ -12,6 +13,7 @@ thread_local! {
   static STATIC_GRAPH_LOGGING:  RefCell<Option<GraphLogging<(u64, String)>>> = RefCell::new(None);
   static DYNAMIC_GRAPH_LOGGING: RefCell<Option<GraphLogging<(u64, String)>>> = RefCell::new(None);
   static CONTEXT_LOGGING:       RefCell<Option<ContextLogging>> = RefCell::new(None);
+  static DOUBLE_CHECK_LOGGING:  RefCell<Option<DoubleCheckLogging>> = RefCell::new(None);
 }
 
 pub fn enable_static_graph_logging() {
@@ -135,4 +137,24 @@ pub fn enable_context_logging() {
 }
 
 pub struct ContextLogging {
+}
+
+pub fn enable_double_check() {
+  DOUBLE_CHECK_LOGGING.with(|maybe_logging| {
+    let mut maybe_logging = maybe_logging.borrow_mut();
+    *maybe_logging = Some(DoubleCheckLogging{});
+  });
+}
+
+pub fn double_check_scalar<Op, F>(f: F) where F: FnOnce() -> f32 {
+  DOUBLE_CHECK_LOGGING.with(|maybe_logging| {
+    let mut maybe_logging = maybe_logging.borrow_mut();
+    if maybe_logging.is_some() {
+      let result = f();
+      println!("DEBUG: DoubleCheckLogging: op: {}: scalar result: {}", unsafe { type_name::<Op>() }, result);
+    }
+  });
+}
+
+pub struct DoubleCheckLogging {
 }

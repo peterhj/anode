@@ -2,20 +2,19 @@ extern crate anode;
 extern crate colorimage;
 extern crate gpudevicemem;
 extern crate memarray;
-#[cfg(feature = "mpi")] extern crate mpich;
 extern crate rand;
 extern crate sharedmem;
 extern crate superdata;
 
 use anode::*;
+use anode::log::*;
 use anode::ops::*;
-#[cfg(feature = "mpi")] use anode::proc::*;
+use anode::proc::*;
 use anode::utils::*;
 use colorimage::*;
 use gpudevicemem::*;
 use gpudevicemem::array::*;
 use memarray::*;
-#[cfg(feature = "mpi")] use mpich::*;
 use rand::prelude::*;
 use rand::distributions::{Distribution, Uniform, Normal};
 //use rand::rngs::mock::*;
@@ -26,6 +25,7 @@ use superdata::image::*;
 use superdata::utils::*;
 
 use std::cmp::{max, min};
+use std::env;
 use std::path::{PathBuf};
 use std::rc::{Rc};
 use std::sync::{Arc};
@@ -230,14 +230,14 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   let mut online_stats = NodeVec::default();
   let mut avg_stats = NodeVec::default();
 
-  let n2 = 2;
+  /*let n2 = 2;
   let n3 = 2;
   let n4 = 2;
-  let n5 = 2;
-  /*let n2 = 3;
+  let n5 = 2;*/
+  let n2 = 3;
   let n3 = 4;
   let n4 = 6;
-  let n5 = 3;*/
+  let n5 = 3;
 
   let image_var = src(GPUDeviceOuterBatchArray3d::<u8>::zeros_init(([224, 224, 3], batch_sz)));
   let label_var = src(GPUDeviceOuterBatchScalar::<u32>::zeros_init(batch_sz));
@@ -342,19 +342,29 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   (image_var, label_var, logit_var, loss_var, online, avg_rate, params, online_stats, avg_stats)
 }
 
-#[cfg(not(feature = "mpi"))]
-fn main() {
-}
-
-#[cfg(feature = "mpi")]
 fn main() {
   let mut group = DistProcGroup::default();
   for node in group {
     node.spawn(|proc| {
       println!("DEBUG: hello world: {}", proc.rank());
 
-      let train_data_path = PathBuf::from("/scratch/snx3000/peterhj/data/ilsvrc2012/ILSVRC2012_img_train.tar");
-      let val_data_path = PathBuf::from("/scratch/snx3000/peterhj/data/ilsvrc2012/ILSVRC2012_img_val.tar");
+      let args: Vec<_> = env::args().collect();
+      println!("DEBUG: args: {:?}", args);
+
+      //let train_data_path = PathBuf::from("/scratch/snx3000/peterhj/data/ilsvrc2012/ILSVRC2012_img_train.tar");
+      //let val_data_path = PathBuf::from("/scratch/snx3000/peterhj/data/ilsvrc2012/ILSVRC2012_img_val.tar");
+      let train_data_path =
+          if args.len() >= 1 {
+            PathBuf::from(&args[1])
+          } else {
+            PathBuf::from("/scratch/snx3000/peterhj/data/ilsvrc2012/ILSVRC2012_img_train.tar")
+          };
+      let val_data_path =
+          if args.len() >= 2 {
+            PathBuf::from(&args[2])
+          } else {
+            PathBuf::from("/scratch/snx3000/peterhj/data/ilsvrc2012/ILSVRC2012_img_val.tar")
+          };
 
       let data_cfg = ImagenetConfig{
         train_data: Some(train_data_path),
@@ -378,10 +388,13 @@ fn main() {
       let train_shard = train_dataset.partition(proc.rank(), proc.num_ranks());
       println!("DEBUG: rank: {} train part len: {}", proc.rank(), train_shard.len());*/
 
-      //let num_data_workers = 10;
-      let num_data_workers = 20;
       let num_classes = 1000;
-      let batch_sz = 32;
+
+      let num_data_workers = 1;
+      //let num_data_workers = 10;
+      //let num_data_workers = 20;
+      let batch_sz = 16;
+      //let batch_sz = 32;
       let display_interval = 1;
       //let display_interval = 100;
       let eval_interval = 5000;
@@ -399,10 +412,15 @@ fn main() {
               .map_data(move |(value, label)| {
                 let maybe_image = match ColorImage::decode(&value) {
                   Ok(mut image) => {
-                    //println!("DEBUG: image: dims: {} {}", image.width(), image.height());
                     // TODO: data augmentation.
+                    //println!("DEBUG: image: dims: {} {}", image.width(), image.height());
+                    //println!("DEBUG: augment: pass: 0 sample: {:?}", &image.raster_line(0)[ .. 10]);
                     inception_crop_resize(224, 224, &mut image, &mut rng);
+                    //println!("DEBUG: augment: pass: 1 sample: {:?}", &image.raster_line(0)[ .. 10]);
                     random_flip(&mut image, &mut rng);
+                    //println!("DEBUG: augment: pass: 2 sample: {:?}", &image.raster_line(0)[ .. 10]);
+                    /*scale_resize(256, &mut image);
+                    center_crop(224, 224, &mut image);*/
                     Some(image)
                   }
                   Err(_) => {
@@ -419,18 +437,22 @@ fn main() {
 
       // TODO
       let (image_var, label_var, logit_var, loss_var, online, avg_rate, params, online_stats, avg_stats) = build_resnet(batch_sz);
+      //let mut loss_sink = sink(loss_var.clone());
+      //let grads = params.adjoints(&mut loss_sink);
 
       let mut stopwatch = Stopwatch::new();
-      //let mut images = Vec::with_capacity(batch_sz);
-      let mut labels = Vec::with_capacity(batch_sz);
 
       let mut image_batch = MemArray4d::<u8>::zeros([224, 224, 3, batch_sz]);
       let mut label_batch = MemArray1d::<u32>::zeros(batch_sz);
       let mut logit_batch = MemArray2d::<f32>::zeros([num_classes, batch_sz]);
       let mut loss: f32 = 0.0;
 
+      let mut labels = Vec::with_capacity(batch_sz);
+
+      // TODO: debugging.
+      //enable_double_check();
+
       for (iter_nr, batch) in train_iter.enumerate() {
-        //images.clear();
         labels.clear();
         for (idx, (maybe_image, label)) in batch.into_iter().enumerate() {
           //images.push(maybe_image);
@@ -441,8 +463,15 @@ fn main() {
           } else {
             println!("WARNING: train: image decode error, missing image in iter: {} batch idx: {}", iter_nr, idx);
           }
-          labels.push(label);
+          /*println!("DEBUG: train: image batch: idx: {} sample: {:?} {:?}",
+              idx,
+              &image_batch.flat_view().unwrap()
+                .as_slice()[idx * 224 * 224 * 3 .. idx * 224 * 224 * 3 + 10],
+              &image_batch.flat_view().unwrap()
+                .as_slice()[(idx + 1) * 224 * 224 * 3 - 10 .. (idx + 1) * 224 * 224 * 3],
+          );*/
           label_batch.as_view_mut().as_mut_slice()[idx] = label;
+          labels.push(label);
         }
 
         let batch_txn = txn();

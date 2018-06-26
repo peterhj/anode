@@ -17,6 +17,7 @@ limitations under the License.
 use ::*;
 use context::*;
 use ffi::routines_gpu::*;
+use log::*;
 use ops::*;
 use utils::{ZerosInit};
 
@@ -275,7 +276,6 @@ impl DequantizeOp<f32> {
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
           //if let Some((cap, token)) = output.write(txn) {
           output.write_v2(txn, |cap, token| {
-            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -285,28 +285,36 @@ impl DequantizeOp<f32> {
             let mut y = output.get_mut(txn, token);
             guard._wait(x.async_state());
             guard._wait(y.async_state());
-            let x_len = x.flat_size();
-            assert_eq!(y.flat_size(), x_len);
             assert_eq!(y.size(), x.size());
             y.set_batch_size(x.batch_size());
             match cap {
               WriteCap::Assign => {
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_dequantize_u8_packed_f32(
-                    sz2uint(x_len),
-                    lo,
-                    hi,
-                    x.as_view().as_dptr(),
-                    y.as_view_mut().as_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
+                if x.is_packed() && y.is_packed() {
+                  let x = x.flat_view().unwrap();
+                  let mut y = y.flat_view_mut().unwrap();
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_dequantize_u8_packed_f32(
+                      sz2uint(x.size()),
+                      lo,
+                      hi,
+                      x.as_dptr(),
+                      y.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                } else {
+                  unimplemented!();
+                }
               }
               WriteCap::Accumulate => {
                 // TODO
                 unimplemented!();
               }
             }
+            double_check_scalar::<Self, _>(|| {
+              //println!("DEBUG: DequantizeOp: double checking: len: {} {}", y.flat_size(), y.flat_view().unwrap().size());
+              y.flat_view().unwrap().sync_vector_norm(conn)
+            });
           })
         })
       },
