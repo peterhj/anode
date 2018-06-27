@@ -27,7 +27,7 @@ limitations under the License.
 
 extern crate arithmetic;
 extern crate arrayidx;
-#[cfg(feature = "mpi")] extern crate cray_shmem;
+//#[cfg(feature = "mpi")] extern crate cray_shmem;
 #[cfg(feature = "gpu")] extern crate cuda;
 #[cfg(feature = "gpu")] extern crate cuda_blas;
 #[cfg(feature = "gpu")] extern crate cuda_coll;
