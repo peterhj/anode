@@ -158,3 +158,19 @@ pub fn double_check_scalar<Op, F>(f: F) where F: FnOnce() -> f32 {
 
 pub struct DoubleCheckLogging {
 }
+
+impl DoubleCheckLogging {
+  pub fn enable() {
+    DOUBLE_CHECK_LOGGING.with(|maybe_logging| {
+      let mut maybe_logging = maybe_logging.borrow_mut();
+      *maybe_logging = Some(DoubleCheckLogging{});
+    });
+  }
+
+  pub fn disable() {
+    DOUBLE_CHECK_LOGGING.with(|maybe_logging| {
+      let mut maybe_logging = maybe_logging.borrow_mut();
+      *maybe_logging = None;
+    });
+  }
+}

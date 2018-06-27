@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+use cray_shmem::*;
 #[cfg(feature = "gpu")] use gpudevicemem::*;
 use mpich::*;
 
@@ -28,6 +29,7 @@ pub struct DistProcGroup {
 impl Drop for DistProcGroup {
   fn drop(&mut self) {
     // TODO: should make sure that the proc group outlives procs.
+    assert!(Shmem::finalize().is_ok());
     assert!(mpi_finalize().is_ok());
   }
 }
@@ -41,6 +43,7 @@ impl Default for DistProcGroup {
         println!("DEBUG: DistProcGroup: num gpu devices: {}", GPUDeviceId::count());
       }
       assert!(mpi_init_multithreaded().is_ok());
+      assert!(Shmem::init_multithreaded().is_ok());
     });
     DistProcGroup{
       closed:   false,
@@ -59,6 +62,10 @@ impl Iterator for DistProcGroup {
     self.closed = true;
     let rank = MPIComm::world().rank() as usize;
     let nranks = MPIComm::world().num_ranks() as usize;
+    let shmem_rank = Shmem::rank() as usize;
+    let shmem_nranks = Shmem::num_ranks() as usize;
+    assert_eq!(rank, shmem_rank);
+    assert_eq!(nranks, shmem_nranks);
     Some(DistProc{
       rank,
       nranks,

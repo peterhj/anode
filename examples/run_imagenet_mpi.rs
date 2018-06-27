@@ -1,3 +1,6 @@
+#![feature(alloc_system)]
+
+//#[cfg(feature = "mpi")] extern crate cray_link;
 extern crate anode;
 extern crate colorimage;
 extern crate gpudevicemem;
@@ -6,6 +9,7 @@ extern crate rand;
 extern crate sharedmem;
 extern crate superdata;
 
+//#[cfg(feature = "mpi")] use cray_link::*;
 use anode::*;
 use anode::log::*;
 use anode::ops::*;
@@ -230,14 +234,14 @@ fn build_resnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GP
   let mut online_stats = NodeVec::default();
   let mut avg_stats = NodeVec::default();
 
-  /*let n2 = 2;
+  let n2 = 2;
   let n3 = 2;
   let n4 = 2;
-  let n5 = 2;*/
-  let n2 = 3;
+  let n5 = 2;
+  /*let n2 = 3;
   let n3 = 4;
   let n4 = 6;
-  let n5 = 3;
+  let n5 = 3;*/
 
   let image_var = src(GPUDeviceOuterBatchArray3d::<u8>::zeros_init(([224, 224, 3], batch_sz)));
   let label_var = src(GPUDeviceOuterBatchScalar::<u32>::zeros_init(batch_sz));
@@ -354,13 +358,13 @@ fn main() {
       //let train_data_path = PathBuf::from("/scratch/snx3000/peterhj/data/ilsvrc2012/ILSVRC2012_img_train.tar");
       //let val_data_path = PathBuf::from("/scratch/snx3000/peterhj/data/ilsvrc2012/ILSVRC2012_img_val.tar");
       let train_data_path =
-          if args.len() >= 1 {
+          if args.len() > 1 {
             PathBuf::from(&args[1])
           } else {
             PathBuf::from("/scratch/snx3000/peterhj/data/ilsvrc2012/ILSVRC2012_img_train.tar")
           };
       let val_data_path =
-          if args.len() >= 2 {
+          if args.len() > 2 {
             PathBuf::from(&args[2])
           } else {
             PathBuf::from("/scratch/snx3000/peterhj/data/ilsvrc2012/ILSVRC2012_img_val.tar")
@@ -390,17 +394,20 @@ fn main() {
 
       let num_classes = 1000;
 
-      let num_data_workers = 1;
-      //let num_data_workers = 10;
+      //let num_data_workers = 1;
+      let num_data_workers = 10;
       //let num_data_workers = 20;
-      let batch_sz = 16;
-      //let batch_sz = 32;
-      let display_interval = 1;
+      //let batch_sz = 16;
+      let batch_sz = 32;
+      //let display_interval = 1;
       //let display_interval = 100;
-      let eval_interval = 5000;
+      let display_interval = 500;
+      //let display_interval = 5000;
+      let eval_interval: Option<usize> = None;
+      //let eval_interval = Some(5000);
 
       // TODO: sharding.
-      let train_iter = {
+      /*let train_iter = {
           let mut worker_rngs = Vec::with_capacity(num_data_workers);
           for _ in 0 .. num_data_workers {
             worker_rngs.push(SmallRng::from_rng(thread_rng()).unwrap());
@@ -433,7 +440,7 @@ fn main() {
           })
           .async_prefetch_data(batch_sz * max(2, num_data_workers))
           .batch_data(batch_sz)
-      };
+      };*/
 
       // TODO
       let (image_var, label_var, logit_var, loss_var, online, avg_rate, params, online_stats, avg_stats) = build_resnet(batch_sz);
@@ -451,10 +458,13 @@ fn main() {
 
       // TODO: debugging.
       //enable_double_check();
+      DoubleCheckLogging::enable();
 
-      for (iter_nr, batch) in train_iter.enumerate() {
+      //for (iter_nr, batch) in train_iter.enumerate() {
+      let mut iter_nr = 0;
+      loop {
         labels.clear();
-        for (idx, (maybe_image, label)) in batch.into_iter().enumerate() {
+        /*for (idx, (maybe_image, label)) in batch.into_iter().enumerate() {
           //images.push(maybe_image);
           if let Some(ref image) = maybe_image {
             image.dump_planes(
@@ -472,6 +482,9 @@ fn main() {
           );*/
           label_batch.as_view_mut().as_mut_slice()[idx] = label;
           labels.push(label);
+        }*/
+        for _ in 0 .. batch_sz {
+          labels.push(0);
         }
 
         let batch_txn = txn();
@@ -497,6 +510,9 @@ fn main() {
         // TODO: gradient step.
         // TODO: update moving average stats.
 
+        DoubleCheckLogging::disable();
+        proc.barrier();
+
         if (iter_nr + 1) % display_interval == 0 {
           println!("DEBUG: train: iters: {} acc: {:.4} ({}/{}) loss: {:.6} elapsed: {:.6} s",
               iter_nr + 1,
@@ -507,7 +523,7 @@ fn main() {
         }
         //continue;
 
-        if (iter_nr + 1) % eval_interval == 0 {
+        if eval_interval.is_some() && (iter_nr + 1) % eval_interval.unwrap() == 0 {
           println!("DEBUG: eval: evaluating...");
           let val_shard = val_dataset.clone().range_shard(proc.rank(), proc.num_ranks());
           let shard_len = val_shard.len();
@@ -569,6 +585,8 @@ fn main() {
               eval_acc_ct, eval_ctr,
               stopwatch.click().lap_time());
         }
+
+        iter_nr += 1;
       }
     }).unwrap().join();
   }
