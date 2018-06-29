@@ -248,7 +248,26 @@ impl<T> IOVal for RWVal<GPUDeviceScalar<T>> where T: ZeroBits + 'static {
   }
 
   fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &mut Any) {
-    // TODO
+    if let Some(src) = src.downcast_mut::<T>() {
+      let ctx = implicit_ctx().gpu();
+      let mut pool = ctx.pool();
+      let conn = pool.conn();
+      if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
+        let mut section = GPULazyAsyncSection::default();
+        let mut guard = section.enter(conn.clone());
+        let mut x = self.get_mut(txn, rvar, xvar, token);
+        guard._wait(x.async_state());
+        match cap {
+          WriteCap::Assign => {
+            let mut src_arr = MemScalar::<T>::zeros(());
+            src_arr.flat_view_mut().unwrap().as_mut_slice()[0] = *src;
+            x.as_view_mut().sync_copy_mem(src_arr.as_view(), conn);
+          }
+          _ => unimplemented!(),
+        }
+      }
+      return;
+    }
     unimplemented!();
   }
 

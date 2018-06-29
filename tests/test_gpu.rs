@@ -729,7 +729,6 @@ fn test_gpu_op_softmax_cat_nll_sum_adj() {
   println!("DEBUG: {:?}", loss_h);
 }
 
-
 #[test]
 fn test_gpu_op_dequantize() {
   println!();
@@ -750,4 +749,54 @@ fn test_gpu_op_dequantize() {
   }
   println!("DEBUG: {:?}", &z.as_view().flat_slice().unwrap()[.. 10]);
   println!("DEBUG: {:?}", &z.as_view().flat_slice().unwrap()[32 * 32 * 3 - 10 ..]);
+}
+
+#[test]
+fn test_gpu_gradient_descent() {
+  println!();
+  enable_static_graph_logging();
+  enable_dynamic_graph_logging();
+
+  let step_size: Val<f32> = src_init(0.0);
+  let momentum: Val<f32> = src_init(0.0);
+
+  let x = src(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceScalar::<f32>::zeros((), conn)
+  }));
+  let y = x.clone() * x.clone();
+
+  let mut y_sink = sink(y.clone());
+  let adj_x = x.adjoint(&mut y_sink).unwrap();
+
+  let (grad_step, grad_mavg_step) = x.clone().gradient_momentum_step(step_size.clone(), momentum.clone(), adj_x.clone());
+
+  let mut x_h: f32 = 1.0;
+  //let mut y_h: f32 = 0.0;
+  let mut adj_x_h: f32 = 0.0;
+
+  for iter_nr in 0 .. 10 {
+    println!("DEBUG: iteration {}...", iter_nr);
+
+    let t = txn();
+    if iter_nr == 0 {
+      x.deserialize(t, &mut x_h);
+    } else {
+      x.persist(t);
+    }
+    //y.eval(t);
+    adj_x.eval(t);
+
+    x.serialize(t, &mut x_h);
+    //y.serialize(t, &mut y_h);
+    adj_x.serialize(t, &mut adj_x_h);
+    println!("DEBUG:   x:  {:?}", x_h);
+    //println!("DEBUG: y:  {:?}", y_h);
+    println!("DEBUG:   dx: {:?}", adj_x_h);
+
+    let step_t = txn();
+    step_size.set(step_t, -0.05);
+    momentum.set(step_t, 0.0);
+    adj_x.persist(step_t);
+    grad_step.eval(step_t);
+  }
 }

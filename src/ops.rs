@@ -51,6 +51,7 @@ pub struct ReshapeLikeOp;
 pub struct MapOp<MapF> { pub f: MapF, }
 pub struct TransposeOp;
 pub struct SumJoinOp;
+pub struct ProductJoinOp;
 pub struct SumJoinAccumulateOp;
 //pub struct SumJoinOp<Variant> { _mrk: PhantomData<Variant> }
 pub struct FlatSumOp;
@@ -74,6 +75,8 @@ pub struct BatchNormalize2dOp;
 pub struct BatchNormalize2dBwdOp;
 pub struct BatchNormalize2dBwdMeanOp;
 pub struct BatchNormalize2dBwdVarianceOp;
+pub struct OnlineAddOp;
+pub struct OnlineDiscountOp;
 pub struct OnlineAverageOp;
 pub struct SoftmaxOp;
 pub struct SoftmaxCategoricalNLLOp;
@@ -107,6 +110,10 @@ pub struct SoftmaxCrossEntropyFusedOp;
 pub struct SoftmaxEntropyFusedOp;
 
 pub struct SpacePadOp;
+
+pub struct VectorizeOp;
+pub struct DevectorizeOp;
+//pub struct GradientMomentumStepOp;
 
 #[derive(Clone)] pub struct IdentityFlatMapF;
 #[derive(Clone)] pub struct ModulusFlatMapF;
@@ -371,12 +378,20 @@ pub trait SrcOpCloneExt<V: Clone + 'static> {
   fn build_clone(init_value: V) -> Val<V>;
 }
 
+pub trait SrcOpLikeExt<V> {
+  fn build_like(x_: Val<V>) -> Val<V>;
+}
+
 pub fn src<V, Init>(init: Init) -> Val<V> where SrcOp: SrcOpExt<V, Init> {
   <SrcOp as SrcOpExt<V, Init>>::build(init)
 }
 
 pub fn src_init<V>(init_value: V) -> Val<V> where V: Clone + 'static, SrcOp: SrcOpCloneExt<V> {
   <SrcOp as SrcOpCloneExt<V>>::build_clone(init_value)
+}
+
+pub fn src_like<V>(x_: Val<V>) -> Val<V> where SrcOp: SrcOpLikeExt<V> {
+  <SrcOp as SrcOpLikeExt<V>>::build_like(x_)
 }
 
 impl<T: Clone + 'static> SrcOpCloneExt<T> for SrcOp {
@@ -401,6 +416,34 @@ impl<T: Clone + 'static> SrcOpCloneExt<T> for SrcOp {
       tangent: None,
       adjoint: Some({
         Box::new(move |_: Pass, _this: Val<_>, _: RefMut<_>, _sink: &mut Sink| {
+          // Do nothing.
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(FSrcOp::new(SrcOp, ext)))
+  }
+}
+
+impl<V: 'static> SrcOpLikeExt<V> for SrcOp {
+  fn build_like(x_: Val<V>) -> Val<V> {
+    let ext = OpExt{
+      make_val: {
+        Box::new(move |_: RefMut<_>| {
+          x_._make_value()
+        })
+      },
+      apply: {
+        Box::new(move |txn: Txn, _: RefMut<_>, output: OVal<_>| {
+          output.write_v2(txn, |cap, token| {
+            unreachable!();
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, this: Val<_>, _: RefMut<_>, sink: &mut Sink| {
           // Do nothing.
         })
       }),
@@ -548,6 +591,32 @@ impl<V> SumInplaceExt<V> for Val<V> where SumJoinOp: SumJoinOpExt<V> {
   }
 }
 
+pub trait ProductJoinOpExt<V> {
+  fn build(xs_: Vec<Val<V>>) -> Val<V>;
+}
+
+pub fn product<V>(xs_: Vec<Val<V>>) -> Val<V> where Val<V>: ProductExt<V> {
+  <Val<V> as ProductExt<V>>::product(xs_)
+}
+
+pub trait ProductExt<V> {
+  fn product(xs_: Vec<Val<V>>) -> Val<V>;
+}
+
+impl<V> ProductExt<V> for Val<V> where ProductJoinOp: ProductJoinOpExt<V> {
+  fn product(xs_: Vec<Val<V>>) -> Val<V> {
+    <ProductJoinOp as ProductJoinOpExt<V>>::build(xs_)
+  }
+}
+
+impl<V> Mul<Val<V>> for Val<V> where Val<V>: ProductExt<V> {
+  type Output = Val<V>;
+
+  fn mul(self, x_: Val<V>) -> Val<V> {
+    <Val<V> as ProductExt<V>>::product(vec![self, x_])
+  }
+}
+
 pub trait ReduceSumExt<V, W> {
   fn reduce_sum(self, axis: isize) -> Val<W>;
 }
@@ -634,6 +703,40 @@ where T: Copy + 'static,
   }
 }
 
+pub trait OnlineAddOpExt<T, V> where T: Copy {
+  fn build(avg_rate: Val<T>, x_: Val<V>, y_: Val<V>) -> Val<V>;
+}
+
+pub trait OnlineAddExt<T, V> where T: Copy {
+  fn online_add(self, scalar: Val<T>, x_: Val<V>) -> Val<V>;
+}
+
+impl<T, V> OnlineAddExt<T, V> for Val<V>
+where T: Copy,
+      OnlineAddOp: OnlineAddOpExt<T, V>,
+{
+  fn online_add(self, scalar: Val<T>, x_: Val<V>) -> Val<V> {
+    <OnlineAddOp as OnlineAddOpExt<T, V>>::build(scalar, x_, self)
+  }
+}
+
+pub trait OnlineDiscountOpExt<T, V> where T: Copy {
+  fn build(avg_rate: Val<T>, x_: Val<V>, y_: Val<V>) -> Val<V>;
+}
+
+pub trait OnlineDiscountExt<T, V> where T: Copy {
+  fn online_discount(self, scalar: Val<T>, x_: Val<V>) -> Val<V>;
+}
+
+impl<T, V> OnlineDiscountExt<T, V> for Val<V>
+where T: Copy,
+      OnlineDiscountOp: OnlineDiscountOpExt<T, V>,
+{
+  fn online_discount(self, scalar: Val<T>, x_: Val<V>) -> Val<V> {
+    <OnlineDiscountOp as OnlineDiscountOpExt<T, V>>::build(scalar, x_, self)
+  }
+}
+
 pub trait OnlineAverageOpExt<T, V> where T: Copy {
   fn build(avg_rate: Val<T>, x_: Val<V>, y_: Val<V>) -> Val<V>;
 }
@@ -706,13 +809,13 @@ pub trait FlatLinearExt<A, X, Y> {
   fn flat_mult(self, x_: Val<X>) -> Val<Y>;
 }
 
-impl<V> Mul<Val<V>> for Val<V> where Self: FlatLinearExt<V, V, V> {
+/*impl<V> Mul<Val<V>> for Val<V> where Self: FlatLinearExt<V, V, V> {
   type Output = Val<V>;
 
   fn mul(self, x_: Val<V>) -> Val<V> {
     self.flat_mult(x_)
   }
-}
+}*/
 
 pub trait FlatAffineExt<A, X, Y, B> {
   fn flat_mult(self, x_: Val<X>, b_: Val<B>) -> Val<Y>;
@@ -816,6 +919,53 @@ impl<X> SomePoolBwdExt<MaxPool, X> for Val<X> where Val<X>: PoolBwdExt<X> {
 
 pub trait TransposePoolExt<X>: PoolExt<X> {
   fn transpose_pool(self, pool_shape: Self::PoolShape) -> Val<X>;
+}
+
+pub trait VectorizeOpExt<X> {
+  fn build(nodes: NodeVec) -> Val<X>;
+}
+
+pub trait VectorizeExt<X> {
+  fn vectorize(self) -> Val<X>;
+}
+
+impl<X> VectorizeExt<X> for NodeVec where VectorizeOp: VectorizeOpExt<X> {
+  fn vectorize(self) -> Val<X> {
+    <VectorizeOp as VectorizeOpExt<X>>::build(self)
+  }
+}
+
+pub trait DevectorizeOpExt<X> {
+  fn build(x_: Val<X>) -> NodeVec;
+}
+
+pub trait DevectorizeExt<X> {
+  fn devectorize(self) -> NodeVec;
+}
+
+impl<X> DevectorizeExt<X> for Val<X> where DevectorizeOp: DevectorizeOpExt<X> {
+  fn devectorize(self) -> NodeVec {
+    <DevectorizeOp as DevectorizeOpExt<X>>::build(self)
+  }
+}
+
+pub trait GradientMomentumStepExt<T, X> {
+  fn gradient_momentum_step(self, step_size: Val<T>, momentum: Val<T>, grad: Val<X>) -> (Val<X>, Val<X>);
+}
+
+impl<T, X> GradientMomentumStepExt<T, X> for Val<X>
+where T: Copy,
+      X: 'static,
+      Val<X>: OnlineAddExt<T, X>,
+      Val<X>: OnlineDiscountExt<T, X>,
+      ZerosSrcOp: ZerosSrcOpLikeExt<X>,
+{
+  fn gradient_momentum_step(self, step_size: Val<T>, momentum: Val<T>, grad: Val<X>) -> (Val<X>, Val<X>) {
+    let grad_mavg = zeros_like(grad.clone());
+    let grad_mavg_update = grad_mavg.online_discount(momentum, grad);
+    let step_update = self.online_add(step_size, grad_mavg_update.clone());
+    (step_update, grad_mavg_update)
+  }
 }
 
 pub struct WriteSection;
