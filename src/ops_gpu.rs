@@ -161,8 +161,13 @@ impl WriteSectionExt<GPUDeviceOuterBatchArray3d<f32>> for WriteSection {
 
 impl WriteSectionImpl<GPUDeviceOuterBatchArray3d<f32>> for GPUWriteSection {
   fn copy(&mut self, dst: &mut GPUDeviceOuterBatchArray3d<f32>, src: &GPUDeviceOuterBatchArray3d<f32>) {
-    // TODO
-    unimplemented!();
+    let ctx = implicit_ctx().gpu();
+    let mut pool = ctx.pool();
+    let conn = pool.conn();
+    let mut guard = self.section.enter(conn.clone());
+    guard._wait(src.async_state());
+    guard._wait(dst.async_state());
+    dst.as_view_mut().copy(src.as_view(), conn);
   }
 
   fn add(&mut self, dst: &mut GPUDeviceOuterBatchArray3d<f32>, src: &GPUDeviceOuterBatchArray3d<f32>) {
@@ -374,8 +379,10 @@ where A: GPUDeviceAsync + 'static,
         })
       }),*/
       adjoint: Some({
-        Box::new(move |_: Pass, this: Val<A>, state: RefMut<_>, sink: &mut Sink| {
-          // Do nothing.
+        Box::new(move |_: Pass, this: Val<A>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(_) = this.adjoint(sink) {
+            // Do nothing.
+          }
         })
       }),
       inplace: None,
@@ -432,8 +439,10 @@ where A: GPUDeviceAsync + 'static,
         })
       }),*/
       adjoint: Some({
-        Box::new(move |_: Pass, this: Val<A>, state: RefMut<_>, sink: &mut Sink| {
-          // Do nothing.
+        Box::new(move |_: Pass, this: Val<A>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(_) = this.adjoint(sink) {
+            // Do nothing.
+          }
         })
       }),
       inplace: None,
@@ -521,8 +530,10 @@ where T: Copy,
         })
       }),*/
       adjoint: Some({
-        Box::new(move |_: Pass, this: Val<A>, state: RefMut<_>, sink: &mut Sink| {
-          // Do nothing.
+        Box::new(move |_: Pass, this: Val<A>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(_) = this.adjoint(sink) {
+            // Do nothing.
+          }
         })
       }),
       inplace: None,
@@ -2261,8 +2272,11 @@ impl BatchMean2dOp {
         let x_ = x_.clone();
         Box::new(move |_: Pass, mean_: Val<GPUDeviceArray1d<f32>>, state: RefMut<_>, sink: &mut Sink| {
           if let Some(adj_mean_) = mean_.adjoint(sink) {
+            //println!("DEBUG: BatchMean2dOp: found adjoint for primal: {:?} => {:?}", mean_._graph_key(), adj_mean_._graph_key());
             let adj_x_ = BatchMean2dBwdOp::build_device_f32_op(axes, adj_mean_.clone(), x_.clone());
             x_.put_adjoint(adj_x_, sink);
+          //} else {
+            //println!("WARNING: BatchMean2dOp: missing adjoint for primal: {:?}", mean_._graph_key());
           }
         })
       }),
@@ -2747,12 +2761,15 @@ impl BatchNormalize2dOp {
         let var_ = var_.clone();
         Box::new(move |_: Pass, y_: Val<GPUDeviceOuterBatchArray3d<f32>>, state: RefMut<_>, sink: &mut Sink| {
           if let Some(adj_y_) = y_.adjoint(sink) {
+            //println!("DEBUG: BatchNormalize2dOp: found adjoint for primal: {:?} => {:?}", y_._graph_key(), adj_y_._graph_key());
             let adj_x_ = BatchNormalize2dBwdOp::build_device_f32_op(axes, adj_y_.clone(), var_.clone());
             let adj_mean_ = BatchNormalize2dBwdMeanOp::build_device_f32_op(axes, adj_y_.clone(), var_.clone());
             let adj_var_ = BatchNormalize2dBwdVarianceOp::build_device_f32_op(axes, adj_y_.clone(), x_.clone(), mean_.clone(), var_.clone());
             x_.put_adjoint(adj_x_, sink);
             mean_.put_adjoint(adj_mean_, sink);
             var_.put_adjoint(adj_var_, sink);
+          //} else {
+            //println!("WARNING: BatchNormalize2dOp: missing adjoint for primal: {:?}", y_._graph_key());
           }
         })
       }),
@@ -4034,7 +4051,8 @@ impl BatchBroadcastLikeOp {
   }
 }
 
-impl PositiveClipFlatMapExt<GPUDeviceOuterBatchArray1d<f32>> for Val<GPUDeviceOuterBatchArray1d<f32>> {
+// FIXME: impl the other `PositiveClipExt` trait, see below.
+/*impl PositiveClipFlatMapExt<GPUDeviceOuterBatchArray1d<f32>> for Val<GPUDeviceOuterBatchArray1d<f32>> {
   fn positive_clip(self) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
     FlatMapOp::<PositiveClipFlatMapF>::build_gpu_obatch_val(PositiveClipFlatMapF, self)
   }
@@ -4044,7 +4062,7 @@ impl PositiveClipFlatMapExt<GPUDeviceOuterBatchArray3d<f32>> for Val<GPUDeviceOu
   fn positive_clip(self) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
     FlatMapOp::<PositiveClipFlatMapF>::build_gpu_obatch_val(PositiveClipFlatMapF, self)
   }
-}
+}*/
 
 impl TanhFlatMapExt<GPUDeviceOuterBatchArray1d<f32>> for Val<GPUDeviceOuterBatchArray1d<f32>> {
   fn tanh(self) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
@@ -4055,6 +4073,18 @@ impl TanhFlatMapExt<GPUDeviceOuterBatchArray1d<f32>> for Val<GPUDeviceOuterBatch
 
 pub trait ApplyGPUFlatMap<T> where T: Copy {
   fn apply_gpu_flat_map(&self, x: GPUDeviceArrayView1d<T>, y: GPUDeviceArrayViewMut1d<T>, conn: GPUDeviceConn);
+}
+
+pub trait ApplyGPUFlatMapBwd<T> where T: Copy {
+  fn apply_gpu_flat_map_bwd(&self, adj_y: GPUDeviceArrayView1d<T>, y: GPUDeviceArrayView1d<T>, adj_x: GPUDeviceArrayViewMut1d<T>, conn: GPUDeviceConn);
+}
+
+pub trait ApplyGPUFlatMapInplace<T> where T: Copy {
+  fn apply_gpu_flat_map_inplace(&self, x: GPUDeviceArrayViewMut1d<T>, conn: GPUDeviceConn);
+}
+
+pub trait ApplyGPUFlatMapBwdInplace<T> where T: Copy {
+  fn apply_gpu_flat_map_bwd_inplace(&self, adj_y: GPUDeviceArrayViewMut1d<T>, y: GPUDeviceArrayView1d<T>, conn: GPUDeviceConn);
 }
 
 pub trait BuildGPUFlatMapAdj<T, A> where T: Copy {
@@ -4105,6 +4135,76 @@ impl ApplyGPUFlatMap<f32> for SquareFlatMapF {
 impl<T, A> BuildGPUFlatMapAdj<T, A> for SquareFlatMapF
 where T: Copy,
 {
+}
+
+impl ApplyGPUFlatMap<f32> for PositiveClipFlatMap<f32> {
+  fn apply_gpu_flat_map(&self, x: GPUDeviceArrayView1d<f32>, y: GPUDeviceArrayViewMut1d<f32>, conn: GPUDeviceConn) {
+    assert!(x.is_packed());
+    assert!(y.is_packed());
+    assert!(x.size() <= u32::max_value() as _);
+    assert_eq!(x.size(), y.size());
+    let mut stream = conn.cuda_stream();
+    unsafe { anode_gpu_positive_clip_flat_map_f32(
+        x.size() as _,
+        x.as_dptr(),
+        y.as_mut_dptr(),
+        conn.cuda_kernel_config() as *const _,
+        stream.as_mut_ptr(),
+    ) };
+  }
+}
+
+impl ApplyGPUFlatMapBwd<f32> for PositiveClipFlatMap<f32> {
+  fn apply_gpu_flat_map_bwd(&self, adj_y: GPUDeviceArrayView1d<f32>, y: GPUDeviceArrayView1d<f32>, adj_x: GPUDeviceArrayViewMut1d<f32>, conn: GPUDeviceConn) {
+    assert!(adj_y.is_packed());
+    assert!(y.is_packed());
+    assert!(adj_x.is_packed());
+    assert!(adj_y.size() <= u32::max_value() as _);
+    assert_eq!(adj_y.size(), y.size());
+    assert_eq!(adj_y.size(), adj_x.size());
+    let mut stream = conn.cuda_stream();
+    unsafe { anode_gpu_positive_clip_flat_map_bwd_f32(
+        adj_y.size() as _,
+        adj_y.as_dptr(),
+        y.as_dptr(),
+        adj_x.as_mut_dptr(),
+        conn.cuda_kernel_config() as *const _,
+        stream.as_mut_ptr(),
+    ) };
+  }
+}
+
+impl ApplyGPUFlatMapInplace<f32> for PositiveClipFlatMap<f32> {
+  fn apply_gpu_flat_map_inplace(&self, x: GPUDeviceArrayViewMut1d<f32>, conn: GPUDeviceConn) {
+    assert!(x.is_packed());
+    assert!(x.size() <= u32::max_value() as _);
+    let mut stream = conn.cuda_stream();
+    unsafe { anode_gpu_positive_clip_flat_map_f32(
+        x.size() as _,
+        x.as_dptr(),
+        x.as_mut_dptr(),
+        conn.cuda_kernel_config() as *const _,
+        stream.as_mut_ptr(),
+    ) };
+  }
+}
+
+impl ApplyGPUFlatMapBwdInplace<f32> for PositiveClipFlatMap<f32> {
+  fn apply_gpu_flat_map_bwd_inplace(&self, adj_y: GPUDeviceArrayViewMut1d<f32>, y: GPUDeviceArrayView1d<f32>, conn: GPUDeviceConn) {
+    assert!(adj_y.is_packed());
+    assert!(y.is_packed());
+    assert!(adj_y.size() <= u32::max_value() as _);
+    assert_eq!(adj_y.size(), y.size());
+    let mut stream = conn.cuda_stream();
+    unsafe { anode_gpu_positive_clip_flat_map_bwd_f32(
+        adj_y.size() as _,
+        adj_y.as_dptr(),
+        y.as_dptr(),
+        adj_y.as_mut_dptr(),
+        conn.cuda_kernel_config() as *const _,
+        stream.as_mut_ptr(),
+    ) };
+  }
 }
 
 impl ApplyGPUFlatMap<f32> for PositiveClipFlatMapF {
@@ -4425,6 +4525,352 @@ impl<F> FlatJoinOp<F> where F: Clone + 'static {
       }),*/
     };
     Val::from(Rc::new(FJoinOp::new(FlatJoinOp{f: f_config}, ext, xs_)))
+  }
+}
+
+impl PositiveClipExt<GPUDeviceArray1d<f32>> for Val<GPUDeviceArray1d<f32>> {
+  fn positive_clip(self) -> Val<GPUDeviceArray1d<f32>> {
+    PositiveClipOp::build_device_op(self)
+  }
+}
+
+impl PositiveClipExt<GPUDeviceOuterBatchArray1d<f32>> for Val<GPUDeviceOuterBatchArray1d<f32>> {
+  fn positive_clip(self) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
+    PositiveClipOp::build_device_op(self)
+  }
+}
+
+impl PositiveClipExt<GPUDeviceOuterBatchArray3d<f32>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
+  fn positive_clip(self) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+    PositiveClipOp::build_device_op(self)
+  }
+}
+
+impl PositiveClipInplaceExt<GPUDeviceArray1d<f32>> for Val<GPUDeviceArray1d<f32>> {
+  fn positive_clip_inplace(self) -> Val<GPUDeviceArray1d<f32>> {
+    PositiveClipClobberOp::build_device_op(self)
+  }
+}
+
+impl PositiveClipInplaceExt<GPUDeviceOuterBatchArray1d<f32>> for Val<GPUDeviceOuterBatchArray1d<f32>> {
+  fn positive_clip_inplace(self) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
+    PositiveClipClobberOp::build_device_op(self)
+  }
+}
+
+impl PositiveClipInplaceExt<GPUDeviceOuterBatchArray3d<f32>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
+  fn positive_clip_inplace(self) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+    PositiveClipClobberOp::build_device_op(self)
+  }
+}
+
+impl PositiveClipOp {
+  pub fn build_device_op<T, A>(old_x_: Val<A>) -> Val<A>
+  where T: ZeroBits + Default + 'static,
+        A: GPUDeviceAsync
+            + GPUDeviceZerosShape<T>
+            + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>>
+            + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>>
+            + 'static,
+        PositiveClipFlatMap<T>: ApplyGPUFlatMap<T>,
+        PositiveClipFlatMap<T>: ApplyGPUFlatMapBwd<T>,
+  {
+    let new_x_ = old_x_.clone();
+    let ext = OpExt{
+      make_val: {
+        let x_ = new_x_.clone();
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            let y = A::zeros_shape(x.shape(), conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = new_x_.clone();
+        Box::new(move |txn: Txn, _state: RefMut<_>, output: OVal<_>| {
+          // TODO: check valrefs.
+          output.write_v2(txn, |cap, token| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            match cap {
+              WriteCap::Assign => {
+                let x = x_.get(txn);
+                let mut y = output.get_mut(txn, token);
+                guard._wait(x.async_state());
+                guard._wait(y.async_state());
+                let fmap: PositiveClipFlatMap<T> = Default::default();
+                fmap.apply_gpu_flat_map(x.flat_view().unwrap(), y.flat_view_mut().unwrap(), conn);
+              }
+              WriteCap::Accumulate => {
+                panic!();
+              }
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        let x_ = new_x_.clone();
+        Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            let adj_x_ = PositiveClipBwdOp::build_device_op(adj_y_, y_);
+            x_.put_adjoint(adj_x_, sink);
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::new(Rc::new(F1Op::new(PositiveClipOp, ext, new_x_)))
+  }
+}
+
+impl PositiveClipBwdOp {
+  pub fn build_device_op<T, A>(old_adj_y_: Val<A>, y_: Val<A>) -> Val<A>
+  where T: ZeroBits + Default + 'static,
+        A: GPUDeviceAsync
+            + GPUDeviceZerosShape<T>
+            + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>>
+            + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>>
+            + 'static,
+        PositiveClipFlatMap<T>: ApplyGPUFlatMapBwd<T>,
+  {
+    let new_adj_y_ = old_adj_y_.clone();
+    let ext = OpExt{
+      make_val: {
+        let adj_y_ = new_adj_y_.clone();
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let adj_y_ = adj_y_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let adj_y = adj_y_.get(txn);
+            guard._wait(adj_y.async_state());
+            let adj_x = A::zeros_shape(adj_y.shape(), conn);
+            guard._wait(adj_x.async_state());
+            adj_x
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let adj_y_ = new_adj_y_.clone();
+        let y_ = y_.clone();
+        Box::new(move |txn: Txn, _state: RefMut<_>, output: OVal<_>| {
+          // TODO: check valrefs.
+          output.write_v2(txn, |cap, token| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            match cap {
+              WriteCap::Assign => {
+                let adj_y = adj_y_.get(txn);
+                let y = y_.get(txn);
+                let mut adj_x = output.get_mut(txn, token);
+                guard._wait(adj_y.async_state());
+                guard._wait(y.async_state());
+                guard._wait(adj_x.async_state());
+                let fmap: PositiveClipFlatMap<T> = Default::default();
+                fmap.apply_gpu_flat_map_bwd(adj_y.flat_view().unwrap(), y.flat_view().unwrap(), adj_x.flat_view_mut().unwrap(), conn);
+              }
+              WriteCap::Accumulate => {
+                panic!();
+              }
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, _this: Val<_>, _state: RefMut<_>, _sink: &mut Sink| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      inplace: None,
+    };
+    Val::new(Rc::new(F2Op::new(PositiveClipBwdOp, ext, new_adj_y_, y_)))
+  }
+}
+
+impl PositiveClipClobberOp {
+  pub fn build_device_op<T, A>(old_x_: Val<A>) -> Val<A>
+  where T: ZeroBits + Default + 'static,
+        A: GPUDeviceAsync
+            + GPUDeviceZerosShape<T>
+            + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>>
+            + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>>
+            + 'static,
+        PositiveClipFlatMap<T>: ApplyGPUFlatMapInplace<T>,
+        PositiveClipFlatMap<T>: ApplyGPUFlatMapBwdInplace<T>,
+  {
+    //let new_x_ = old_x_.clone();
+    let new_x_ = old_x_.clobber_or_accumulate();
+    let ext = OpExt{
+      make_val: {
+        let x_ = new_x_.clone();
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            let y = A::zeros_shape(x.shape(), conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        //let x_ = new_x_.clone();
+        Box::new(move |txn: Txn, _state: RefMut<_>, output: OVal<_>| {
+          // TODO: check valrefs.
+          output.write_v2(txn, |cap, token| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            match cap {
+              WriteCap::Assign => {
+                //let x = x_.get(txn);
+                let mut y = output.get_mut(txn, token);
+                //guard._wait(x.async_state());
+                guard._wait(y.async_state());
+                let fmap: PositiveClipFlatMap<T> = Default::default();
+                //fmap.apply_gpu_flat_map(x.flat_view().unwrap(), y.flat_view_mut().unwrap(), conn);
+                fmap.apply_gpu_flat_map_inplace(y.flat_view_mut().unwrap(), conn);
+              }
+              WriteCap::Accumulate => {
+                panic!();
+              }
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        let x_ = new_x_.clone();
+        Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            let adj_x_ = PositiveClipBwdClobberOp::build_device_op(adj_y_, y_);
+            x_.put_adjoint(adj_x_, sink);
+          }
+        })
+      }),
+      inplace: None,
+    };
+    let new_x_value = new_x_._static_value();
+    assert!(new_x_value.is_some());
+    Val::with_value_mode(Rc::new(F1Op::new(PositiveClipClobberOp, ext, new_x_)), new_x_value, WriteMode::Clobber)
+  }
+}
+
+impl PositiveClipBwdClobberOp {
+  pub fn build_device_op<T, A>(old_adj_y_: Val<A>, y_: Val<A>) -> Val<A>
+  where T: ZeroBits + Default + 'static,
+        A: GPUDeviceAsync
+            + GPUDeviceZerosShape<T>
+            + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>>
+            + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>>
+            + 'static,
+        PositiveClipFlatMap<T>: ApplyGPUFlatMapBwdInplace<T>,
+  {
+    //let new_adj_y_ = old_adj_y_.clone();
+    let new_adj_y_ = old_adj_y_.clobber_or_accumulate();
+    let ext = OpExt{
+      make_val: {
+        let adj_y_ = new_adj_y_.clone();
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let adj_y_ = adj_y_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let adj_y = adj_y_.get(txn);
+            guard._wait(adj_y.async_state());
+            let adj_x = A::zeros_shape(adj_y.shape(), conn);
+            guard._wait(adj_x.async_state());
+            adj_x
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let y_ = y_.clone();
+        Box::new(move |txn: Txn, _state: RefMut<_>, output: OVal<_>| {
+          // TODO: check valrefs.
+          output.write_v2(txn, |cap, token| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            match cap {
+              WriteCap::Assign => {
+                let y = y_.get(txn);
+                let mut adj_x = output.get_mut(txn, token);
+                guard._wait(y.async_state());
+                guard._wait(adj_x.async_state());
+                let fmap: PositiveClipFlatMap<T> = Default::default();
+                fmap.apply_gpu_flat_map_bwd_inplace(adj_x.flat_view_mut().unwrap(), y.flat_view().unwrap(), conn);
+              }
+              WriteCap::Accumulate => {
+                panic!();
+              }
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, _this: Val<_>, _state: RefMut<_>, _sink: &mut Sink| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      inplace: None,
+    };
+    let new_adj_y_value = new_adj_y_._static_value();
+    assert!(new_adj_y_value.is_some());
+    Val::with_value_mode(Rc::new(F2Op::new(PositiveClipBwdClobberOp, ext, new_adj_y_, y_)), new_adj_y_value, WriteMode::Clobber)
   }
 }
 
@@ -4778,7 +5224,7 @@ impl LinearOp {
       }),
       inplace: None,
     };
-    Val::from(Rc::new(F2Op::new(LinearOp, ext, w_, x_)))
+    Val::from(Rc::new(F2Op::new(LeftTransposeLinearOp, ext, w_, x_)))
   }
 
   pub fn build_device_obatch_rtrans_val<T>(w_: Val<GPUDeviceOuterBatchArray1d<T>>, x_: Val<GPUDeviceOuterBatchArray1d<T>>)
@@ -4857,7 +5303,7 @@ impl LinearOp {
       }),
       inplace: None,
     };
-    Val::from(Rc::new(F2Op::new(LinearOp, ext, w_, x_)))
+    Val::from(Rc::new(F2Op::new(OuterLinearOp, ext, w_, x_)))
   }
 }
 
@@ -4944,7 +5390,7 @@ impl AffineOp {
             // FIXME: calculate adj of b via a reduction.
             /*let adj_b_ = adj_y_.reduce_sum(1);
             b_.put_adjoint(adj_b_, sink);*/
-            unimplemented!();
+            //unimplemented!();
           }
         })
       }),
@@ -5128,12 +5574,15 @@ impl Conv2dAffineOp {
         let b_ = b_.clone();
         Box::new(move |_: Pass, y_: Val<GPUDeviceOuterBatchArray3d<T>>, state: RefMut<_>, sink: &mut Sink| {
           if let Some(adj_y_) = y_.adjoint(sink) {
+            //println!("DEBUG: Conv2dAffineOp: found adjoint for primal: {:?} => {:?}", y_._graph_key(), adj_y_._graph_key());
             let adj_w_ = adj_y_.clone().outer_conv(conv_shape, x_.clone());
             let adj_x_ = w_.clone().left_transpose_conv(conv_shape, adj_y_.clone());
             let adj_b_ = adj_y_.clone().conv_reduce_bwd(conv_shape);
             w_.put_adjoint(adj_w_, sink);
             x_.put_adjoint(adj_x_, sink);
             b_.put_adjoint(adj_b_, sink);
+          //} else {
+            //println!("WARNING: Conv2dAffineOp: missing adjoint for primal: {:?}", y_._graph_key());
           }
         })
       }),
@@ -5168,22 +5617,25 @@ impl LeftTransposeConv2dLinearOp {
   {
     let ext = OpExt{
       make_val: {
-        let w_ = w_.clone();
+        //let w_ = w_.clone();
         let y_ = y_.clone();
         Box::new(move |state: RefMut<_>| {
           let section = GPULazyAsyncSection::default();
-          let w_ = w_.clone();
+          //let w_ = w_.clone();
           let y_ = y_.clone();
           RWVal::from(Arc::new(move |txn| {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
-            let w_size = w_.get(txn).size();
-            let y_size = y_.get(txn).size();
-            let max_bsz = y_.get(txn).max_batch_size();
-            let x_size = conv_shape.src_size;
             let mut section = section.clone();
             let mut guard = section.enter(conn.clone());
+            //let w = w_.get(txn);
+            let y = y_.get(txn);
+            //guard._wait(w.async_state());
+            guard._wait(y.async_state());
+            let y_size = y.size();
+            let max_bsz = y.max_batch_size();
+            let x_size = conv_shape.src_size;
             let x = GPUDeviceOuterBatchArray3d::zeros(x_size, max_bsz, conn);
             guard._wait(x.async_state());
             x
@@ -5202,47 +5654,50 @@ impl LeftTransposeConv2dLinearOp {
             let conn = pool.conn();
             let mut section = section.clone();
             let mut guard = section.enter(conn.clone());
+            let w = w_.get(txn).as_view();
+            let y = y_.get(txn).as_view();
+            let mut x = output.get_mut(txn, token).as_view_mut();
+            guard._wait(w.async_state());
+            guard._wait(y.async_state());
+            guard._wait(x.async_state());
+            assert_eq!(x.size()[0], conv_shape.src_size[0]);
+            assert_eq!(x.size()[1], conv_shape.src_size[1]);
+            assert_eq!(x.size()[2], conv_shape.src_size[2]);
+            // TODO: set batch size.
+            assert_eq!(x.size()[3], y.size()[3]);
+            let xconv_shape = XConvFullShape::Conv2d(Conv2dFullShape{
+              ker_space_axes:   conv_shape.ker_space_axes,
+              ker_output_axis:  conv_shape.ker_output_axis,
+              src_space_axes:   conv_shape.src_space_axes,
+              src_feature_axis: conv_shape.src_feature_axis,
+              src_batch_axis:   conv_shape.src_batch_axis,
+              // TODO: assumes NCHW layout.
+              //src_size:         conv_shape.src_size,
+              src_size:         [
+                conv_shape.src_size[0],
+                conv_shape.src_size[1],
+                conv_shape.src_size[2],
+                y.size()[3],
+              ],
+              dst_space_axes:   conv_shape.dst_space_axes,
+              dst_feature_axis: conv_shape.dst_feature_axis,
+              dst_batch_axis:   conv_shape.dst_batch_axis,
+              dst_size:         y.size(),
+              ker_size: conv_shape.ker_size,
+              dilation: conv_shape.dilation,
+              stride:   conv_shape.stride,
+              zero_pad: conv_shape.zero_pad,
+              groups:   1,
+              cross:    true,
+            });
+            let (cfg, mut state) = match query_gpu_conv_bwd_x_algo(conn.device(), None, None, xconv_shape, conn.clone()) {
+              None => panic!("invalid conv2d config"),
+              Some((cfg, state)) => (cfg, state),
+            };
+            let mut workspace = GPUDeviceArray1d::zeros_with_alloc(conn.burst_arena(), cfg.workspace_size(), conn.clone());
+            guard._wait(workspace.async_state());
             match cap {
               WriteCap::Assign => {
-                // TODO: set batch size.
-                assert_eq!(output.get(txn).size(), conv_shape.src_size);
-                let w = w_.get(txn).as_view();
-                let y = y_.get(txn).as_view();
-                let mut x = output.get_mut(txn, token).as_view_mut();
-                guard._wait(w.async_state());
-                guard._wait(y.async_state());
-                guard._wait(x.async_state());
-                let xconv_shape = XConvFullShape::Conv2d(Conv2dFullShape{
-                  ker_space_axes:   conv_shape.ker_space_axes,
-                  ker_output_axis:  conv_shape.ker_output_axis,
-                  src_space_axes:   conv_shape.src_space_axes,
-                  src_feature_axis: conv_shape.src_feature_axis,
-                  src_batch_axis:   conv_shape.src_batch_axis,
-                  // TODO: assumes NCHW layout.
-                  //src_size:         conv_shape.src_size,
-                  src_size:         [
-                    conv_shape.src_size[0],
-                    conv_shape.src_size[1],
-                    conv_shape.src_size[2],
-                    y.size()[3],
-                  ],
-                  dst_space_axes:   conv_shape.dst_space_axes,
-                  dst_feature_axis: conv_shape.dst_feature_axis,
-                  dst_batch_axis:   conv_shape.dst_batch_axis,
-                  dst_size:         y.size(),
-                  ker_size: conv_shape.ker_size,
-                  dilation: conv_shape.dilation,
-                  stride:   conv_shape.stride,
-                  zero_pad: conv_shape.zero_pad,
-                  groups:   1,
-                  cross:    true,
-                });
-                let (cfg, mut state) = match query_gpu_conv_bwd_x_algo(conn.device(), None, None, xconv_shape, conn.clone()) {
-                  None => panic!("invalid conv2d config"),
-                  Some((cfg, state)) => (cfg, state),
-                };
-                let mut workspace = GPUDeviceArray1d::zeros_with_alloc(conn.burst_arena(), cfg.workspace_size(), conn.clone());
-                guard._wait(workspace.async_state());
                 x.batch_left_transpose_conv2d(
                     &cfg,
                     &mut state,
@@ -5252,7 +5707,16 @@ impl LeftTransposeConv2dLinearOp {
                     conn.clone(),
                 );
               }
-              WriteCap::Accumulate => unimplemented!(),
+              WriteCap::Accumulate => {
+                x.batch_left_transpose_conv2d_accumulate(
+                    &cfg,
+                    &mut state,
+                    w,
+                    y,
+                    workspace.as_view_mut(),
+                    conn.clone(),
+                );
+              }
             }
           })
         })
@@ -5346,8 +5810,9 @@ impl OuterConv2dLinearOp {
             match cap {
               WriteCap::Assign => {
                 // TODO: set batch size.
-                assert_eq!(x_.get(txn).size(), conv_shape.src_size);
-                let x = x_.get(txn).as_view();
+                let x = x_.get(txn);
+                assert_eq!(x.size(), conv_shape.src_size);
+                let x = x.as_view();
                 let y = y_.get(txn).as_view();
                 let mut w = output.get_mut(txn, token).as_view_mut();
                 guard._wait(y.async_state());
@@ -5786,6 +6251,22 @@ impl<Pool: PoolOp + 'static> Pool2dBwdOp<Pool> {
                     pool_shape.src_size[1],
                     pool_shape.src_features,
                 ]);
+                assert_eq!(dy.size()[0], y_size[0]);
+                assert_eq!(dy.size()[1], y_size[1]);
+                assert_eq!(dy.size()[2], y_size[2]);
+                assert_eq!(y.size()[0], y_size[0]);
+                assert_eq!(y.size()[1], y_size[1]);
+                assert_eq!(y.size()[2], y_size[2]);
+                assert_eq!(x.size()[0], pool_shape.src_size[0]);
+                assert_eq!(x.size()[1], pool_shape.src_size[1]);
+                assert_eq!(x.size()[2], pool_shape.src_features);
+                assert_eq!(dx.size()[0], pool_shape.src_size[0]);
+                assert_eq!(dx.size()[1], pool_shape.src_size[1]);
+                assert_eq!(dx.size()[2], pool_shape.src_features);
+                // TODO: set batch size.
+                assert_eq!(dy.size()[3], y.size()[3]);
+                assert_eq!(dy.size()[3], x.size()[3]);
+                assert_eq!(dy.size()[3], dx.size()[3]);
                 let xpool_shape = XPoolFullShape::Pool2d(Pool2dFullShape{
                   src_space_axes:   pool_shape.src_space_axes,
                   src_feature_axis: pool_shape.src_feature_axis,
@@ -5795,7 +6276,7 @@ impl<Pool: PoolOp + 'static> Pool2dBwdOp<Pool> {
                     pool_shape.src_size[0],
                     pool_shape.src_size[1],
                     pool_shape.src_features,
-                    pool_shape.src_features,
+                    dy.size()[3],
                   ],
                   dst_space_axes:   pool_shape.dst_space_axes,
                   dst_feature_axis: pool_shape.dst_feature_axis,
@@ -5805,7 +6286,7 @@ impl<Pool: PoolOp + 'static> Pool2dBwdOp<Pool> {
                     y_size[0],
                     y_size[1],
                     pool_shape.src_features,
-                    pool_shape.src_features,
+                    dy.size()[3],
                   ],
                   ker_size:         pool_shape.ker_size,
                   stride:           pool_shape.stride,

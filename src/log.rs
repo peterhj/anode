@@ -30,6 +30,13 @@ pub fn enable_dynamic_graph_logging() {
   });
 }
 
+pub fn disable_dynamic_graph_logging() {
+  DYNAMIC_GRAPH_LOGGING.with(|maybe_logging| {
+    let mut maybe_logging = maybe_logging.borrow_mut();
+    *maybe_logging = None;
+  });
+}
+
 pub fn log_static_graph<F>(f: F) where F: FnOnce(&mut GraphLogging<(u64, String)>) {
   STATIC_GRAPH_LOGGING.with(|maybe_logging| {
     let mut maybe_logging = maybe_logging.borrow_mut();

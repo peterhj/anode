@@ -77,7 +77,22 @@ class PositiveClipFlatMap<float> {
 public:
   __forceinline__ __device__ static void FlatMapIndex(uint32_t idx, const float *x, float *y) {
     float x_i = x[idx];
-    y[idx] = x_i * static_cast<float>(x_i > 0.0f);
+    y[idx] = x_i * ((float)(x_i > 0.0f));
+  }
+};
+
+template <typename T>
+class PositiveClipFlatMapBwd {
+public:
+  __forceinline__ __device__ static void FlatMapBwdIndex(uint32_t idx, const T *dy, const T *y, T *dx);
+};
+
+template <>
+class PositiveClipFlatMapBwd<float> {
+public:
+  __forceinline__ __device__ static void FlatMapBwdIndex(uint32_t idx, const float *dy, const float *y, float *dx) {
+    float dy_i = dy[idx];
+    dx[idx] = dy_i * ((float)(y[idx] > 0.0f));
   }
 };
 
@@ -92,7 +107,7 @@ class UnitStepFlatMap<float> {
 public:
   __forceinline__ __device__ static void FlatMapIndex(uint32_t idx, const float *x, float *y) {
     float x_i = x[idx];
-    y[idx] = static_cast<float>(x_i > 0.0f);
+    y[idx] = (float)(x_i > 0.0f);
   }
 };
 
@@ -190,6 +205,18 @@ __global__ void anode_gpu_generic_flat_map_kernel(
   }
 }
 
+template <typename T, typename FlatMapBwd>
+__global__ void anode_gpu_generic_flat_map_bwd_kernel(
+    uint32_t len,
+    const T *dy,
+    const T *y,
+    T *dx)
+{
+  for (uint32_t idx = gtindex(); idx < len; idx += gtcount()) {
+    FlatMapBwd::FlatMapBwdIndex(idx, dy, y, dx);
+  }
+}
+
 extern "C" void anode_gpu_copy_flat_map_f32(
     uint32_t len,
     const float *x,
@@ -232,6 +259,18 @@ extern "C" void anode_gpu_positive_clip_flat_map_f32(
 {
   anode_gpu_generic_flat_map_kernel<float, PositiveClipFlatMap<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
       len, x, y);
+}
+
+extern "C" void anode_gpu_positive_clip_flat_map_bwd_f32(
+    uint32_t len,
+    const float *dy,
+    const float *y,
+    float *dx,
+    const KernelConfig *cfg,
+    cudaStream_t stream)
+{
+  anode_gpu_generic_flat_map_bwd_kernel<float, PositiveClipFlatMapBwd<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
+      len, dy, y, dx);
 }
 
 extern "C" void anode_gpu_unit_step_flat_map_f32(

@@ -556,6 +556,9 @@ impl Node {
   }
 
   pub fn _apply(&self, txn: Txn) -> bool {
+    /*log_dynamic_graph(|logging| {
+      println!("DEBUG: apply: {:?}", self._dy_graph_key());
+    });*/
     //self.node._apply(txn, self.rvar, self.xvar, self.mode);
     let w = self.node._apply_any(txn, self.rvar, self.xvar, self.mode, self.value.clone());
     log_dynamic_graph(|logging| {
@@ -779,7 +782,7 @@ impl<V> Val<V> where V: 'static {
     }
   }
 
-  pub fn duplicate(&self) -> Val<V> {
+  /*pub fn duplicate(&self) -> Val<V> {
     let rvar = RVar::default();
     let xvar = RWVar(rvar);
     let val = Val{
@@ -797,9 +800,15 @@ impl<V> Val<V> where V: 'static {
       logging.insert_alias_edge(self._graph_key(), val._graph_key());
     });
     val
+  }*/
+
+  pub fn mode(&self) -> WriteMode {
+    self.mode
   }
 
   pub fn accumulate_value(&self, new_value: Option<RWVal<V>>) -> Val<V> {
+    //assert_eq!(self.mode, WriteMode::Exclusive);
+    assert!(self.mode != WriteMode::Clobber);
     let rvar = RVar::default();
     //let xvar = RWVar(rvar);
     let xvar = self.xvar;
@@ -821,6 +830,8 @@ impl<V> Val<V> where V: 'static {
   }
 
   pub fn accumulate(&self) -> Val<V> {
+    //assert_eq!(self.mode, WriteMode::Exclusive);
+    assert!(self.mode != WriteMode::Clobber);
     let rvar = RVar::default();
     //let xvar = RWVar(rvar);
     let xvar = self.xvar;
@@ -842,6 +853,7 @@ impl<V> Val<V> where V: 'static {
   }
 
   pub fn clobber(&self) -> Val<V> {
+    assert!(self.mode != WriteMode::Accumulate);
     let rvar = RVar::default();
     //let xvar = RWVar(rvar);
     let xvar = self.xvar;
@@ -860,6 +872,14 @@ impl<V> Val<V> where V: 'static {
       logging.insert_alias_edge(self._graph_key(), val._graph_key());
     });*/
     val
+  }
+
+  pub fn clobber_or_accumulate(&self) -> Val<V> {
+    match self.mode {
+      WriteMode::Exclusive => self.clobber(),
+      WriteMode::Accumulate => self.clone(),
+      WriteMode::Clobber => self.clone(),
+    }
   }
 
   pub fn named(&self, name: &str) -> Val<V> {
@@ -919,6 +939,9 @@ impl<V> Val<V> where V: 'static {
   }
 
   pub fn _apply(&self, txn: Txn) -> bool {
+    /*log_dynamic_graph(|logging| {
+      println!("DEBUG: apply: {:?}", self._dy_graph_key());
+    });*/
     //self.op._apply(txn, self.rvar, self.xvar, self.mode);
     let w = self.op._apply_output(txn, OVal::with_value(self.rvar, self.xvar, self.mode, self._static_value()));
     log_dynamic_graph(|logging| {
@@ -993,7 +1016,8 @@ impl<V> Val<V> where V: 'static {
     //self.op._get_mut_output(txn, self.xvar, token, self._clone_value());
     //let xvalue = self.op._value2(txn, self._static_value());
     let xvalue = self.op._value3(txn, self.value.as_ref());
-    xvalue.get_mut(txn, self.rvar, self.xvar, token)
+    //xvalue.get_mut(txn, self.rvar, self.xvar, token)
+    xvalue._get_mut(txn, self.rvar, self.xvar, token, Some(self._graph_key()))
   }
 
   pub fn finish_write(&self, txn: Txn, token: WriteToken) {
@@ -1156,6 +1180,7 @@ impl<V> OVal<V> where V: 'static {
   pub fn get_mut(&self, txn: Txn, token: WriteToken) -> RwLockWriteGuard<V> {
     assert!(self.value.is_some());
     self.value.as_ref().unwrap().get_mut(txn, self.rvar, self.xvar, token)
+    //self.value.as_ref().unwrap()._get_mut(txn, self.rvar, self.xvar, token, Some(self._graph_key()))
   }
 
   pub fn finish_write(&self, txn: Txn, token: WriteToken) {
@@ -1278,9 +1303,9 @@ impl Sink {
       ref mut join_map,
       ref mut frozen,
       ref mut volatile,
-      ref mut nopass,
-      ref mut pass,
-    } = self;
+      //ref mut nopass,
+      //ref mut pass,
+    .. } = self;
     frozen.insert(var);
     if adj_map.contains_key(&var) {
       let adjs = adj_map.get(&var).unwrap();
@@ -1307,17 +1332,20 @@ impl Sink {
             }
           } else {
             //let no_volatile_adjs = false;
-            let no_volatile_adjs = true;
+            let mut no_volatile_adjs = true;
             let adj_ops: Vec<_> = adjs.iter().map(|&(_, ref a)| {
               match a.downcast_ref::<Val<V>>() {
                 None => panic!(),
                 Some(adj_op) => {
                   //println!("DEBUG: Sink: multiple: adjoint ref count: {} ({:?})", adj_op._ref_count(), adj_op.name());
+                  if adj_op.mode() == WriteMode::Clobber {
+                    no_volatile_adjs = false;
+                  }
                   /*// TODO
                   if volatile.contains(&adj_op.var()) {
                     no_volatile_adjs = false;
                   }*/
-                  if adj_op._ref_count() <= 1 {
+                  /*if adj_op._ref_count() <= 1 {
                     nopass.insert(adj_op.var());
                     //adj_op.clone()
                   } else {
@@ -1327,7 +1355,7 @@ impl Sink {
                     }
                     //println!("DEBUG: Sink: multiple:   create pass");
                     //adj_op.clone().pass()
-                  }
+                  }*/
                   //adj_op.clone().pass()
                   adj_op.clone()
                 }
@@ -1380,6 +1408,10 @@ pub struct NodeVec {
 }
 
 impl NodeVec {
+  pub fn new() -> Self {
+    Self::default()
+  }
+
   pub fn from(nodes: Vec<Node>) -> Self {
     NodeVec{nodes: nodes}
   }
@@ -1390,13 +1422,32 @@ impl NodeVec {
     rev
   }
 
+  pub fn reverse_topological<A: 'static>(&self, sink_: Val<A>) -> Self {
+    let mut rev = NodeVec::default();
+    let p = pass();
+    sink_._push_fwd(None, p, &mut |node, _, _| {
+      // TODO
+    });
+    sink_._pop_rev(None, p, &mut |node, _, _| {
+      // TODO
+    });
+    unimplemented!();
+  }
+
   pub fn adjoints(&self, sink: &mut Sink) -> Self {
     let mut adjs = self.clone();
+    let mut missing = false;
     for n in self.nodes.iter() {
       match sink.get_adj_node(n.var()) {
-        None => panic!(),
+        None => {
+          println!("WARNING: NodeVec::adjoints(): missing adjoint for: {:?}", n._graph_key());
+          missing = true;
+        }
         Some(adj_n) => adjs.push(adj_n),
       }
+    }
+    if missing {
+      panic!();
     }
     adjs
   }
@@ -1824,6 +1875,10 @@ impl<T> RWVal<T> where T: 'static {
     }
   }
 
+  pub fn _alloc(&self, txn: Txn) -> T {
+    (self.alloc)(txn)
+  }
+
   /*pub fn _set_accumulate(&self) {
     let mut buf = self.buf.write();
     match buf.mode {
@@ -1923,6 +1978,7 @@ impl<T> RWVal<T> where T: 'static {
         ref mut d_consumers,
         ref mut l_producers,
         ref mut d_producers,
+        ref mut data,
         ..} = &mut *buf;
     let mut l_consumers = l_consumers.lock();
 
@@ -1990,6 +2046,11 @@ impl<T> RWVal<T> where T: 'static {
       _ => unreachable!(),
     };
     l_producers.insert((xvar, rvar));
+
+    if data.is_none() {
+      *data = Some((self.alloc)(txn));
+    }
+
     Some((cap, WriteToken{xvar: xvar, rvar: rvar, first: first, borrow: &self.borrow}))
   }
 
@@ -2008,7 +2069,7 @@ impl<T> RWVal<T> where T: 'static {
     }
     assert!(valid_txn,
         //"attempting a read with an invalid txn (did you forget to `persist` or `write`?)");
-        "attempting a read with an invalid txn (did you forget to `persist` or `write`?) key: {:?}", key);
+        "attempting a read with an invalid txn (did you forget to `persist` or `write`?): key: {:?}", key);
 
     assert!(buf.complete,
         "attempting an incomplete read");
@@ -2021,12 +2082,17 @@ impl<T> RWVal<T> where T: 'static {
     buf.l_consumers.lock().insert(rvar);
 
     assert!(buf.data.is_some(),
-        "attempting a read on empty data");
+        //"attempting a read on empty data");
+        "attempting a read on empty data: key: {:?}", key);
 
     RwLockReadGuard::map(buf, |buf| buf.data.as_ref().unwrap())
   }
 
   pub fn get_mut(&self, txn: Txn, rvar: RVar, xvar: RWVar, token: WriteToken) -> RwLockWriteGuard<T> {
+    self._get_mut(txn, rvar, xvar, token, None)
+  }
+
+  pub fn _get_mut(&self, txn: Txn, rvar: RVar, xvar: RWVar, token: WriteToken, key: Option<(u64, String)>) -> RwLockWriteGuard<T> {
     let mut buf = self.buf.write();
     assert_eq!(rvar, token.rvar);
     assert_eq!(xvar, token.xvar);
@@ -2041,7 +2107,8 @@ impl<T> RWVal<T> where T: 'static {
         "attempting a write with an invalid txn (did you forget to `write`?)");
 
     assert!(buf.l_consumers.lock().is_empty(),
-        "attempting a write-after-read (check your `get` and `get_mut` order)");
+        //"attempting a write-after-read (check your `get` and `get_mut` order)");
+        "attempting a write-after-read (check your `get` and `get_mut` order): key: {:?}", key);
     assert!(!buf.d_producers.contains(&(xvar, rvar)),
         "attempting an invalid write (the value has been clobbered)");
     assert!(buf.l_producers.contains(&(xvar, rvar)),
@@ -2337,13 +2404,13 @@ impl<F, V> AOp<V> for FSrcWrapOp<F, V> where V: 'static {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
         None => {
-          self.val_._pop_rev(None, pass, &mut |_, _, _| {});
+          /*self.val_._pop_rev(None, pass, &mut |_, _, _| {});*/
         }
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
-          self.val_._pop_adjoint(pass, sink);
         }
       }
+          self.val_._pop_adjoint(pass, sink);
     }
   }
 }
@@ -2769,15 +2836,15 @@ impl<F, V, W> AOp<W> for F1WrapOp<F, V, W> where V: 'static, W: 'static {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
         None => {
-          self.y_._pop_rev(None, pass, &mut |_, _, _| {});
-          self.x_._pop_rev(None, pass, &mut |_, _, _| {});
+          /*self.y_._pop_rev(None, pass, &mut |_, _, _| {});
+          self.x_._pop_rev(None, pass, &mut |_, _, _| {});*/
         }
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
-          self.y_._pop_adjoint(pass, sink);
-          self.x_._pop_adjoint(pass, sink);
         }
       }
+          self.y_._pop_adjoint(pass, sink);
+          self.x_._pop_adjoint(pass, sink);
     }
   }
 
@@ -3009,13 +3076,13 @@ impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, W: 'static {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
         None => {
-          self.x_._pop_rev(None, pass, &mut |_, _, _| {});
+          /*self.x_._pop_rev(None, pass, &mut |_, _, _| {});*/
         }
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
-          self.x_._pop_adjoint(pass, sink);
         }
       }
+          self.x_._pop_adjoint(pass, sink);
     }
   }
 
@@ -3282,15 +3349,15 @@ impl<F, V1, V2, W> AOp<W> for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static,
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
         None => {
-          self.x2_._pop_rev(None, pass, &mut |_, _, _| {});
-          self.x1_._pop_rev(None, pass, &mut |_, _, _| {});
+          /*self.x2_._pop_rev(None, pass, &mut |_, _, _| {});
+          self.x1_._pop_rev(None, pass, &mut |_, _, _| {});*/
         }
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
-          self.x2_._pop_adjoint(pass, sink);
-          self.x1_._pop_adjoint(pass, sink);
         }
       }
+          self.x2_._pop_adjoint(pass, sink);
+          self.x1_._pop_adjoint(pass, sink);
     }
   }
 
@@ -3538,17 +3605,17 @@ impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
         None => {
-          self.x3_._pop_rev(None, pass, &mut |_, _, _| {});
+          /*self.x3_._pop_rev(None, pass, &mut |_, _, _| {});
           self.x2_._pop_rev(None, pass, &mut |_, _, _| {});
-          self.x1_._pop_rev(None, pass, &mut |_, _, _| {});
+          self.x1_._pop_rev(None, pass, &mut |_, _, _| {});*/
         }
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
+        }
+      }
           self.x3_._pop_adjoint(pass, sink);
           self.x2_._pop_adjoint(pass, sink);
           self.x1_._pop_adjoint(pass, sink);
-        }
-      }
     }
   }
 
@@ -3715,19 +3782,19 @@ impl<F, V1, V2, V3, V4, W> AOp<W> for F4Op<F, V1, V2, V3, V4, W> where V1: 'stat
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
         None => {
-          self.x4_._pop_rev(None, pass, &mut |_, _, _| {});
+          /*self.x4_._pop_rev(None, pass, &mut |_, _, _| {});
           self.x3_._pop_rev(None, pass, &mut |_, _, _| {});
           self.x2_._pop_rev(None, pass, &mut |_, _, _| {});
-          self.x1_._pop_rev(None, pass, &mut |_, _, _| {});
+          self.x1_._pop_rev(None, pass, &mut |_, _, _| {});*/
         }
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
+        }
+      }
           self.x4_._pop_adjoint(pass, sink);
           self.x3_._pop_adjoint(pass, sink);
           self.x2_._pop_adjoint(pass, sink);
           self.x1_._pop_adjoint(pass, sink);
-        }
-      }
     }
   }
 
@@ -3957,17 +4024,17 @@ impl<F, V> AOp<V> for FSwitchOp<F, V> where V: 'static, V: 'static {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
         None => {
-          self.x2_._pop_rev(None, pass, &mut |_, _, _| {});
+          /*self.x2_._pop_rev(None, pass, &mut |_, _, _| {});
           self.x1_._pop_rev(None, pass, &mut |_, _, _| {});
-          self.flag._pop_rev(None, pass, &mut |_, _, _| {});
+          self.flag._pop_rev(None, pass, &mut |_, _, _| {});*/
         }
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
+        }
+      }
           self.x2_._pop_adjoint(pass, sink);
           self.x1_._pop_adjoint(pass, sink);
           self.flag._pop_adjoint(pass, sink);
-        }
-      }
     }
   }
 }
@@ -4216,17 +4283,17 @@ impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, W: 'static {
     if self.base.stack.pop(pass) {
       match self.ext.adjoint {
         None => {
-          for x_ in self.xs_.iter().rev() {
+          /*for x_ in self.xs_.iter().rev() {
             x_._pop_rev(None, pass, &mut |_, _, _| {});
-          }
+          }*/
         }
         Some(ref adjoint) => {
           (adjoint)(pass, this, self.cfg.borrow_mut(), sink);
+        }
+      }
           for x_ in self.xs_.iter().rev() {
             x_._pop_adjoint(pass, sink);
           }
-        }
-      }
     }
   }
 

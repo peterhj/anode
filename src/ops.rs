@@ -62,6 +62,10 @@ pub struct BatchBroadcastLikeOp;
 pub struct FlatMapOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatMapInplaceOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatJoinOp<FlatJoin> { pub f: FlatJoin }
+pub struct PositiveClipOp;
+pub struct PositiveClipBwdOp;
+pub struct PositiveClipClobberOp;
+pub struct PositiveClipBwdClobberOp;
 pub struct FlatLinearOp;
 pub struct BroadcastLinearOp;
 pub struct BroadcastAffineOp;
@@ -114,6 +118,8 @@ pub struct SpacePadOp;
 pub struct VectorizeOp;
 pub struct DevectorizeOp;
 //pub struct GradientMomentumStepOp;
+
+#[derive(Clone, Default)] pub struct PositiveClipFlatMap<T: Copy + Default> { _mrk: PhantomData<(T, fn (*mut T))> }
 
 #[derive(Clone)] pub struct IdentityFlatMapF;
 #[derive(Clone)] pub struct ModulusFlatMapF;
@@ -295,6 +301,7 @@ impl Pool2dShape {
     dst_size[self.dst_space_axes[0] as usize] = dst_w;
     dst_size[self.dst_space_axes[1] as usize] = dst_h;
     dst_size[self.dst_feature_axis as usize] = dst_c;
+    //println!("DEBUG: Pool2dShape: input size: {:?} output size: {:?}", x_size, dst_size);
     dst_size
   }
 }
@@ -779,6 +786,7 @@ pub trait SoftmaxCategoricalNLLExt<T, X, K, L> where T: Copy {
 impl<T, X, K, L> SoftmaxCategoricalNLLExt<T, X, K, L> for Val<X>
 where T: Copy,
       X: 'static,
+      FixOp: FixOpExt<X>,
       SoftmaxOp: SoftmaxOpExt<X>,
       SoftmaxCategoricalNLLOp: SoftmaxCategoricalNLLOpExt<T, X, K, L>,
 {
@@ -798,6 +806,30 @@ pub trait PositiveClipFlatMapExt<V> {
 
   fn relu(self) -> Val<V> where Self: Sized {
     self.positive_clip()
+  }
+}
+
+pub trait PositiveClipExt<V> {
+  fn positive_clip(self) -> Val<V> where Self: Sized;
+
+  fn rect(self) -> Val<V> where Self: Sized {
+    self.positive_clip()
+  }
+
+  fn relu(self) -> Val<V> where Self: Sized {
+    self.positive_clip()
+  }
+}
+
+pub trait PositiveClipInplaceExt<V> {
+  fn positive_clip_inplace(self) -> Val<V> where Self: Sized;
+
+  fn rect_inplace(self) -> Val<V> where Self: Sized {
+    self.positive_clip_inplace()
+  }
+
+  fn relu_inplace(self) -> Val<V> where Self: Sized {
+    self.positive_clip_inplace()
   }
 }
 
@@ -1060,7 +1092,9 @@ impl<A: 'static> PassOpExt<A> for PassOp {
   }
 }
 
-impl<A: 'static> FixOpExt<A> for FixOp {
+impl<A: 'static> FixOpExt<A> for FixOp
+//where ZerosSrcOp: ZerosSrcOpLikeExt<A>,
+{
   fn build(x_: Val<A>) -> Val<A> {
     let ext = OpExt{
       make_val: {
@@ -1082,9 +1116,11 @@ impl<A: 'static> FixOpExt<A> for FixOp {
       tangent: None,
       adjoint: None,
       /*adjoint: Some({
-        Box::new(move |_: Pass, this: Val<A>, _state: RefMut<Self>, sink: &mut Sink| {
-          if let Some(_) = this.adjoint(sink) {
+        let x_ = x_.clone();
+        Box::new(move |_: Pass, this: Val<A>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(this_adj) = this.adjoint(sink) {
             // Do nothing.
+            /*x_.put_adjoint(zeros_like(this_adj), sink);*/
           }
         })
       }),*/
@@ -1135,9 +1171,22 @@ where A: 'static,
   fn build(flag: Val<bool>, off_: Val<A>, on_: Val<A>) -> Val<A> {
     let ext = OpExt{
       make_val: {
+        let flag = flag.clone();
+        let off_ = off_.clone();
+        let on_ = on_.clone();
         //Box::new(move || {
         Box::new(move |_state: RefMut<_>| {
-          unreachable!();
+          //unreachable!();
+          let flag = flag.clone();
+          let off_ = off_.clone();
+          let on_ = on_.clone();
+          RWVal::from(Arc::new(move |txn: Txn| {
+            let value = match *flag.get(txn) {
+              false => off_._make_value(),
+              true  => on_._make_value(),
+            };
+            value._alloc(txn)
+          }))
         })
       },
       apply: {
@@ -1160,10 +1209,13 @@ where A: 'static,
         let on_ = on_.clone();
         Box::new(move |_: Pass, this: Val<A>, _state: RefMut<Self>, sink: &mut Sink| {
           if let Some(this_adj) = this.adjoint(sink) {
+            //println!("DEBUG: SwitchOp: found adjoint for primal: {:?} => {:?}", this._graph_key(), this_adj._graph_key());
             let off_adj = switch(flag.clone(), this_adj.clone(), zeros_like(this_adj.clone()));
             off_.put_adjoint(off_adj, sink);
             let on_adj = switch(flag.clone(), zeros_like(this_adj.clone()), this_adj.clone());
             on_.put_adjoint(on_adj, sink);
+          //} else {
+            //println!("WARNING: SwitchOp: missing adjoint for primal: {:?}", this._graph_key());
           }
         })
       }),
