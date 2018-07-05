@@ -768,7 +768,7 @@ fn test_gpu_gradient_descent() {
   let mut y_sink = sink(y.clone());
   let adj_x = x.adjoint(&mut y_sink).unwrap();
 
-  let (grad_step, grad_mavg_step) = x.clone().gradient_momentum_step(step_size.clone(), momentum.clone(), adj_x.clone());
+  let grad_step = x.clone().gradient_momentum_step(step_size.clone(), momentum.clone(), adj_x.clone());
 
   let mut x_h: f32 = 1.0;
   //let mut y_h: f32 = 0.0;

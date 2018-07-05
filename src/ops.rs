@@ -79,6 +79,8 @@ pub struct BatchNormalize2dOp;
 pub struct BatchNormalize2dBwdOp;
 pub struct BatchNormalize2dBwdMeanOp;
 pub struct BatchNormalize2dBwdVarianceOp;
+pub struct BatchNormalize2dFusedOp;
+pub struct BatchNormalize2dBwdFusedOp;
 pub struct OnlineAddOp;
 pub struct OnlineDiscountOp;
 pub struct OnlineAverageOp;
@@ -228,6 +230,16 @@ impl Conv2dShape {
   }
 
   pub fn calculate_output_size(&self, w_size: [usize; 4], x_size: [usize; 3]) -> [usize; 3] {
+    let src_w = x_size[self.src_space_axes[0] as usize];
+    let src_h = x_size[self.src_space_axes[1] as usize];
+    let dst_c = w_size[self.ker_output_axis as usize];
+    assert_eq!(src_w, self.src_size[self.src_space_axes[0] as usize]);
+    assert_eq!(src_h, self.src_size[self.src_space_axes[1] as usize]);
+    assert_eq!(dst_c, self.features);
+    self._calculate_output_size()
+  }
+
+  pub fn _calculate_output_size(&self) -> [usize; 3] {
     // TODO: this assumes NCHW layout.
     assert!(self.ker_size[0] >= 1);
     assert!(self.ker_size[1] >= 1);
@@ -235,11 +247,14 @@ impl Conv2dShape {
     assert!(self.dilation[1] >= 1);
     assert!(self.stride[0] >= 1);
     assert!(self.stride[1] >= 1);
-    let src_w = x_size[self.src_space_axes[0] as usize];
-    let src_h = x_size[self.src_space_axes[1] as usize];
+    //let src_w = x_size[self.src_space_axes[0] as usize];
+    //let src_h = x_size[self.src_space_axes[1] as usize];
+    let src_w = self.src_size[self.src_space_axes[0] as usize];
+    let src_h = self.src_size[self.src_space_axes[1] as usize];
     let dst_w = 1 + (src_w + 2 * self.zero_pad[0] - (((self.ker_size[0] - 1) * self.dilation[0]) + 1)) / self.stride[0];
     let dst_h = 1 + (src_h + 2 * self.zero_pad[1] - (((self.ker_size[1] - 1) * self.dilation[1]) + 1)) / self.stride[1];
-    let dst_c = w_size[self.ker_output_axis as usize];
+    //let dst_c = w_size[self.ker_output_axis as usize];
+    let dst_c = self.features;
     let mut dst_size = [0, 0, 0];
     dst_size[self.dst_space_axes[0] as usize] = dst_w;
     dst_size[self.dst_space_axes[1] as usize] = dst_h;
@@ -701,11 +716,17 @@ where T: Copy + 'static,
   fn batch_normalize_2d(self, axes: [isize; 2], online: Val<bool>, avg_rate: Val<T>, epsilon: T) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>) {
     let mean_ = <BatchMean2dOp as BatchMean2dOpExt<T, X, M>>::build(axes, self.clone());
     let var_ = <BatchVariance2dOp as BatchVariance2dOpExt<T, X, M>>::build(axes, epsilon, self.clone(), mean_.clone());
-    let avg_mean_ = zeros_like(mean_.clone()).online_average(avg_rate.clone(), mean_.clone());
-    let avg_var_ = zeros_like(var_.clone()).online_average(avg_rate.clone(), var_.clone());
-    let online_y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<T, X, M>>::build(axes, self.clone(), mean_.clone(), var_.clone());
+    let avg_mean_ = zeros_like(mean_.clone()).online_average(avg_rate.clone(), mean_.clone()).fix();
+    let avg_var_ = zeros_like(var_.clone()).online_average(avg_rate.clone(), var_.clone()).fix();
+    /*let online_y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<T, X, M>>::build(axes, self.clone(), mean_.clone(), var_.clone());
     let avg_y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<T, X, M>>::build(axes, self.clone(), avg_mean_.clone(), avg_var_.clone()).fix();
-    let y_ = switch(online, avg_y_, online_y_);
+    let y_ = switch(online, avg_y_, online_y_);*/
+    let y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<T, X, M>>::build(
+        axes,
+        self.clone(),
+        switch(online.clone(), avg_mean_.clone(), mean_.clone()),
+        switch(online.clone(), avg_var_.clone(), var_.clone()),
+    );
     (y_, mean_, var_, avg_mean_, avg_var_)
   }
 }
@@ -968,21 +989,43 @@ impl<X> VectorizeExt<X> for NodeVec where VectorizeOp: VectorizeOpExt<X> {
 }
 
 pub trait DevectorizeOpExt<X> {
-  fn build(x_: Val<X>) -> NodeVec;
+  fn build(x_: Val<X>, dst: NodeVec);
 }
 
 pub trait DevectorizeExt<X> {
-  fn devectorize(self) -> NodeVec;
+  fn devectorize(self, dst: NodeVec);
 }
 
 impl<X> DevectorizeExt<X> for Val<X> where DevectorizeOp: DevectorizeOpExt<X> {
-  fn devectorize(self) -> NodeVec {
-    <DevectorizeOp as DevectorizeOpExt<X>>::build(self)
+  fn devectorize(self, dst: NodeVec) {
+    <DevectorizeOp as DevectorizeOpExt<X>>::build(self, dst)
+  }
+}
+
+pub trait OnlineAddVecExt<T> {
+  fn online_add_vec(self, c: Val<T>) -> NodeVec;
+}
+
+impl<T> OnlineAddVecExt<T> for NodeVec {
+  fn online_add_vec(self, c: Val<T>) -> NodeVec {
+    // TODO
+    unimplemented!();
+  }
+}
+
+pub trait GradientMomentumStepVecExt<T> {
+  fn gradient_momentum_step_vec(self, step_size: Val<T>, momentum: Val<T>, grads: NodeVec) -> NodeVec;
+}
+
+impl<T> GradientMomentumStepVecExt<T> for NodeVec {
+  fn gradient_momentum_step_vec(self, step_size: Val<T>, momentum: Val<T>, grads: NodeVec) -> NodeVec {
+    // TODO
+    unimplemented!();
   }
 }
 
 pub trait GradientMomentumStepExt<T, X> {
-  fn gradient_momentum_step(self, step_size: Val<T>, momentum: Val<T>, grad: Val<X>) -> (Val<X>, Val<X>);
+  fn gradient_momentum_step(self, step_size: Val<T>, momentum: Val<T>, grad: Val<X>) -> Val<X>;
 }
 
 impl<T, X> GradientMomentumStepExt<T, X> for Val<X>
@@ -992,11 +1035,12 @@ where T: Copy,
       Val<X>: OnlineDiscountExt<T, X>,
       ZerosSrcOp: ZerosSrcOpLikeExt<X>,
 {
-  fn gradient_momentum_step(self, step_size: Val<T>, momentum: Val<T>, grad: Val<X>) -> (Val<X>, Val<X>) {
+  fn gradient_momentum_step(self, step_size: Val<T>, momentum: Val<T>, grad: Val<X>) -> Val<X> {
     let grad_mavg = zeros_like(grad.clone());
     let grad_mavg_update = grad_mavg.online_discount(momentum, grad);
     let step_update = self.online_add(step_size, grad_mavg_update.clone());
-    (step_update, grad_mavg_update)
+    //(step_update, grad_mavg_update)
+    step_update
   }
 }
 

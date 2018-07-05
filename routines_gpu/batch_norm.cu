@@ -88,7 +88,7 @@ __global__ void anode_gpu_batch_mean_bwd_3d1_packed_kernel_f32(
         &i1, dim1,
         &i2
     );
-    if (i0 < dim0 && i1 < dim1 && i2 < dim2) {
+    if (idx < len) {
       Write::Write(&dx[idx], dmean[i1] / norm1);
     }
   }
@@ -197,7 +197,7 @@ __global__ void anode_gpu_batch_var_bwd_3d1_packed_kernel_f32(
         &i1, dim1,
         &i2
     );
-    if (i0 < dim0 && i1 < dim1 && i2 < dim2) {
+    if (idx < len) {
       Write::Write(&dx[idx], dvar[i1] * (x[idx] - mean[i1]) * 2.0f / norm2);
     }
   }
@@ -253,12 +253,13 @@ __global__ void anode_gpu_batch_var_bwd_mean_3d1_packed_deterministic_kernel_f32
     float accumulator = 0.0f;
     float m = mean[blk1];
     float dv = dvar[blk1];
+    float dv_term = -dv * 2.0f;
     for (uint32_t i = threadIdx.x; i < rdup_fused_inner_outer_dim; i += blockDim.x) {
       if (i < fused_inner_outer_dim) {
         uint32_t i0, i2;
         Index2::Unpack(i, &i0, reduce_inner_dim, &i2);
         uint32_t idx = Index3::Pack(i0, reduce_inner_dim, blk1, mid_dim, i2);
-        cache[threadIdx.x] = -dv * (x[idx] - m) * 2.0f;
+        cache[threadIdx.x] = (x[idx] - m) * dv_term;
       } else {
         cache[threadIdx.x] = 0.0f;
       }
@@ -325,7 +326,7 @@ __global__ void anode_gpu_batch_norm_3d1_packed_kernel_f32(
         &i1, dim1,
         &i2
     );
-    if (i0 < dim0 && i1 < dim1 && i2 < dim2) {
+    if (idx < len) {
       y[idx] = (x[idx] - mean[i1]) * rsqrtf(var[i1]);
     }
   }
@@ -365,7 +366,7 @@ __global__ void anode_gpu_batch_norm_bwd_3d1_packed_kernel_f32(
         &i1, dim1,
         &i2
     );
-    if (i0 < dim0 && i1 < dim1 && i2 < dim2) {
+    if (idx < len) {
       Write::Write(&dx[idx], dy[idx] * rsqrtf(var[i1]));
     }
   }
@@ -416,12 +417,13 @@ __global__ void anode_gpu_batch_norm_bwd_mean_3d1_packed_deterministic_kernel_f3
   for (uint32_t blk1 = gblock(); blk1 < mid_dim; blk1 += gblockcount()) {
     float accumulator = 0.0f;
     float v = var[blk1];
+    float v_term = -rsqrtf(v);
     for (uint32_t i = threadIdx.x; i < rdup_fused_inner_outer_dim; i += blockDim.x) {
       if (i < fused_inner_outer_dim) {
         uint32_t i0, i2;
         Index2::Unpack(i, &i0, reduce_inner_dim, &i2);
         uint32_t idx = Index3::Pack(i0, reduce_inner_dim, blk1, mid_dim, i2);
-        cache[threadIdx.x] = -dy[idx] * rsqrtf(v);
+        cache[threadIdx.x] = dy[idx] * v_term;
       } else {
         cache[threadIdx.x] = 0.0f;
       }
@@ -486,12 +488,13 @@ __global__ void anode_gpu_batch_norm_bwd_var_3d1_packed_deterministic_kernel_f32
     float accumulator = 0.0f;
     float m = mean[blk1];
     float v = var[blk1];
+    float v_term = -0.5f * rsqrtf(v) / v;
     for (uint32_t i = threadIdx.x; i < rdup_fused_inner_outer_dim; i += blockDim.x) {
       if (i < fused_inner_outer_dim) {
         uint32_t i0, i2;
         Index2::Unpack(i, &i0, reduce_inner_dim, &i2);
         uint32_t idx = Index3::Pack(i0, reduce_inner_dim, blk1, mid_dim, i2);
-        cache[threadIdx.x] = -dy[idx] * (x[idx] - m) * 0.5f * rsqrtf(v) / v;
+        cache[threadIdx.x] = dy[idx] * (x[idx] - m) * v_term;
       } else {
         cache[threadIdx.x] = 0.0f;
       }

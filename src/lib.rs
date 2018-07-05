@@ -79,6 +79,7 @@ pub mod ops;
 #[cfg(feature = "gpu")] pub mod ops_gpu;
 #[cfg(feature = "mpi")] pub mod ops_mpi;
 #[cfg(not(feature = "mpi"))] pub mod proc_single;
+pub mod proc_thread;
 #[cfg(feature = "mpi")] pub mod proc_mpi;
 pub mod templates;
 pub mod utils;
@@ -314,12 +315,12 @@ pub trait VIONodeExt {
   fn _serialize_vec(&self, txn: Txn, off: usize, dst: &mut Any) -> usize;
   fn _deserialize_vec(&self, txn: Txn, off: usize, src: &mut Any) -> usize;
 
-  fn serialize_vec(&self, txn: Txn, dst: &mut Any) {
-    self._serialize_vec(txn, 0, dst);
+  fn serialize_vec(&self, txn: Txn, dst: &mut Any) -> usize {
+    self._serialize_vec(txn, 0, dst)
   }
 
-  fn deserialize_vec(&self, txn: Txn, src: &mut Any) {
-    self._deserialize_vec(txn, 0, src);
+  fn deserialize_vec(&self, txn: Txn, src: &mut Any) -> usize {
+    self._deserialize_vec(txn, 0, src)
   }
 }
 
@@ -860,7 +861,8 @@ impl<V> Val<V> where V: 'static {
     let val = Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
-      value:    Some(self._make_value()),
+      //value:    Some(self._make_value()),
+      value:    self._clone_value(),
       mode:     WriteMode::Clobber,
       xref:     Rc::new(()),
       xvar:     xvar,
@@ -874,13 +876,13 @@ impl<V> Val<V> where V: 'static {
     val
   }
 
-  pub fn clobber_or_accumulate(&self) -> Val<V> {
+  /*pub fn clobber_or_accumulate(&self) -> Val<V> {
     match self.mode {
       WriteMode::Exclusive => self.clobber(),
       WriteMode::Accumulate => self.clone(),
       WriteMode::Clobber => self.clone(),
     }
-  }
+  }*/
 
   pub fn named(&self, name: &str) -> Val<V> {
     let rvar = RVar::default();

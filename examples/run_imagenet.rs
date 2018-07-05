@@ -36,7 +36,7 @@ fn main() {
     dataset.one_pass()
   });
   let mut splits = splits.drain(..);
-  let iter = async_join_data(num_workers, |_| {
+  let iter = async_join_data(num_workers, 32, |_| {
     let split = splits.next().unwrap();
     split.map_data(|(value, label)| {
       let maybe_image = match ColorImage::decode(&value) {
