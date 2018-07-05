@@ -36,7 +36,7 @@ impl ThreadProcGroup {
 }
 
 impl Iterator for ThreadProcGroup {
-  type Item = ThreadProc;
+  type Item = ThreadProcSpawner;
 
   fn next(&mut self) -> Option<Self::Item> {
     if self.closed {
@@ -47,11 +47,12 @@ impl Iterator for ThreadProcGroup {
     if self.rank_ctr == self.nranks {
       self.closed = true;
     }
-    Some(ThreadProc{
+    let proc = ThreadProc{
       rank:     rank,
       nranks:   self.nranks,
       barrier:  self.barrier.clone(),
-    })
+    };
+    Some(ThreadProcSpawner{proc})
   }
 }
 
@@ -69,6 +70,19 @@ impl ThreadProcJoinHandle {
   }
 }
 
+pub struct ThreadProcSpawner {
+  proc: ThreadProc,
+}
+
+impl ThreadProcSpawner {
+  pub fn spawn<F>(self, f: F) -> Result<ThreadProcJoinHandle, ()> where F: FnOnce(ThreadProc) + Send + 'static {
+    thread::spawn(|| {
+      f(self.proc);
+    });
+    Ok(ThreadProcJoinHandle{})
+  }
+}
+
 #[derive(Clone)]
 pub struct ThreadProc {
   rank:     usize,
@@ -77,13 +91,6 @@ pub struct ThreadProc {
 }
 
 impl ThreadProc {
-  pub fn spawn<F>(self, f: F) -> Result<ThreadProcJoinHandle, ()> where F: FnOnce(ThreadProc) + Send + 'static {
-    thread::spawn(|| {
-      f(self);
-    });
-    Ok(ThreadProcJoinHandle{})
-  }
-
   pub fn rank(&self) -> usize {
     self.rank
   }
@@ -96,7 +103,88 @@ impl ThreadProc {
     self.barrier.wait();
   }
 
-  pub fn allreduce_sum<T: Copy>(&self, _buf: &mut [T]) {
+  /*pub fn allreduce_sum<T: Copy>(&self, _buf: &mut [T]) {
     // TODO
+  }*/
+}
+
+/*pub trait ProcIO<Buf: ?Sized> {
+  type Tx: ProcTxOnce<Buf>;
+  type Rx: ProcRxOnce<Buf>;*/
+pub trait ProcIO {
+  type Tx;
+  type Rx;
+
+  fn message(&self, src: usize, dst: usize) -> (Self::Tx, Self::Rx);
+  fn allreduce_sum(&self) -> (Self::Tx, Self::Rx);
+  fn broadcast(&self, root: usize) -> (Self::Tx, Self::Rx);
+}
+
+pub trait ProcTxOnce<Buf: ?Sized> {
+  fn send(self, buf: &Buf);
+}
+
+pub trait ProcRxOnce<Buf: ?Sized> {
+  fn recv(self, buf: &mut Buf);
+}
+
+//impl<T: Copy> ProcIO<[T]> for ThreadProc {
+impl ProcIO for ThreadProc {
+  type Tx = ThreadProcTx;
+  type Rx = ThreadProcRx;
+
+  fn message(&self, src: usize, dst: usize) -> (Self::Tx, Self::Rx) {
+    (ThreadProcTx{closed: self.rank != src, src, nranks: self.nranks},
+     ThreadProcRx{closed: self.rank != dst, dst, nranks: self.nranks})
+  }
+
+  fn allreduce_sum(&self) -> (Self::Tx, Self::Rx) {
+    (ThreadProcTx{closed: false, src: self.rank, nranks: self.nranks},
+     ThreadProcRx{closed: false, dst: self.rank, nranks: self.nranks})
+  }
+
+  fn broadcast(&self, root: usize) -> (Self::Tx, Self::Rx) {
+    (ThreadProcTx{closed: self.rank != root, src: root, nranks: self.nranks},
+     ThreadProcRx{closed: self.rank == root, dst: self.rank, nranks: self.nranks})
+  }
+}
+
+pub struct ThreadProcTx {
+  closed:   bool,
+  src:      usize,
+  nranks:   usize,
+}
+
+pub struct ThreadProcRx {
+  closed:   bool,
+  dst:      usize,
+  nranks:   usize,
+}
+
+impl Drop for ThreadProcTx {
+  fn drop(&mut self) {
+    assert!(self.closed);
+  }
+}
+
+impl<T: Copy> ProcTxOnce<[T]> for ThreadProcTx {
+  fn send(mut self, buf: &[T]) {
+    assert!(!self.closed);
+    // TODO
+    self.closed = true;
+  }
+}
+
+impl Drop for ThreadProcRx {
+  fn drop(&mut self) {
+    assert!(self.closed);
+  }
+}
+
+impl<T: Copy> ProcRxOnce<[T]> for ThreadProcRx {
+  fn recv(mut self, buf: &mut [T]) {
+    assert!(!self.closed);
+    // TODO
+    self.closed = true;
   }
 }
