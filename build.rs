@@ -48,6 +48,7 @@ fn main() {
       .include("routines_gpu")
       .include("/usr/local/cuda/include")
       .file("routines_gpu/batch_norm.cu")
+      .file("routines_gpu/batch_norm_external.cu")
       .file("routines_gpu/flat_join.cu")
       .file("routines_gpu/flat_map.cu")
       .file("routines_gpu/quantize.cu")
