@@ -50,6 +50,7 @@ pub struct ReshapeOp;
 pub struct ReshapeLikeOp;
 pub struct MapOp<MapF> { pub f: MapF, }
 pub struct TransposeOp;
+pub struct ConcatenateJoinOp;
 pub struct SumJoinOp;
 pub struct ProductJoinOp;
 pub struct SumJoinAccumulateOp;
@@ -96,15 +97,16 @@ pub struct Conv1dLinearOp;
 pub struct Conv1dAffineOp;
 pub struct Conv2dLinearOp { pub conv_shape: Conv2dShape }
 pub struct Conv2dAffineOp { pub conv_shape: Conv2dShape }
-pub struct Conv3dLinearOp;
-pub struct Conv3dAffineOp;
+pub struct Conv3dLinearOp { pub conv_shape: Conv3dShape }
+pub struct Conv3dAffineOp { pub conv_shape: Conv3dShape }
 pub struct Conv2dReduceBwdOp { pub conv_shape: Conv2dShape }
+pub struct Conv3dReduceBwdOp { pub conv_shape: Conv3dShape }
 pub struct LeftTransposeConv1dLinearOp;
 pub struct LeftTransposeConv2dLinearOp { pub conv_shape: Conv2dShape }
-pub struct LeftTransposeConv3dLinearOp;
+pub struct LeftTransposeConv3dLinearOp { pub conv_shape: Conv3dShape }
 pub struct OuterConv1dLinearOp;
 pub struct OuterConv2dLinearOp { pub conv_shape: Conv2dShape }
-pub struct OuterConv3dLinearOp;
+pub struct OuterConv3dLinearOp { pub conv_shape: Conv3dShape }
 pub struct Pool2dOp<Pool> { pub pool_shape: Pool2dShape, pub pool: Pool }
 pub struct Pool2dBwdOp<Pool> { pub pool_shape: Pool2dShape, pub pool: Pool }
 pub struct TransposePool2dOp<Pool> { pub pool_shape: Pool2dShape, pub pool: Pool }
@@ -259,6 +261,77 @@ impl Conv2dShape {
     dst_size[self.dst_space_axes[0] as usize] = dst_w;
     dst_size[self.dst_space_axes[1] as usize] = dst_h;
     dst_size[self.dst_feature_axis as usize] = dst_c;
+    dst_size
+  }
+}
+
+#[derive(Clone, Copy)]
+pub struct Conv3dShape {
+  pub src_space_axes:   [isize; 3],
+  pub src_feature_axis: isize,
+  pub src_batch_axis:   isize,
+  pub src_dims:         [usize; 3],
+  pub src_features:     usize,
+  pub dst_space_axes:   [isize; 3],
+  pub dst_feature_axis: isize,
+  pub dst_batch_axis:   isize,
+  pub ker_space_axes:   [isize; 3],
+  pub ker_input_axis:   isize,
+  pub ker_output_axis:  isize,
+  pub ker_dims:         [usize; 3],
+  pub features:         usize,
+  pub dilation:         [usize; 3],
+  pub stride:           [usize; 3],
+  pub zero_pad:         [usize; 3],
+}
+
+impl Conv3dShape {
+  pub fn default_nchw() -> Self {
+    Self::default_space_major()
+  }
+
+  pub fn default_space_major() -> Self {
+    Conv3dShape{
+      src_space_axes:   [0, 1, 2],
+      src_feature_axis: 3,
+      src_batch_axis:   4,
+      src_dims:         [0, 0, 0],
+      src_features:     0,
+      dst_space_axes:   [0, 1, 2],
+      dst_feature_axis: 3,
+      dst_batch_axis:   4,
+      ker_space_axes:   [0, 1, 2],
+      ker_input_axis:   3,
+      ker_output_axis:  4,
+      ker_dims:         [0, 0, 0],
+      features:         0,
+      dilation:         [1, 1, 1],
+      stride:           [1, 1, 1],
+      zero_pad:         [0, 0, 0],
+    }
+  }
+
+  pub fn calculate_output_size(&self) -> [usize; 4] {
+    assert!(self.ker_dims[0] >= 1);
+    assert!(self.ker_dims[1] >= 1);
+    assert!(self.ker_dims[2] >= 1);
+    assert!(self.dilation[0] >= 1);
+    assert!(self.dilation[1] >= 1);
+    assert!(self.dilation[2] >= 1);
+    assert!(self.stride[0] >= 1);
+    assert!(self.stride[1] >= 1);
+    assert!(self.stride[2] >= 1);
+    let src_x = self.src_dims[self.src_space_axes[0] as usize];
+    let src_y = self.src_dims[self.src_space_axes[1] as usize];
+    let src_z = self.src_dims[self.src_space_axes[2] as usize];
+    let dst_x = 1 + (src_x + 2 * self.zero_pad[0] - (((self.ker_dims[0] - 1) * self.dilation[0]) + 1)) / self.stride[0];
+    let dst_y = 1 + (src_y + 2 * self.zero_pad[1] - (((self.ker_dims[1] - 1) * self.dilation[1]) + 1)) / self.stride[1];
+    let dst_z = 1 + (src_z + 2 * self.zero_pad[2] - (((self.ker_dims[2] - 1) * self.dilation[2]) + 1)) / self.stride[2];
+    let mut dst_size = [0, 0, 0, 0];
+    dst_size[self.dst_space_axes[0] as usize] = dst_x;
+    dst_size[self.dst_space_axes[1] as usize] = dst_y;
+    dst_size[self.dst_space_axes[2] as usize] = dst_z;
+    dst_size[self.dst_feature_axis as usize] = self.features;
     dst_size
   }
 }
@@ -541,6 +614,14 @@ pub trait ConstantOpsExt<T, V> {
   fn set_constant(self, c: T) -> Val<V>;
   fn add_constant(self, c: T) -> Val<V>;
   fn mult_constant(self, c: T) -> Val<V>;
+}
+
+pub fn concatenate<V>(axis: isize, xs_: Vec<Val<V>>) -> Val<V> where Val<V>: ConcatenateExt<V> {
+  <Val<V> as ConcatenateExt<V>>::concatenate(axis, xs_)
+}
+
+pub trait ConcatenateExt<V> {
+  fn concatenate(axis: isize, xs_: Vec<Val<V>>) -> Val<V>;
 }
 
 pub trait SumJoinOpMaybeExt<V> {

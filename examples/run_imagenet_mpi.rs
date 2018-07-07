@@ -13,7 +13,7 @@ extern crate superdata;
 use anode::*;
 use anode::log::*;
 use anode::ops::*;
-use anode::proc::*;
+use anode::proc_dist::*;
 use anode::utils::*;
 use colorimage::*;
 use gpudevicemem::*;
