@@ -17,6 +17,7 @@ limitations under the License.
 use ::*;
 
 use std::intrinsics::{type_name};
+use std::iter::{FromIterator};
 use std::marker::{PhantomData};
 use std::ops::{Add, Mul};
 use std::rc::{Rc};
@@ -502,7 +503,7 @@ impl<T: Clone + 'static> SrcOpCloneExt<T> for SrcOp {
       },
       apply: {
         Box::new(move |txn: Txn, _: RefMut<_>, output: OVal<_>| {
-          output.write_v2(txn, |_, _| {
+          output.write(txn, |_, _| {
             panic!("WARNING: SrcOpExt: should never write");
           })
         })
@@ -530,7 +531,7 @@ impl<V: 'static> SrcOpLikeExt<V> for SrcOp {
       },
       apply: {
         Box::new(move |txn: Txn, _: RefMut<_>, output: OVal<_>| {
-          output.write_v2(txn, |cap, token| {
+          output.write(txn, |cap, token| {
             unreachable!();
           })
         })
@@ -877,6 +878,20 @@ impl<X> SoftmaxExt<X> for Val<X> where SoftmaxOp: SoftmaxOpExt<X> {
   }
 }
 
+pub trait NewSoftmaxExt<V> {
+  fn softmax_(self) -> Self where Self: Sized;
+}
+
+impl<K, V, X> NewSoftmaxExt<V> for X
+where X: IntoIterator<Item=(K, Val<V>)> + FromIterator<(K, Val<V>)>,
+      SoftmaxOp: SoftmaxOpExt<V> {
+  fn softmax_(self) -> Self {
+    self.into_iter().map(|(k, v)| {
+      (k, <SoftmaxOp as SoftmaxOpExt<V>>::build(v))
+    }).collect()
+  }
+}
+
 pub trait SoftmaxCategoricalNLLOpExt<T, X, K, L> {
   fn build(x_: Val<X>, softmax_: Val<X>, category_data_: Val<K>) -> Val<L>;
 }
@@ -896,18 +911,6 @@ where T: Copy,
     let softmax_ = <SoftmaxOp as SoftmaxOpExt<X>>::build(self.clone());
     let nll_ = <SoftmaxCategoricalNLLOp as SoftmaxCategoricalNLLOpExt<T, X, K, L>>::build(self.clone(), softmax_.clone().fix(), category_data_);
     (nll_, softmax_)
-  }
-}
-
-pub trait PositiveClipFlatMapExt<V> {
-  fn positive_clip(self) -> Val<V>;
-
-  fn rect(self) -> Val<V> where Self: Sized {
-    self.positive_clip()
-  }
-
-  fn relu(self) -> Val<V> where Self: Sized {
-    self.positive_clip()
   }
 }
 
@@ -932,6 +935,18 @@ pub trait PositiveClipInplaceExt<V> {
 
   fn relu_inplace(self) -> Val<V> where Self: Sized {
     self.positive_clip_inplace()
+  }
+}
+
+pub trait PositiveClipFlatMapExt<V> {
+  fn positive_clip(self) -> Val<V>;
+
+  fn rect(self) -> Val<V> where Self: Sized {
+    self.positive_clip()
+  }
+
+  fn relu(self) -> Val<V> where Self: Sized {
+    self.positive_clip()
   }
 }
 
@@ -1163,7 +1178,7 @@ pub fn pass_apply<F, A: 'static>(x_: Val<A>) -> Box<Fn(Txn, RefMut<F>, OVal<A>) 
   Box::new(move |txn: Txn, _state: RefMut<_>, output: OVal<A>| {
     if output._valref().is_some() && x_._valref() != output._valref() {
       //if let Some((cap, token)) = output.write(txn) {
-      output.write_v2(txn, |cap, token| {
+      output.write(txn, |cap, token| {
         let mut section = section.clone();
         let x = x_.get(txn);
         let mut y = output.get_mut(txn, token);
@@ -1269,7 +1284,7 @@ pub fn switch_apply<F, A: 'static>(flag: Val<bool>, off_: Val<A>, on_: Val<A>) -
     };
     if !output._valref().is_none() && x_._valref() != output._valref() {
       //if let Some((cap, token)) = output.write(txn) {
-      output.write_v2(txn, |cap, token| {
+      output.write(txn, |cap, token| {
         let mut section = section.clone();
         let x = x_.get(txn);
         let mut y = output.get_mut(txn, token);

@@ -16,6 +16,8 @@ limitations under the License.
 
 #![feature(const_fn)]
 #![feature(core_intrinsics)]
+// FIXME: waiting for existential types impl.
+//#![feature(existential_type)]
 #![feature(fn_traits)]
 #![feature(get_type_id)]
 #![feature(nll)]
@@ -27,7 +29,6 @@ limitations under the License.
 
 extern crate arithmetic;
 extern crate arrayidx;
-//#[cfg(feature = "mpi")] extern crate cray_shmem;
 #[cfg(feature = "gpu")] extern crate cuda;
 #[cfg(feature = "gpu")] extern crate cuda_blas;
 #[cfg(feature = "gpu")] extern crate cuda_coll;
@@ -38,6 +39,7 @@ extern crate dot;
 #[macro_use] extern crate lazy_static;
 extern crate memarray;
 #[cfg(feature = "mpi")] extern crate mpich;
+extern crate num_traits;
 extern crate parking_lot;
 extern crate rand;
 extern crate rng;
@@ -48,6 +50,7 @@ extern crate typemap;
 #[cfg(feature = "mpi")] pub use proc_mpi as proc_dist;
 
 use analysis::{LivenessAnalysis};
+use context::{CtxGuard};
 use log::*;
 use ops::{OnesSrcOp, OnesSrcOpMaybeExt, SumJoinOp, SumJoinOpMaybeExt, PassExt};
 #[cfg(feature = "gpu")] use ops_gpu::{GPUMuxOp};
@@ -63,6 +66,7 @@ use std::cell::{Cell, RefCell, RefMut};
 use std::collections::{HashMap, HashSet};
 //use std::collections::hash_map::{Entry};
 use std::intrinsics::{type_name};
+use std::iter::{Once, once};
 //use std::ops::{Deref, DerefMut};
 //use std::ops::{AddAssign};
 use std::rc::{Rc};
@@ -243,11 +247,22 @@ pub trait AnalysisTags {
   fn liveness(&self) -> Option<LivenessAnalysis>;
 }
 
+pub trait PlaceGuard {
+}
+
+pub trait Placement {
+  fn _place(&self) -> Rc<dyn PlaceGuard> { unimplemented!(); }
+}
+
 pub trait ANode {
   fn _opref(&self) -> OpRef;
   fn _key(&self) -> String;
   fn _walk(&self) -> &Walk;
   fn _analysis_tags(&self) -> &AnalysisTags { unimplemented!(); }
+
+  fn _pred_placements(&self) -> Vec<Option<Rc<dyn Placement>>> { unimplemented!(); }
+  fn _placement(&self) -> Option<Rc<dyn Placement>> { None }
+  fn _place(&self) -> () { unimplemented!(); }
 
   fn _pred_fwd(&self, pred_buf: &mut Vec<Node>) { unimplemented!(); }
   fn _pred_rev(&self, pred_buf: &mut Vec<Node>) { unimplemented!(); }
@@ -323,6 +338,13 @@ pub trait VIONodeExt {
   fn deserialize_vec(&self, txn: Txn, src: &mut Any) -> usize {
     self._deserialize_vec(txn, 0, src)
   }
+}
+
+pub struct CtxPlaceGuard {
+  ctxg: CtxGuard,
+}
+
+impl PlaceGuard for CtxPlaceGuard {
 }
 
 pub fn push_wrapper<Wrap>(wrapper: Wrap) -> WrapGuard where Wrap: Any + 'static {
@@ -471,6 +493,16 @@ pub struct Torus1d<V=()> {
 
 pub type Ring<V=()> = Torus1d<V>;
 
+/*impl<X> IntoIterator for Torus1d<Val<X>> where X: 'static {
+  type Item = (usize, Val<X)>;
+  type IntoIter = ();
+
+  fn into_iter(self) -> Self::IntoIter {
+    // TODO
+    unimplemented!();
+  }
+}*/
+
 impl Torus1d {
   pub fn to(r: usize) -> Self {
     // TODO
@@ -558,10 +590,7 @@ impl Node {
   }
 
   pub fn _apply(&self, txn: Txn) -> bool {
-    /*log_dynamic_graph(|logging| {
-      println!("DEBUG: apply: {:?}", self._dy_graph_key());
-    });*/
-    //self.node._apply(txn, self.rvar, self.xvar, self.mode);
+    let plc_guard = self.node._placement().map(|plc| plc._place());
     let w = self.node._apply_any(txn, self.rvar, self.xvar, self.mode, self.value.clone());
     log_dynamic_graph(|logging| {
       if w {
@@ -615,6 +644,7 @@ pub struct Val<V> {
   node:     Rc<ANode>,
   op:       Rc<AOp<V>>,
   value:    Option<RWVal<V>>,
+  //plc:      Option<Rc<dyn Placement>>,
   mode:     WriteMode,
   xref:     Rc<()>,
   xvar:     RWVar,
@@ -636,6 +666,15 @@ impl<V> Clone for Val<V> where V: 'static {
       rvar:     rvar,
       name:     self.name.clone(),
     }
+  }
+}
+
+impl<V> IntoIterator for Val<V> where V: 'static {
+  type Item = ((), Val<V>);
+  type IntoIter = Once<((), Val<V>)>;
+
+  fn into_iter(self) -> Once<((), Val<V>)> {
+    once(((), self))
   }
 }
 
@@ -933,6 +972,10 @@ impl<V> Val<V> where V: 'static {
     &*self.op
   }
 
+  pub fn _placement(&self) -> Option<Rc<dyn Placement>> {
+    self.op._placement()
+  }
+
   pub fn _push_fwd(&self, stop_txn: Option<Txn>, pass: Pass, apply: &mut FnMut(&ANode, RVar, RWVar)) {
     self.op._push_fwd(stop_txn, pass, self.rvar, self.xvar, apply);
   }
@@ -942,10 +985,7 @@ impl<V> Val<V> where V: 'static {
   }
 
   pub fn _apply(&self, txn: Txn) -> bool {
-    /*log_dynamic_graph(|logging| {
-      println!("DEBUG: apply: {:?}", self._dy_graph_key());
-    });*/
-    //self.op._apply(txn, self.rvar, self.xvar, self.mode);
+    let plc_guard = self.op._placement().map(|plc| plc._place());
     let w = self.op._apply_output(txn, OVal::with_value(self.rvar, self.xvar, self.mode, self._static_value()));
     log_dynamic_graph(|logging| {
       if w {
@@ -1157,7 +1197,7 @@ impl<V> OVal<V> where V: 'static {
     self.value.as_ref().unwrap().persist(txn, self.rvar, self.xvar);
   }
 
-  pub fn write(&self, txn: Txn) -> Option<(WriteCap, WriteToken)> {
+  pub fn write_v1(&self, txn: Txn) -> Option<(WriteCap, WriteToken)> {
     assert!(self.value.is_some());
     self.value.as_ref().unwrap().write(txn, self.rvar, self.xvar, self.mode)
   }
@@ -1173,6 +1213,10 @@ impl<V> OVal<V> where V: 'static {
         false
       }
     }
+  }
+
+  pub fn write<F>(&self, txn: Txn, f: F) -> bool where F: FnOnce(WriteCap, WriteToken) {
+    self.write_v2(txn, f)
   }
 
   pub fn get(&self, txn: Txn) -> RwLockReadGuard<V> {
@@ -2423,32 +2467,25 @@ pub struct FSrcOp<F, V> {
   ext:  OpExt<F, V>,
   cfg:  RefCell<F>,
   ctrl: Vec<Node>,
-  //val:  RWVal<V>,
+  plc:  Option<Rc<dyn Placement>>,
 }
 
 impl<F, V> FSrcOp<F, V> where V: 'static {
   pub fn new(cfg: F, ext: OpExt<F, V>) -> Self {
     let cfg = RefCell::new(cfg);
-    //let val = (ext.make_val)(cfg.borrow_mut());
     FSrcOp{
       base: OpBase::default(),
       ext:  ext,
       cfg:  cfg,
       ctrl: vec![],
-      //val:  val,
+      plc:  None,
     }
   }
 
-  /*pub fn with_val(state: F, ext: OpExt<F, V>, val: RWVal<V>) -> Self {
-    let state = RefCell::new(state);
-    FSrcOp{
-      base: OpBase::default(),
-      ext:  ext,
-      cfg:  state,
-      ctrl: vec![],
-      val:  val,
-    }
-  }*/
+  pub fn place(mut self, plc: Rc<dyn Placement>) -> Self {
+    self.plc = Some(plc);
+    self
+  }
 }
 
 impl<F, V> ANode for FSrcOp<F, V> where V: 'static {
@@ -2470,6 +2507,14 @@ impl<F, V> ANode for FSrcOp<F, V> where V: 'static {
 
   fn _analysis_tags(&self) -> &AnalysisTags {
     &self.base
+  }
+
+  fn _pred_placements(&self) -> Vec<Option<Rc<dyn Placement>>> {
+    vec![]
+  }
+
+  fn _placement(&self) -> Option<Rc<dyn Placement>> {
+    self.plc.clone()
   }
 
   fn _pred_fwd(&self, _pred_buf: &mut Vec<Node>) {

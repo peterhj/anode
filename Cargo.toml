@@ -42,6 +42,7 @@ gpudevicemem = { path = "../gpudevicemem", optional = true }
 lazy_static = "*"
 memarray = { path = "../memarray", features = ["mkl"] }
 mpich = { path = "../libmpich", optional = true}
+num-traits = "*"
 #parking_lot = { version = "*", features = ["nightly"] }
 parking_lot = { version = "^0.5", features = ["nightly"] }
 #rand = { path = "../rand" }
