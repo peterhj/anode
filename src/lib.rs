@@ -317,25 +317,25 @@ pub trait AnyRWVal {
 pub trait IOVal: AnyRWVal {
   fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any);
   //fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any);
-  fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &mut Any);
+  fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &Any);
   fn _serialize_vec(&self, txn: Txn, rvar: RVar, off: usize, dst: &mut Any) -> usize;
-  fn _deserialize_vec(&self, txn: Txn, rvar: RVar, xvar: RWVar, off: usize, src: &mut Any) -> usize;
+  fn _deserialize_vec(&self, txn: Txn, rvar: RVar, xvar: RWVar, off: usize, src: &Any) -> usize;
 }
 
 pub trait IONodeExt {
   fn serialize(&self, txn: Txn, dst: &mut Any);
-  fn deserialize(&self, txn: Txn, src: &mut Any);
+  fn deserialize(&self, txn: Txn, src: &Any);
 }
 
 pub trait VIONodeExt {
   fn _serialize_vec(&self, txn: Txn, off: usize, dst: &mut Any) -> usize;
-  fn _deserialize_vec(&self, txn: Txn, off: usize, src: &mut Any) -> usize;
+  fn _deserialize_vec(&self, txn: Txn, off: usize, src: &Any) -> usize;
 
   fn serialize_vec(&self, txn: Txn, dst: &mut Any) -> usize {
     self._serialize_vec(txn, 0, dst)
   }
 
-  fn deserialize_vec(&self, txn: Txn, src: &mut Any) -> usize {
+  fn deserialize_vec(&self, txn: Txn, src: &Any) -> usize {
     self._deserialize_vec(txn, 0, src)
   }
 }
@@ -625,7 +625,7 @@ impl IONodeExt for Node {
     self.node._io(txn, &*self.value)._serialize(txn, self.rvar, dst);
   }
 
-  fn deserialize(&self, txn: Txn, src: &mut Any) {
+  fn deserialize(&self, txn: Txn, src: &Any) {
     self.node._io(txn, &*self.value)._deserialize(txn, self.rvar, self.xvar, src);
   }
 }
@@ -635,7 +635,7 @@ impl VIONodeExt for Node {
     self.node._io(txn, &*self.value)._serialize_vec(txn, self.rvar, off, dst)
   }
 
-  fn _deserialize_vec(&self, txn: Txn, off: usize, src: &mut Any) -> usize {
+  fn _deserialize_vec(&self, txn: Txn, off: usize, src: &Any) -> usize {
     self.node._io(txn, &*self.value)._deserialize_vec(txn, self.rvar, self.xvar, off, src)
   }
 }
@@ -1143,7 +1143,7 @@ impl<V> IONodeExt for Val<V> where V: 'static {
     self._value3(txn)._serialize(txn, self.rvar, dst);
   }
 
-  fn deserialize(&self, txn: Txn, src: &mut Any) {
+  fn deserialize(&self, txn: Txn, src: &Any) {
     self._value3(txn)._deserialize(txn, self.rvar, self.xvar, src);
   }
 }
@@ -1153,7 +1153,7 @@ impl<V> VIONodeExt for Val<V> where V: 'static {
     self._value3(txn)._serialize_vec(txn, self.rvar, off, dst)
   }
 
-  fn _deserialize_vec(&self, txn: Txn, off: usize, src: &mut Any) -> usize {
+  fn _deserialize_vec(&self, txn: Txn, off: usize, src: &Any) -> usize {
     self._value3(txn)._deserialize_vec(txn, self.rvar, self.xvar, off, src)
   }
 }
@@ -1532,7 +1532,7 @@ impl VIONodeExt for NodeVec {
     off
   }
 
-  fn _deserialize_vec(&self, txn: Txn, mut off: usize, src: &mut Any) -> usize {
+  fn _deserialize_vec(&self, txn: Txn, mut off: usize, src: &Any) -> usize {
     for node in self.nodes.iter() {
       off = node._deserialize_vec(txn, off, src);
     }
@@ -1871,8 +1871,8 @@ impl<T> IOVal for RWVal<T> where T: 'static {
     unimplemented!();
   }
 
-  //default fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &mut Any) {
-  default fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &mut Any) {
+  //default fn _deserialize(&self, txn: Txn, xvar: RWVar, src: &Any) {
+  default fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &Any) {
     unimplemented!();
   }
 
@@ -1880,7 +1880,7 @@ impl<T> IOVal for RWVal<T> where T: 'static {
     unimplemented!();
   }
 
-  default fn _deserialize_vec(&self, txn: Txn, rvar: RVar, xvar: RWVar, off: usize, src: &mut Any) -> usize {
+  default fn _deserialize_vec(&self, txn: Txn, rvar: RVar, xvar: RWVar, off: usize, src: &Any) -> usize {
     unimplemented!();
   }
 }
@@ -2485,6 +2485,10 @@ impl<F, V> FSrcOp<F, V> where V: 'static {
   pub fn place(mut self, plc: Rc<dyn Placement>) -> Self {
     self.plc = Some(plc);
     self
+  }
+
+  pub fn _extend_deps(&mut self, nodes: &NodeVec) {
+    self.ctrl.extend_from_slice(&nodes.nodes);
   }
 }
 

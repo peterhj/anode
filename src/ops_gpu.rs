@@ -275,15 +275,13 @@ impl<A> GPUMuxOp<A> where A: 'static {
   }
 }
 
-impl VectorizeOpExt<GPUDeviceArray1d<f32>> for NodeVec {
-  //fn build(x_: Val<GPUDeviceArray1d<f32>>, dst: NodeVec) {
+impl VectorizeOpExt<GPUDeviceArray1d<f32>> for VectorizeOp {
   fn build(src: NodeVec) -> Val<GPUDeviceArray1d<f32>> {
     let ext = OpExt{
       make_val: {
         let src = src.clone();
         //Box::new(move || {
-        Box::new(move |_state: RefMut<VectorizeOp>| {
-          //unreachable!();
+        Box::new(move |_state: RefMut<_>| {
           let section = GPULazyAsyncSection::default();
           let src = src.clone();
           RWVal::from(Arc::new(move |txn: Txn| {
@@ -302,15 +300,15 @@ impl VectorizeOpExt<GPUDeviceArray1d<f32>> for NodeVec {
       },
       apply: {
         //let section = GPULazyAsyncSection::default();
-        //let x_ = x_.clone();
         let src = src.clone();
-        Box::new(move |txn: Txn, _state: RefMut<_>, output: OVal<GPUDeviceArray1d<f32>>| {
+        Box::new(move |txn: Txn, _state: RefMut<_>, output: OVal<_>| {
           //if let Some((cap, token)) = output.write(txn) {
           output.write(txn, |cap, token| {
             let mut x = output.get_mut(txn, token);
             match cap {
               WriteCap::Assign => {
                 let count = src.serialize_vec(txn, &mut *x);
+                assert_eq!(count, x.as_view().flat_size());
               }
               _ => unimplemented!(),
             }
@@ -327,9 +325,52 @@ impl VectorizeOpExt<GPUDeviceArray1d<f32>> for NodeVec {
       }),
       inplace: None,
     };
-    // TODO
-    unimplemented!();
-    //Val::from(Rc::new(FSrcOp::new_with_ctrl(VectorizeOp, ext, src)))
+    let mut op = FSrcOp::new(VectorizeOp, ext);
+    op._extend_deps(&src);
+    Val::from(Rc::new(op))
+  }
+}
+
+impl DevectorizeOpExt<GPUDeviceArray1d<f32>> for DevectorizeOp {
+  fn build(x_: Val<GPUDeviceArray1d<f32>>, dst: NodeVec) -> Val<()> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          RWVal::from(Arc::new(move |txn: Txn| {
+            ()
+          }))
+        })
+      },
+      apply: {
+        //let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        let dst = dst.clone();
+        Box::new(move |txn: Txn, _state: RefMut<_>, output: OVal<()>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            let x = x_.get(txn);
+            match cap {
+              WriteCap::Assign => {
+                let count = dst.deserialize_vec(txn, &*x);
+                assert_eq!(count, x.as_view().flat_size());
+              }
+              _ => unimplemented!(),
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, this: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      inplace: None,
+    };
+    Val::new(Rc::new(F1Op::new(DevectorizeOp, ext, x_)))
   }
 }
 

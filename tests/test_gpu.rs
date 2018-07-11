@@ -800,3 +800,56 @@ fn test_gpu_gradient_descent() {
     grad_step.eval(step_t);
   }
 }
+
+#[test]
+fn test_gpu_op_io_vectorize() {
+  println!();
+  let x1 = ones(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceArray1d::<f32>::zeros(1024, conn)
+  }));
+  let x2 = ones(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceArray1d::<f32>::zeros(1024, conn)
+  }));
+  let mut nodes = NodeVec::new();
+  nodes.push_val(x1.clone());
+  nodes.push_val(x2.clone());
+  let y: Val<GPUDeviceArray1d<f32>> = nodes.vectorize();
+  let t = txn();
+  y.eval(t);
+  let mut y_h = MemArray1d::<f32>::zeros(2048);
+  y.serialize(t, &mut y_h);
+  println!("DEBUG: {:?} {:?}", &y_h.as_view().flat_slice().unwrap()[ .. 10], &y_h.as_view().flat_slice().unwrap()[2048 - 10 .. ]);
+  for k in 0 .. 2048 {
+    assert_eq!(y_h.as_view().flat_slice().unwrap()[k], 1.0);
+  }
+}
+
+#[test]
+fn test_gpu_op_io_devectorize() {
+  println!();
+  let x1 = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceArray1d::<f32>::zeros(1024, conn)
+  }));
+  let x2 = zeros(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceArray1d::<f32>::zeros(1024, conn)
+  }));
+  let y = ones(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceArray1d::<f32>::zeros(2048, conn)
+  }));
+  let mut nodes = NodeVec::new();
+  nodes.push_val(x1.clone());
+  nodes.push_val(x2.clone());
+  let op = y.devectorize(nodes);
+  let t = txn();
+  op.eval(t);
+  let mut x1_h = MemArray1d::<f32>::zeros(1024);
+  let mut x2_h = MemArray1d::<f32>::zeros(1024);
+  x1.serialize(t, &mut x1_h);
+  x2.serialize(t, &mut x2_h);
+  println!("DEBUG: {:?} {:?}", &x1_h.as_view().flat_slice().unwrap()[ .. 10], &x1_h.as_view().flat_slice().unwrap()[1024 - 10 .. ]);
+  println!("DEBUG: {:?} {:?}", &x2_h.as_view().flat_slice().unwrap()[ .. 10], &x2_h.as_view().flat_slice().unwrap()[1024 - 10 .. ]);
+  for k in 0 .. 1024 {
+    assert_eq!(x1_h.as_view().flat_slice().unwrap()[k], 1.0);
+    assert_eq!(x2_h.as_view().flat_slice().unwrap()[k], 1.0);
+  }
+}

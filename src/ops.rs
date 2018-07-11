@@ -1113,15 +1113,15 @@ impl<X> VectorizeExt<X> for NodeVec where VectorizeOp: VectorizeOpExt<X> {
 }
 
 pub trait DevectorizeOpExt<X> {
-  fn build(x_: Val<X>, dst: NodeVec);
+  fn build(x_: Val<X>, dst: NodeVec) -> Val<()>;
 }
 
 pub trait DevectorizeExt<X> {
-  fn devectorize(self, dst: NodeVec);
+  fn devectorize(self, dst: NodeVec) -> Val<()>;
 }
 
 impl<X> DevectorizeExt<X> for Val<X> where DevectorizeOp: DevectorizeOpExt<X> {
-  fn devectorize(self, dst: NodeVec) {
+  fn devectorize(self, dst: NodeVec) -> Val<()> {
     <DevectorizeOp as DevectorizeOpExt<X>>::build(self, dst)
   }
 }
