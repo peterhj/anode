@@ -236,8 +236,8 @@ impl Conv2dShape {
     let src_w = x_size[self.src_space_axes[0] as usize];
     let src_h = x_size[self.src_space_axes[1] as usize];
     let dst_c = w_size[self.ker_output_axis as usize];
-    assert_eq!(src_w, self.src_size[self.src_space_axes[0] as usize]);
-    assert_eq!(src_h, self.src_size[self.src_space_axes[1] as usize]);
+    assert_eq!(src_w, self.src_size[0]);
+    assert_eq!(src_h, self.src_size[1]);
     assert_eq!(dst_c, self.features);
     self._calculate_output_size()
   }
@@ -250,18 +250,14 @@ impl Conv2dShape {
     assert!(self.dilation[1] >= 1);
     assert!(self.stride[0] >= 1);
     assert!(self.stride[1] >= 1);
-    //let src_w = x_size[self.src_space_axes[0] as usize];
-    //let src_h = x_size[self.src_space_axes[1] as usize];
-    let src_w = self.src_size[self.src_space_axes[0] as usize];
-    let src_h = self.src_size[self.src_space_axes[1] as usize];
+    let src_w = self.src_size[0];
+    let src_h = self.src_size[1];
     let dst_w = 1 + (src_w + 2 * self.zero_pad[0] - (((self.ker_size[0] - 1) * self.dilation[0]) + 1)) / self.stride[0];
     let dst_h = 1 + (src_h + 2 * self.zero_pad[1] - (((self.ker_size[1] - 1) * self.dilation[1]) + 1)) / self.stride[1];
-    //let dst_c = w_size[self.ker_output_axis as usize];
-    let dst_c = self.features;
     let mut dst_size = [0, 0, 0];
     dst_size[self.dst_space_axes[0] as usize] = dst_w;
     dst_size[self.dst_space_axes[1] as usize] = dst_h;
-    dst_size[self.dst_feature_axis as usize] = dst_c;
+    dst_size[self.dst_feature_axis as usize] = self.features;
     dst_size
   }
 }
@@ -312,6 +308,18 @@ impl Conv3dShape {
     }
   }
 
+  pub fn calculate_input_size(&self) -> [usize; 4] {
+    let src_x = self.src_dims[0];
+    let src_y = self.src_dims[1];
+    let src_z = self.src_dims[2];
+    let mut src_size = [0, 0, 0, 0];
+    src_size[self.src_space_axes[0] as usize] = src_x;
+    src_size[self.src_space_axes[1] as usize] = src_y;
+    src_size[self.src_space_axes[2] as usize] = src_z;
+    src_size[self.src_feature_axis as usize] = self.src_features;
+    src_size
+  }
+
   pub fn calculate_output_size(&self) -> [usize; 4] {
     assert!(self.ker_dims[0] >= 1);
     assert!(self.ker_dims[1] >= 1);
@@ -322,9 +330,9 @@ impl Conv3dShape {
     assert!(self.stride[0] >= 1);
     assert!(self.stride[1] >= 1);
     assert!(self.stride[2] >= 1);
-    let src_x = self.src_dims[self.src_space_axes[0] as usize];
-    let src_y = self.src_dims[self.src_space_axes[1] as usize];
-    let src_z = self.src_dims[self.src_space_axes[2] as usize];
+    let src_x = self.src_dims[0];
+    let src_y = self.src_dims[1];
+    let src_z = self.src_dims[2];
     let dst_x = 1 + (src_x + 2 * self.zero_pad[0] - (((self.ker_dims[0] - 1) * self.dilation[0]) + 1)) / self.stride[0];
     let dst_y = 1 + (src_y + 2 * self.zero_pad[1] - (((self.ker_dims[1] - 1) * self.dilation[1]) + 1)) / self.stride[1];
     let dst_z = 1 + (src_z + 2 * self.zero_pad[2] - (((self.ker_dims[2] - 1) * self.dilation[2]) + 1)) / self.stride[2];
@@ -884,13 +892,33 @@ pub trait NewSoftmaxExt<V> {
 
 impl<K, V, X> NewSoftmaxExt<V> for X
 where X: IntoIterator<Item=(K, Val<V>)> + FromIterator<(K, Val<V>)>,
-      SoftmaxOp: SoftmaxOpExt<V> {
+      SoftmaxOp: SoftmaxOpExt<V>,
+{
   fn softmax_(self) -> Self {
     self.into_iter().map(|(k, v)| {
       (k, <SoftmaxOp as SoftmaxOpExt<V>>::build(v))
     }).collect()
   }
 }
+
+/*pub trait NewSoftmaxProcExt<P, V> {
+  fn softmax_proc(self, proc: P) -> Self where Self: Sized;
+}
+
+impl<P, K, V, X> NewSoftmaxProcExt<P, V> for X
+where P: Proc,
+      V: Array<Index1d>,
+      X: IntoIterator<Item=(K, Val<V>)> + FromIterator<(K, Val<V>)>,
+      SoftmaxOp: SoftmaxOpExt<V>,
+{
+  fn softmax_proc(self, proc: P) -> Self {
+    self.into_iter().map(|(k, v)| {
+      let v = gen_scatter1d(v, proc.clone());
+      let v = (k, <SoftmaxOp as SoftmaxOpExt<V>>::build(v));
+      gen_gather1d(v, proc.clone())
+    }).collect()
+  }
+}*/
 
 pub trait SoftmaxCategoricalNLLOpExt<T, X, K, L> {
   fn build(x_: Val<X>, softmax_: Val<X>, category_data_: Val<K>) -> Val<L>;

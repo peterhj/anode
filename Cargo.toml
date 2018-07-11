@@ -27,7 +27,7 @@ superdata = { path = "../superdata" }
 time = "*"
 
 [dependencies]
-arithmetic = { path = "../arithmetic" }
+#arithmetic = { path = "../arithmetic" }
 arrayidx = { path = "../arrayidx" }
 #async_execution = { path = "../async_execution" }
 #cray_link = { path = "../cray_link", optional =  true }

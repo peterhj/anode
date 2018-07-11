@@ -1,3 +1,8 @@
+pub trait Proc: Clone {
+  fn rank(&self);
+  fn num_ranks(&self);
+}
+
 pub trait ProcIO {
   type Tx;
   type Rx;

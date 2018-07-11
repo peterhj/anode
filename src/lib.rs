@@ -27,7 +27,7 @@ limitations under the License.
 //#![feature(trait_alias)]
 #![feature(unboxed_closures)]
 
-extern crate arithmetic;
+//extern crate arithmetic;
 extern crate arrayidx;
 #[cfg(feature = "gpu")] extern crate cuda;
 #[cfg(feature = "gpu")] extern crate cuda_blas;
