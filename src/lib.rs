@@ -608,10 +608,13 @@ impl Node {
     self.node._eval_recursive(txn, self.rvar, self.xvar);
   }
 
-  pub fn eval(&self, txn: Txn) {
+  pub fn eval(&self, txn: Txn) -> bool {
     if Some(txn) != self.node._io(txn, &*self.value)._complete_txn() {
       self._eval_recursive(txn);
       self._apply(txn);
+      true
+    } else {
+      false
     }
   }
 
@@ -999,10 +1002,13 @@ impl<V> Val<V> where V: 'static {
     self.op._eval_recursive(txn, self.rvar, self.xvar);
   }
 
-  pub fn eval(&self, txn: Txn) {
+  pub fn eval(&self, txn: Txn) -> bool {
     if Some(txn) != self._value3(txn)._complete_txn() {
       self._eval_recursive(txn);
       self._apply(txn);
+      true
+    } else {
+      false
     }
   }
 
@@ -1499,6 +1505,10 @@ impl NodeVec {
     adjs
   }
 
+  pub fn len(&self) -> usize {
+    self.nodes.len()
+  }
+
   pub fn push(&mut self, node: Node) {
     self.nodes.push(node);
   }
@@ -1517,10 +1527,14 @@ impl NodeVec {
     }
   }
 
-  pub fn eval(&self, txn: Txn) {
+  pub fn eval(&self, txn: Txn) -> usize {
+    let mut eval_ct = 0;
     for n in self.nodes.iter() {
-      n.eval(txn);
+      if n.eval(txn) {
+        eval_ct += 1;
+      }
     }
+    eval_ct
   }
 }
 
@@ -4021,7 +4035,7 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, V: 'static {
       match *self.flag.get(txn) {
         false   => self.x1_.eval(txn),
         true    => self.x2_.eval(txn),
-      }
+      };
     //}
   }
 }
