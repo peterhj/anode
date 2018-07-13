@@ -6525,9 +6525,9 @@ fn conv3d_to_xconv_shape(conv_shape: Conv3dShape, batch_sz: usize) -> XConvFullS
 impl<T> ConvLinearExt<GPUDeviceArray5d<T>, GPUDeviceOuterBatchArray4d<T>, GPUDeviceOuterBatchArray4d<T>> for Val<GPUDeviceArray5d<T>>
 where T: GPUDataTyped + CudnnDataTypeExt + Zero + One + ZeroBits + Copy + 'static + Into<f32>,
       CudnnHandle: CudnnConvExt<T, T, T>,
-      GPUDeviceArrayViewMut5d<T>: GPUBatchConvOps<T, T, T>,
-      GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConvOps<T, T, T>,
-      GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConvOps<T, T, T>,
+      GPUDeviceArrayViewMut5d<T>: GPUBatchConv3dOps<T, T, T>,
+      GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConv3dOps<T, T, T>,
+      GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConv3dOps<T, T, T>,
       //Val<GPUDeviceOuterBatchArray4d<T>>: OuterConvLinearExt<GPUDeviceArray5d<T>, GPUDeviceOuterBatchArray4d<T>, GPUDeviceOuterBatchArray4d<T>, ConvShape=Conv3dShape>,
       //Val<GPUDeviceArray5d<T>>: LeftTransposeConvLinearExt<GPUDeviceArray5d<T>, GPUDeviceOuterBatchArray4d<T>, GPUDeviceOuterBatchArray4d<T>, ConvShape=Conv3dShape>,
 {
@@ -6543,9 +6543,9 @@ where T: GPUDataTyped + CudnnDataTypeExt + Zero + One + ZeroBits + Copy + 'stati
       CudnnHandle: CudnnConvExt<T, T, T>,
       GPUDeviceArrayView1d<T>: GPUVectorOps<T>,
       GPUDeviceArrayViewMut5d<T>: GPUTensorMutOps<T>,
-      GPUDeviceArrayViewMut5d<T>: GPUBatchConvOps<T, T, T>,
-      GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConvOps<T, T, T>,
-      GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConvOps<T, T, T>,
+      GPUDeviceArrayViewMut5d<T>: GPUBatchConv3dOps<T, T, T>,
+      GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConv3dOps<T, T, T>,
+      GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConv3dOps<T, T, T>,
       //Val<GPUDeviceOuterBatchArray4d<T>>: OuterConvLinearExt<GPUDeviceArray5d<T>, GPUDeviceOuterBatchArray4d<T>, GPUDeviceOuterBatchArray4d<T>, ConvShape=Conv3dShape>,
       //Val<GPUDeviceArray5d<T>>: LeftTransposeConvLinearExt<GPUDeviceArray5d<T>, GPUDeviceOuterBatchArray4d<T>, GPUDeviceOuterBatchArray4d<T>, ConvShape=Conv3dShape>,
       //Val<GPUDeviceOuterBatchArray4d<T>>: ConvReduceBwdExt<GPUDeviceOuterBatchArray4d<T>, GPUDeviceArray1d<T>, ConvShape=Conv3dShape>,
@@ -6565,10 +6565,10 @@ impl Conv3dLinearOp {
   where T: GPUDataTyped + CudnnDataTypeExt + Zero + One + ZeroBits + Copy + 'static + Into<f32>,
         CudnnHandle: CudnnConvExt<T, T, T>,
         //GPUDeviceArrayView1d<T>: GPUVectorOps<T>,
-        //GPUDeviceArrayViewMut5d<T>: GPUTensorMutOps<T> + GPUBatchConvOps<T, T, T>,
-        GPUDeviceArrayViewMut5d<T>: GPUBatchConvOps<T, T, T>,
-        GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConvOps<T, T, T>,
-        GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConvOps<T, T, T>,
+        //GPUDeviceArrayViewMut5d<T>: GPUTensorMutOps<T> + GPUBatchConv3dOps<T, T, T>,
+        GPUDeviceArrayViewMut5d<T>: GPUBatchConv3dOps<T, T, T>,
+        GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConv3dOps<T, T, T>,
+        GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConv3dOps<T, T, T>,
         //Val<GPUDeviceOuterBatchArray4d<T>>: OuterConvLinearExt<GPUDeviceArray5d<T>, GPUDeviceOuterBatchArray4d<T>, GPUDeviceOuterBatchArray4d<T>, ConvShape=Conv3dShape>,
         //Val<GPUDeviceArray5d<T>>: LeftTransposeConvLinearExt<GPUDeviceArray5d<T>, GPUDeviceOuterBatchArray4d<T>, GPUDeviceOuterBatchArray4d<T>, ConvShape=Conv3dShape>,
   {
@@ -6585,12 +6585,13 @@ impl Conv3dLinearOp {
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
-            let w_size = w_.get(txn).size();
-            let x_size = x_.get(txn).size();
-            let x_max_bsz = x_.get(txn).max_batch_size();
-            let y_size = conv_shape.calculate_output_size();
             let mut section = section.clone();
             let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            assert_eq!(x.size(), conv_shape.calculate_input_size());
+            let x_max_bsz = x.max_batch_size();
+            let y_size = conv_shape.calculate_output_size();
             let y = GPUDeviceOuterBatchArray4d::zeros(y_size, x_max_bsz, conn);
             guard._wait(y.async_state());
             y
@@ -6690,10 +6691,10 @@ impl Conv3dAffineOp {
   where T: GPUDataTyped + CudnnDataTypeExt + Zero + One + ZeroBits + Copy + 'static + Into<f32>,
         CudnnHandle: CudnnConvExt<T, T, T>,
         GPUDeviceArrayView1d<T>: GPUVectorOps<T>,
-        GPUDeviceArrayViewMut5d<T>: GPUTensorMutOps<T> + GPUBatchConvOps<T, T, T>,
-        //GPUDeviceArrayViewMut5d<T>: GPUBatchConvOps<T, T, T>,
-        GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConvOps<T, T, T>,
-        GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConvOps<T, T, T>,
+        GPUDeviceArrayViewMut5d<T>: GPUTensorMutOps<T> + GPUBatchConv3dOps<T, T, T>,
+        //GPUDeviceArrayViewMut5d<T>: GPUBatchConv3dOps<T, T, T>,
+        GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConv3dOps<T, T, T>,
+        GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConv3dOps<T, T, T>,
         //Val<GPUDeviceOuterBatchArray4d<T>>: OuterConvLinearExt<GPUDeviceArray5d<T>, GPUDeviceOuterBatchArray4d<T>, GPUDeviceOuterBatchArray4d<T>, ConvShape=Conv3dShape>,
         //Val<GPUDeviceArray5d<T>>: LeftTransposeConvLinearExt<GPUDeviceArray5d<T>, GPUDeviceOuterBatchArray4d<T>, GPUDeviceOuterBatchArray4d<T>, ConvShape=Conv3dShape>,
   {
@@ -6814,9 +6815,9 @@ impl Conv3dAffineOp {
 impl<T> LeftTransposeConvLinearExt<GPUDeviceArray5d<T>, GPUDeviceOuterBatchArray4d<T>, GPUDeviceOuterBatchArray4d<T>> for Val<GPUDeviceArray5d<T>>
 where T: GPUDataTyped + CudnnDataTypeExt + Zero + One + ZeroBits + Copy + 'static + Into<f32>,
       CudnnHandle: CudnnConvExt<T, T, T>,
-      GPUDeviceArrayViewMut5d<T>: GPUBatchConvOps<T, T, T>,
-      GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConvOps<T, T, T>,
-      GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConvOps<T, T, T>,
+      GPUDeviceArrayViewMut5d<T>: GPUBatchConv3dOps<T, T, T>,
+      GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConv3dOps<T, T, T>,
+      GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConv3dOps<T, T, T>,
       //Val<GPUDeviceOuterBatchArray4d<T>>: OuterConvLinearExt<GPUDeviceArray5d<T>, GPUDeviceOuterBatchArray4d<T>, GPUDeviceOuterBatchArray4d<T>, ConvShape=Conv3dShape>,
       //Val<GPUDeviceArray5d<T>>: ConvLinearExt<GPUDeviceArray5d<T>, GPUDeviceOuterBatchArray4d<T>, GPUDeviceOuterBatchArray4d<T>, ConvShape=Conv3dShape>,
 {
@@ -6836,9 +6837,9 @@ impl LeftTransposeConv3dLinearOp {
   // TODO: `ZeroBits` should not be necessary here.
   where T: GPUDataTyped + CudnnDataTypeExt + Zero + One + ZeroBits + Copy + 'static + Into<f32>,
         CudnnHandle: CudnnConvExt<T, T, T>,
-        GPUDeviceArrayViewMut5d<T>: GPUBatchConvOps<T, T, T>,
-        GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConvOps<T, T, T>,
-        GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConvOps<T, T, T>,
+        GPUDeviceArrayViewMut5d<T>: GPUBatchConv3dOps<T, T, T>,
+        GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConv3dOps<T, T, T>,
+        GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConv3dOps<T, T, T>,
         //Val<GPUDeviceOuterBatchArray4d<T>>: OuterConvLinearExt<GPUDeviceArray5d<T>, GPUDeviceOuterBatchArray4d<T>, GPUDeviceOuterBatchArray4d<T>, ConvShape=Conv3dShape>,
         //Val<GPUDeviceArray5d<T>>: ConvLinearExt<GPUDeviceArray5d<T>, GPUDeviceOuterBatchArray4d<T>, GPUDeviceOuterBatchArray4d<T>, ConvShape=Conv3dShape>,
   {
@@ -6949,9 +6950,9 @@ impl LeftTransposeConv3dLinearOp {
 impl<T> OuterConvLinearExt<GPUDeviceArray5d<T>, GPUDeviceOuterBatchArray4d<T>, GPUDeviceOuterBatchArray4d<T>> for Val<GPUDeviceOuterBatchArray4d<T>>
 where T: GPUDataTyped + CudnnDataTypeExt + Zero + One + ZeroBits + Copy + 'static + Into<f32>,
       CudnnHandle: CudnnConvExt<T, T, T>,
-      GPUDeviceArrayViewMut5d<T>: GPUBatchConvOps<T, T, T>,
-      GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConvOps<T, T, T>,
-      GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConvOps<T, T, T>,
+      GPUDeviceArrayViewMut5d<T>: GPUBatchConv3dOps<T, T, T>,
+      GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConv3dOps<T, T, T>,
+      GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConv3dOps<T, T, T>,
 {
   type ConvShape = Conv3dShape;
 
@@ -6969,9 +6970,9 @@ impl OuterConv3dLinearOp {
   // TODO: `ZeroBits` should not be necessary here.
   where T: GPUDataTyped + CudnnDataTypeExt + Zero + One + ZeroBits + Copy + 'static + Into<f32>,
         CudnnHandle: CudnnConvExt<T, T, T>,
-        GPUDeviceArrayViewMut5d<T>: GPUBatchConvOps<T, T, T>,
-        GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConvOps<T, T, T>,
-        GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConvOps<T, T, T>,
+        GPUDeviceArrayViewMut5d<T>: GPUBatchConv3dOps<T, T, T>,
+        GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConv3dOps<T, T, T>,
+        GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConv3dOps<T, T, T>,
   {
     let state_cache = Rc::new(RefCell::new(HashMap::new()));
     let ext = OpExt{
@@ -7080,9 +7081,9 @@ impl<T> ConvReduceBwdExt<GPUDeviceOuterBatchArray4d<T>, GPUDeviceArray1d<T>> for
 where T: GPUDataTyped + CudnnDataTypeExt + Zero + One + ZeroBits + Copy + 'static + Into<f32>,
       CudnnHandle: CudnnConvExt<T, T, T>,
       GPUDeviceArrayViewMut1d<T>: GPUBatchConvReduceOps<T, T, T>,
-      GPUDeviceArrayViewMut5d<T>: GPUBatchConvOps<T, T, T>,
-      GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConvOps<T, T, T>,
-      GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConvOps<T, T, T>,
+      GPUDeviceArrayViewMut5d<T>: GPUBatchConv3dOps<T, T, T>,
+      GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConv3dOps<T, T, T>,
+      GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConv3dOps<T, T, T>,
 {
   type ConvShape = Conv3dShape;
 
@@ -7100,9 +7101,9 @@ impl Conv3dReduceBwdOp {
   where T: GPUDataTyped + CudnnDataTypeExt + Zero + One + ZeroBits + Copy + 'static + Into<f32>,
         CudnnHandle: CudnnConvExt<T, T, T>,
         GPUDeviceArrayViewMut1d<T>: GPUBatchConvReduceOps<T, T, T>,
-        GPUDeviceArrayViewMut5d<T>: GPUBatchConvOps<T, T, T>,
-        GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConvOps<T, T, T>,
-        GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConvOps<T, T, T>,
+        GPUDeviceArrayViewMut5d<T>: GPUBatchConv3dOps<T, T, T>,
+        GPUDeviceArrayViewMut5d<T>: GPUBatchLTransConv3dOps<T, T, T>,
+        GPUDeviceArrayViewMut5d<T>: GPUBatchOuterConv3dOps<T, T, T>,
   {
     let ext = OpExt{
       make_val: {
@@ -7514,5 +7515,282 @@ impl<Pool: PoolOp + 'static> Pool2dBwdOp<Pool> {
       inplace: None,
     };
     Val::from(Rc::new(F3Op::new(Pool2dBwdOp{pool, pool_shape}, ext, dy_, y_, x_)))
+  }
+}
+
+impl<T> PoolExt<GPUDeviceOuterBatchArray4d<T>> for Val<GPUDeviceOuterBatchArray4d<T>>
+where T: GPUDataTyped + CudnnDataTypeExt + Zero + One + ZeroBits + Copy + 'static,
+      CudnnHandle: CudnnPoolExt<T>,
+      GPUDeviceArrayViewMut5d<T>: GPUBatchPool3dOps<T>,
+{
+  type PoolShape = Pool3dShape;
+
+  fn average_pool(self, pool_shape: Pool3dShape) -> Val<GPUDeviceOuterBatchArray4d<T>> {
+    Pool3dOp::<AveragePool>::build_device_obatch_val(AveragePool, pool_shape, self)
+  }
+
+  fn max_pool(self, pool_shape: Pool3dShape) -> Val<GPUDeviceOuterBatchArray4d<T>> {
+    Pool3dOp::<MaxPool>::build_device_obatch_val(MaxPool, pool_shape, self)
+  }
+}
+
+impl<T> PoolBwdExt<GPUDeviceOuterBatchArray4d<T>> for Val<GPUDeviceOuterBatchArray4d<T>>
+where T: GPUDataTyped + CudnnDataTypeExt + Zero + One + ZeroBits + Copy + 'static,
+      CudnnHandle: CudnnPoolExt<T>,
+      GPUDeviceArrayViewMut5d<T>: GPUBatchPool3dOps<T>,
+{
+  fn average_pool_bwd(self, pool_shape: Pool3dShape, y_: Val<GPUDeviceOuterBatchArray4d<T>>, x_: Val<GPUDeviceOuterBatchArray4d<T>>) -> Val<GPUDeviceOuterBatchArray4d<T>> {
+    Pool3dBwdOp::<AveragePool>::build_device_obatch_val(AveragePool, pool_shape, self, y_, x_)
+  }
+
+  fn max_pool_bwd(self, pool_shape: Pool3dShape, y_: Val<GPUDeviceOuterBatchArray4d<T>>, x_: Val<GPUDeviceOuterBatchArray4d<T>>) -> Val<GPUDeviceOuterBatchArray4d<T>> {
+    Pool3dBwdOp::<MaxPool>::build_device_obatch_val(MaxPool, pool_shape, self, y_, x_)
+  }
+}
+
+fn pool3d_to_xpool_shape(pool_shape: Pool3dShape, batch_sz: usize) -> XPoolFullShape {
+  let src_size = pool_shape.calculate_input_size();
+  let dst_size = pool_shape.calculate_output_size();
+  XPoolFullShape::Pool3d(Pool3dFullShape{
+    src_space_axes:   pool_shape.src_space_axes,
+    src_feature_axis: pool_shape.src_feature_axis,
+    src_batch_axis:   pool_shape.src_batch_axis,
+    // TODO: assumes NCHW layout.
+    src_size:         [
+      src_size[0],
+      src_size[1],
+      src_size[2],
+      src_size[3],
+      batch_sz,
+    ],
+    dst_space_axes:   pool_shape.dst_space_axes,
+    dst_feature_axis: pool_shape.dst_feature_axis,
+    dst_batch_axis:   pool_shape.dst_batch_axis,
+    // TODO: assumes NCHW layout.
+    dst_size:         [
+      dst_size[0],
+      dst_size[1],
+      dst_size[2],
+      dst_size[3],
+      batch_sz,
+    ],
+    ker_size: pool_shape.ker_dims,
+    stride:   pool_shape.stride,
+    zero_pad: pool_shape.zero_pad,
+  })
+}
+
+impl<Pool: PoolOp + 'static> Pool3dOp<Pool> {
+  pub fn build_device_obatch_val<T>(
+      pool: Pool,
+      pool_shape: Pool3dShape,
+      x_: Val<GPUDeviceOuterBatchArray4d<T>>)
+  -> Val<GPUDeviceOuterBatchArray4d<T>>
+  // TODO: `ZeroBits` should not be necessary here.
+  where T: GPUDataTyped + CudnnDataTypeExt + Zero + One + ZeroBits + Copy + 'static,
+        CudnnHandle: CudnnPoolExt<T>,
+        GPUDeviceArrayViewMut5d<T>: GPUBatchPool3dOps<T>,
+        Val<GPUDeviceOuterBatchArray4d<T>>: SomePoolBwdExt<Pool, GPUDeviceOuterBatchArray4d<T>, PoolShape=Pool3dShape>,
+  {
+    let xpool_op = pool.to_xop();
+    let state_cache = Rc::new(RefCell::new(HashMap::new()));
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            assert_eq!(x.size(), pool_shape.calculate_input_size());
+            let x_max_bsz = x.max_batch_size();
+            let y_size = pool_shape.calculate_output_size();
+            let y = GPUDeviceOuterBatchArray4d::zeros(y_size, x_max_bsz, conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        let state_cache = state_cache.clone();
+        Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray4d<T>>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn).as_view();
+            let mut y = output.get_mut(txn, token).as_view_mut();
+            guard._wait(x.async_state());
+            guard._wait(y.async_state());
+            // TODO: set batch size.
+            assert_eq!(x.size()[4], y.size()[4]);
+            //y.set_batch_size(x.batch_size());
+            let xpool_shape = pool3d_to_xpool_shape(pool_shape, x.size()[4]);
+            let mut state_cache = state_cache.borrow_mut();
+            let state = state_cache.entry(xpool_shape.clone()).or_insert_with(|| {
+              match query_gpu_pool_state(conn.device(), xpool_op, xpool_shape, conn.clone()) {
+                None => panic!("invalid pool2d config"),
+                Some(state) => state,
+              }
+            });
+            let (alpha, beta) = match cap {
+              WriteCap::Assign => (one(), zero()),
+              WriteCap::Accumulate => (one(), one()),
+            };
+            y.batch_pool3d(
+                state,
+                alpha,
+                x,
+                beta,
+                conn.clone(),
+            );
+          })
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: Some({
+        Box::new(move |_: Pass, _state: RefMut<_>, _feedfwd: &mut FeedFwd| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      adjoint: Some({
+        let x_ = x_.clone();
+        Box::new(move |_: Pass, y_: Val<GPUDeviceOuterBatchArray4d<T>>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            let adj_x_ = adj_y_.pool_bwd(pool_shape, y_.clone(), x_.clone());
+            x_.put_adjoint(adj_x_, sink);
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F1Op::new(Pool3dOp{pool, pool_shape}, ext, x_)))
+  }
+}
+
+impl<Pool: PoolOp + 'static> Pool3dBwdOp<Pool> {
+  pub fn build_device_obatch_val<T>(
+      pool: Pool,
+      pool_shape: Pool3dShape,
+      dy_: Val<GPUDeviceOuterBatchArray4d<T>>,
+      y_: Val<GPUDeviceOuterBatchArray4d<T>>,
+      x_: Val<GPUDeviceOuterBatchArray4d<T>>)
+  -> Val<GPUDeviceOuterBatchArray4d<T>>
+  // TODO: `ZeroBits` should not be necessary here.
+  where T: GPUDataTyped + CudnnDataTypeExt + Zero + One + ZeroBits + Copy + 'static,
+        CudnnHandle: CudnnPoolExt<T>,
+        GPUDeviceArrayViewMut5d<T>: GPUBatchPool3dOps<T>,
+  {
+    let xpool_op = pool.to_xop();
+    let state_cache = Rc::new(RefCell::new(HashMap::new()));
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            let x_shape = x.shape();
+            let dx = GPUDeviceOuterBatchArray4d::zeros_shape(x_shape, conn);
+            guard._wait(dx.async_state());
+            dx
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let dy_ = dy_.clone();
+        let y_ = y_.clone();
+        let x_ = x_.clone();
+        let state_cache = state_cache.clone();
+        Box::new(move |txn, _state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray4d<T>>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let dy = dy_.get(txn).as_view();
+            let y = y_.get(txn).as_view();
+            let x = x_.get(txn).as_view();
+            let mut dx = output.get_mut(txn, token).as_view_mut();
+            guard._wait(dy.async_state());
+            guard._wait(y.async_state());
+            guard._wait(x.async_state());
+            guard._wait(dx.async_state());
+            // TODO: set batch size.
+            assert_eq!(dy.size()[4], y.size()[4]);
+            assert_eq!(dy.size()[4], x.size()[4]);
+            assert_eq!(dy.size()[4], dx.size()[4]);
+            let xpool_shape = pool3d_to_xpool_shape(pool_shape, dy.size()[4]);
+            let mut state_cache = state_cache.borrow_mut();
+            let state = state_cache.entry(xpool_shape.clone()).or_insert_with(|| {
+              match query_gpu_pool_state(conn.device(), xpool_op, xpool_shape, conn.clone()) {
+                None => panic!("invalid pool2d config"),
+                Some(state) => state,
+              }
+            });
+            let (alpha, beta) = match cap {
+              WriteCap::Assign => (one(), zero()),
+              WriteCap::Accumulate => (one(), one()),
+            };
+            dx.batch_pool3d_bwd(
+                state,
+                alpha,
+                y,
+                dy,
+                x,
+                beta,
+                conn.clone(),
+            );
+          })
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: Some({
+        Box::new(move |_: Pass, _state: RefMut<_>, _feedfwd: &mut FeedFwd| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      adjoint: Some({
+        Box::new(move |_: Pass, _this: Val<GPUDeviceOuterBatchArray4d<T>>, _state: RefMut<_>, _sink: &mut Sink| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F3Op::new(Pool3dBwdOp{pool, pool_shape}, ext, dy_, y_, x_)))
   }
 }

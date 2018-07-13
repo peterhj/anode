@@ -111,6 +111,8 @@ pub struct OuterConv3dLinearOp { pub conv_shape: Conv3dShape }
 pub struct Pool2dOp<Pool> { pub pool_shape: Pool2dShape, pub pool: Pool }
 pub struct Pool2dBwdOp<Pool> { pub pool_shape: Pool2dShape, pub pool: Pool }
 pub struct TransposePool2dOp<Pool> { pub pool_shape: Pool2dShape, pub pool: Pool }
+pub struct Pool3dOp<Pool> { pub pool_shape: Pool3dShape, pub pool: Pool }
+pub struct Pool3dBwdOp<Pool> { pub pool_shape: Pool3dShape, pub pool: Pool }
 pub struct Resample2dOp<ResampleF> { pub f: ResampleF }
 pub struct ReduceOp<ReduceF> { pub f: ReduceF, /*pub axes: _*/ }
 
@@ -399,6 +401,76 @@ impl Pool2dShape {
     dst_size[self.dst_space_axes[1] as usize] = dst_h;
     dst_size[self.dst_feature_axis as usize] = dst_c;
     //println!("DEBUG: Pool2dShape: input size: {:?} output size: {:?}", x_size, dst_size);
+    dst_size
+  }
+}
+
+#[derive(Clone, Copy)]
+pub struct Pool3dShape {
+  pub src_space_axes:   [isize; 3],
+  pub src_feature_axis: isize,
+  pub src_batch_axis:   isize,
+  pub src_dims:         [usize; 3],
+  pub src_features:     usize,
+  pub dst_space_axes:   [isize; 3],
+  pub dst_feature_axis: isize,
+  pub dst_batch_axis:   isize,
+  pub ker_dims:         [usize; 3],
+  pub stride:           [usize; 3],
+  pub zero_pad:         [usize; 3],
+}
+
+impl Pool3dShape {
+  pub fn default_nchw() -> Self {
+    Self::default_space_major()
+  }
+
+  pub fn default_space_major() -> Self {
+    Pool3dShape{
+      src_space_axes:   [0, 1, 2],
+      src_feature_axis: 3,
+      src_batch_axis:   4,
+      src_dims:         [0, 0, 0],
+      src_features:     0,
+      dst_space_axes:   [0, 1, 2],
+      dst_feature_axis: 3,
+      dst_batch_axis:   4,
+      ker_dims:         [0, 0, 0],
+      stride:           [1, 1, 1],
+      zero_pad:         [0, 0, 0],
+    }
+  }
+
+  pub fn calculate_input_size(&self) -> [usize; 4] {
+    let src_x = self.src_dims[0];
+    let src_y = self.src_dims[1];
+    let src_z = self.src_dims[2];
+    let mut src_size = [0, 0, 0, 0];
+    src_size[self.src_space_axes[0] as usize] = src_x;
+    src_size[self.src_space_axes[1] as usize] = src_y;
+    src_size[self.src_space_axes[2] as usize] = src_z;
+    src_size[self.src_feature_axis as usize] = self.src_features;
+    src_size
+  }
+
+  pub fn calculate_output_size(&self) -> [usize; 4] {
+    assert!(self.ker_dims[0] >= 1);
+    assert!(self.ker_dims[1] >= 1);
+    assert!(self.ker_dims[2] >= 1);
+    assert!(self.stride[0] >= 1);
+    assert!(self.stride[1] >= 1);
+    assert!(self.stride[2] >= 1);
+    let src_x = self.src_dims[0];
+    let src_y = self.src_dims[1];
+    let src_z = self.src_dims[2];
+    let dst_x = 1 + (src_x + 2 * self.zero_pad[0] - (((self.ker_dims[0] - 1)) + 1)) / self.stride[0];
+    let dst_y = 1 + (src_y + 2 * self.zero_pad[1] - (((self.ker_dims[1] - 1)) + 1)) / self.stride[1];
+    let dst_z = 1 + (src_z + 2 * self.zero_pad[2] - (((self.ker_dims[2] - 1)) + 1)) / self.stride[2];
+    let mut dst_size = [0, 0, 0, 0];
+    dst_size[self.dst_space_axes[0] as usize] = dst_x;
+    dst_size[self.dst_space_axes[1] as usize] = dst_y;
+    dst_size[self.dst_space_axes[2] as usize] = dst_z;
+    dst_size[self.dst_feature_axis as usize] = self.src_features;
     dst_size
   }
 }
