@@ -380,7 +380,91 @@ impl DequantizeOpExt<f32, GPUDeviceOuterBatchArray3d<u8>, GPUDeviceOuterBatchArr
   }
 }
 
+impl DequantizeOpExt<f32, GPUDeviceOuterBatchArray4d<u8>, GPUDeviceOuterBatchArray4d<f32>> for DequantizeOp<f32> {
+  fn build(lo: f32, hi: f32, x_: Val<GPUDeviceOuterBatchArray4d<u8>>) -> Val<GPUDeviceOuterBatchArray4d<f32>> {
+    DequantizeOp::<f32>::build_device_u8_to_f32_obatch_4d_op(lo, hi, x_)
+  }
+}
+
 impl DequantizeOp<f32> {
+  pub fn build_device_u8_to_f32_obatch_4d_op(lo: f32, hi: f32, x_: Val<GPUDeviceOuterBatchArray4d<u8>>) -> Val<GPUDeviceOuterBatchArray4d<f32>> {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            let y = GPUDeviceOuterBatchArray4d::zeros(x.size(), x.max_batch_size(), conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            guard._wait(x.async_state());
+            guard._wait(y.async_state());
+            assert_eq!(y.size(), x.size());
+            y.set_batch_size(x.batch_size());
+            match cap {
+              WriteCap::Assign => {
+                if x.is_packed() && y.is_packed() {
+                  let x = x.flat_view().unwrap();
+                  let mut y = y.flat_view_mut().unwrap();
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_dequantize_u8_packed_f32(
+                      sz2uint(x.size()),
+                      lo,
+                      hi,
+                      x.as_dptr(),
+                      y.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                } else {
+                  unimplemented!();
+                }
+              }
+              WriteCap::Accumulate => {
+                // TODO
+                unimplemented!();
+              }
+            }
+            double_check_scalar::<Self, _>(|| {
+              //println!("DEBUG: DequantizeOp: double checking: len: {} {}", y.flat_size(), y.flat_view().unwrap().size());
+              y.flat_view().unwrap().sync_vector_norm(conn)
+            });
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: None,
+      inplace: None,
+    };
+    Val::from(Rc::new(F1Op::new(DequantizeOp{lo, hi}, ext, x_)))
+  }
+
   pub fn build_device_u8_to_f32_obatch_3d_op(lo: f32, hi: f32, x_: Val<GPUDeviceOuterBatchArray3d<u8>>) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
     let ext = OpExt{
       make_val: {
@@ -1377,6 +1461,114 @@ where T: ZeroBits + Copy + 'static,
       }),*/
       adjoint: Some({
         Box::new(move |_: Pass, this: Val<GPUDeviceOuterBatchArray3d<T>>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(_) = this.adjoint(sink) {
+            // Do nothing.
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(FSrcOp::new(ZerosSrcOp, ext)))
+  }
+}
+
+impl<T> ZerosSrcOpLikeExt<GPUDeviceOuterBatchArray4d<T>> for ZerosSrcOp
+where ZerosSrcOp: ZerosSrcOpExt<GPUDeviceOuterBatchArray4d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray4d<T>>>,
+      T: ZeroBits + Copy + 'static,
+{
+  fn build_like(x_: Val<GPUDeviceOuterBatchArray4d<T>>) -> Val<GPUDeviceOuterBatchArray4d<T>> {
+    let x_ = x_.clone();
+    <ZerosSrcOp as ZerosSrcOpExt<GPUDeviceOuterBatchArray4d<T>, _>>::build(
+        Rc::new(move |txn, conn| {
+          // TODO: async section.
+          let x = x_.get(txn);
+          let y = GPUDeviceOuterBatchArray4d::zeros(x.size(), x.max_batch_size(), conn);
+          y
+        })
+    )
+  }
+}
+
+impl<T> ZerosSrcOpExt<GPUDeviceOuterBatchArray4d<T>, ([usize; 4], usize)> for ZerosSrcOp
+where T: ZeroBits + Copy + 'static,
+      GPUDeviceOuterBatchArray4d<T>: ZerosInit<([usize; 4], usize), RValue=Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray4d<T>>>,
+{
+  fn build(shape: ([usize; 4], usize)) -> Val<GPUDeviceOuterBatchArray4d<T>> {
+    zeros(<GPUDeviceOuterBatchArray4d<T> as ZerosInit<_>>::zeros_init(shape))
+  }
+}
+
+impl<T, F> ZerosSrcOpExt<GPUDeviceOuterBatchArray4d<T>, Rc<F>> for ZerosSrcOp
+where T: ZeroBits + Copy + 'static,
+      F: (Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray4d<T>) + 'static,
+{
+  fn build(init_val: Rc<F>) -> Val<GPUDeviceOuterBatchArray4d<T>> {
+    <Self as ZerosSrcOpExt<GPUDeviceOuterBatchArray4d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray4d<T>>>>::build(init_val)
+  }
+}
+
+impl<T> ZerosSrcOpExt<GPUDeviceOuterBatchArray4d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray4d<T>>> for ZerosSrcOp
+where T: ZeroBits + Copy + 'static,
+{
+  fn build(init_val: Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray4d<T>>) -> Val<GPUDeviceOuterBatchArray4d<T>> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let init_val = init_val.clone();
+          RWVal::from(Arc::new(move |txn: Txn| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let y = init_val(txn, conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray4d<T>>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            match cap {
+              WriteCap::Assign => {
+                // TODO: zero out the whole thing.
+                //println!("DEBUG: ZeroSrcOp: zeroing...");
+                let mut y = output.get_mut(txn, token);
+                guard._wait(y.async_state());
+                y.as_view_mut().set_zeros(conn);
+              }
+              WriteCap::Accumulate => {
+                let _ = output.get_mut(txn, token);
+              }
+            }
+          })
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: None,
+      /*tangent: Some({
+        Box::new(move || {
+          // TODO
+          unimplemented!();
+        })
+      }),*/
+      adjoint: Some({
+        Box::new(move |_: Pass, this: Val<GPUDeviceOuterBatchArray4d<T>>, state: RefMut<_>, sink: &mut Sink| {
           if let Some(_) = this.adjoint(sink) {
             // Do nothing.
           }
@@ -4737,6 +4929,12 @@ impl PositiveClipInplaceExt<GPUDeviceOuterBatchArray1d<f32>> for Val<GPUDeviceOu
 
 impl PositiveClipInplaceExt<GPUDeviceOuterBatchArray3d<f32>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
   fn positive_clip_inplace(self) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+    PositiveClipClobberOp::build_device_op(self)
+  }
+}
+
+impl PositiveClipInplaceExt<GPUDeviceOuterBatchArray4d<f32>> for Val<GPUDeviceOuterBatchArray4d<f32>> {
+  fn positive_clip_inplace(self) -> Val<GPUDeviceOuterBatchArray4d<f32>> {
     PositiveClipClobberOp::build_device_op(self)
   }
 }

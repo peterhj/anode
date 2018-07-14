@@ -285,7 +285,7 @@ pub struct Conv3dShape {
 }
 
 impl Conv3dShape {
-  pub fn default_nchw() -> Self {
+  pub fn default_ncdhw() -> Self {
     Self::default_space_major()
   }
 
@@ -421,7 +421,7 @@ pub struct Pool3dShape {
 }
 
 impl Pool3dShape {
-  pub fn default_nchw() -> Self {
+  pub fn default_ncdhw() -> Self {
     Self::default_space_major()
   }
 

@@ -168,6 +168,16 @@ impl ZerosInit<([usize; 3], usize)> for GPUDeviceOuterBatchArray3d<u8> {
   }
 }
 
+impl<T: ZeroBits + 'static> ZerosInit<([usize; 4], usize)> for GPUDeviceOuterBatchArray4d<T> {
+  type RValue = Rc<Fn(Txn, GPUDeviceConn) -> Self>;
+
+  fn zeros_init(shape: ([usize; 4], usize)) -> Self::RValue {
+    Rc::new(move |_, conn: GPUDeviceConn| {
+      GPUDeviceOuterBatchArray4d::<T>::zeros(shape.0, shape.1, conn.clone())
+    })
+  }
+}
+
 pub trait UniformInit<Shape, T, R: Rng> {
   type RValue;
 
