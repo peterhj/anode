@@ -1782,6 +1782,30 @@ where T: Zero + One + Copy + 'static,
   }
 }
 
+impl<T> OnesSrcOpMaybeExt<GPUDeviceOuterBatchArray3d<T>> for OnesSrcOp
+where T: ZeroBits + Zero + One + Copy + 'static,
+      OnesSrcOp: OnesSrcOpLikeExt<GPUDeviceOuterBatchArray3d<T>>,
+{
+  fn maybe_build_like(x_: Val<GPUDeviceOuterBatchArray3d<T>>) -> Option<Val<GPUDeviceOuterBatchArray3d<T>>> {
+    Some(<Self as OnesSrcOpLikeExt<GPUDeviceOuterBatchArray3d<T>>>::build_like(x_))
+  }
+}
+
+impl<T> OnesSrcOpLikeExt<GPUDeviceOuterBatchArray3d<T>> for OnesSrcOp
+where T: ZeroBits + Zero + One + Copy + 'static,
+      OnesSrcOp: OnesSrcOpExt<GPUDeviceOuterBatchArray3d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray3d<T>>>,
+{
+  fn build_like(x_: Val<GPUDeviceOuterBatchArray3d<T>>) -> Val<GPUDeviceOuterBatchArray3d<T>> {
+    <OnesSrcOp as OnesSrcOpExt<GPUDeviceOuterBatchArray3d<T>, _>>::build(
+        Rc::new(move |txn, conn| {
+          let x = x_.get(txn);
+          let y = GPUDeviceOuterBatchArray3d::zeros(x.size(), x.max_batch_size(), conn);
+          y
+        })
+    )
+  }
+}
+
 impl<T, F> OnesSrcOpExt<GPUDeviceOuterBatchArray3d<T>, Rc<F>> for OnesSrcOp
 where T: Zero + One + Copy + 'static,
       F: (Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray3d<T>) + 'static,
@@ -1860,6 +1884,119 @@ where T: Zero + One + Copy + 'static,
       }),*/
       adjoint: Some({
         Box::new(move |_: Pass, this: Val<GPUDeviceOuterBatchArray3d<T>>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(_) = this.adjoint(sink) {
+            // Do nothing.
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(FSrcOp::new(OnesSrcOp, ext)))
+  }
+}
+
+impl<T> OnesSrcOpMaybeExt<GPUDeviceOuterBatchArray4d<T>> for OnesSrcOp
+where T: ZeroBits + Zero + One + Copy + 'static,
+      OnesSrcOp: OnesSrcOpLikeExt<GPUDeviceOuterBatchArray4d<T>>,
+{
+  fn maybe_build_like(x_: Val<GPUDeviceOuterBatchArray4d<T>>) -> Option<Val<GPUDeviceOuterBatchArray4d<T>>> {
+    Some(<Self as OnesSrcOpLikeExt<GPUDeviceOuterBatchArray4d<T>>>::build_like(x_))
+  }
+}
+
+impl<T> OnesSrcOpLikeExt<GPUDeviceOuterBatchArray4d<T>> for OnesSrcOp
+where T: ZeroBits + Zero + One + Copy + 'static,
+      OnesSrcOp: OnesSrcOpExt<GPUDeviceOuterBatchArray4d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray4d<T>>>,
+{
+  fn build_like(x_: Val<GPUDeviceOuterBatchArray4d<T>>) -> Val<GPUDeviceOuterBatchArray4d<T>> {
+    <OnesSrcOp as OnesSrcOpExt<GPUDeviceOuterBatchArray4d<T>, _>>::build(
+        Rc::new(move |txn, conn| {
+          let x = x_.get(txn);
+          let y = GPUDeviceOuterBatchArray4d::zeros(x.size(), x.max_batch_size(), conn);
+          y
+        })
+    )
+  }
+}
+
+impl<T, F> OnesSrcOpExt<GPUDeviceOuterBatchArray4d<T>, Rc<F>> for OnesSrcOp
+where T: Zero + One + Copy + 'static,
+      F: (Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray4d<T>) + 'static,
+{
+  fn build(init_val: Rc<F>) -> Val<GPUDeviceOuterBatchArray4d<T>> {
+    <Self as OnesSrcOpExt<GPUDeviceOuterBatchArray4d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray4d<T>>>>::build(init_val)
+  }
+}
+
+impl<T> OnesSrcOpExt<GPUDeviceOuterBatchArray4d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray4d<T>>> for OnesSrcOp
+where T: Zero + One + Copy + 'static,
+{
+  fn build(init_val: Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceOuterBatchArray4d<T>>) -> Val<GPUDeviceOuterBatchArray4d<T>> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          //println!("DEBUG: OnesSrcOpExt<|| GPUDeviceOuterBatchArray4d>: init...");
+          let section = GPULazyAsyncSection::default();
+          let init_val = init_val.clone();
+          RWVal::from(Arc::new(move |txn: Txn| {
+            //println!("DEBUG: OnesSrcOpExt<|| GPUDeviceOuterBatchArray4d>: make_val: allocating...");
+            //implicit_ctx()._debug_print();
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            // FIXME: this part really requires auto-wait and auto-registration.
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let y = init_val(txn, conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<GPUDeviceOuterBatchArray4d<T>>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            //println!("DEBUG: OnesSrcOpExt<|| GPUDeviceOuterBatchArray4d>: apply: writing...");
+            //implicit_ctx()._debug_print();
+            let ctx = implicit_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            match cap {
+              WriteCap::Assign => {
+                let mut y = output.get_mut(txn, token);
+                guard._wait(y.async_state());
+                y.flat_view_mut().unwrap().set_constant(T::one(), conn);
+              }
+              WriteCap::Accumulate => {
+                let mut y = output.get_mut(txn, token);
+                guard._wait(y.async_state());
+                y.flat_view_mut().unwrap().add_constant_inplace(T::one(), conn);
+              }
+              _ => unimplemented!(),
+            }
+          })
+        })
+      },
+      build: Some({
+        Box::new(move |args| {
+          // TODO
+          unimplemented!();
+        })
+      }),
+      tangent: None,
+      /*tangent: Some({
+        Box::new(move || {
+          // TODO
+          unimplemented!();
+        })
+      }),*/
+      adjoint: Some({
+        Box::new(move |_: Pass, this: Val<GPUDeviceOuterBatchArray4d<T>>, state: RefMut<_>, sink: &mut Sink| {
           if let Some(_) = this.adjoint(sink) {
             // Do nothing.
           }
@@ -2108,6 +2245,17 @@ impl<T: ZeroBits + 'static> SumJoinOpExt<GPUDeviceOuterBatchArray3d<T>> for SumJ
 
   fn build_inplace(xs_: Vec<Val<GPUDeviceOuterBatchArray3d<T>>>) -> (Val<GPUDeviceOuterBatchArray3d<T>>, Vec<Val<GPUDeviceOuterBatchArray3d<T>>>) {
     //println!("DEBUG: SumJoinOp: build inplace");
+    SumJoinOp::build_inplace_device_op(xs_)
+  }
+}
+
+impl<T: ZeroBits + 'static> SumJoinOpExt<GPUDeviceOuterBatchArray4d<T>> for SumJoinOp
+{
+  fn build(xs_: Vec<Val<GPUDeviceOuterBatchArray4d<T>>>) -> Val<GPUDeviceOuterBatchArray4d<T>> {
+    SumJoinOp::build_device_op(xs_)
+  }
+
+  fn build_inplace(xs_: Vec<Val<GPUDeviceOuterBatchArray4d<T>>>) -> (Val<GPUDeviceOuterBatchArray4d<T>>, Vec<Val<GPUDeviceOuterBatchArray4d<T>>>) {
     SumJoinOp::build_inplace_device_op(xs_)
   }
 }

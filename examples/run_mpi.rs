@@ -1,6 +1,6 @@
 extern crate anode;
 
-#[cfg(feature = "mpi")] use anode::proc::*;
+#[cfg(feature = "mpi")] use anode::proc_dist::*;
 
 #[cfg(not(feature = "mpi"))]
 fn main() {
