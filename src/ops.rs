@@ -149,15 +149,16 @@ pub struct Conv2dShape {
   pub src_space_axes:   [isize; 2],
   pub src_feature_axis: isize,
   pub src_batch_axis:   isize,
-  pub src_size:         [usize; 3],
-  //pub src_size:         [usize; 2],
-  //pub src_features:     usize,
+  //pub src_size:         [usize; 3],
+  pub src_dims:         [usize; 2],
+  pub src_features:     usize,
   pub dst_space_axes:   [isize; 2],
   pub dst_feature_axis: isize,
   pub dst_batch_axis:   isize,
   pub ker_space_axes:   [isize; 2],
   pub ker_output_axis:  isize,
-  pub ker_size:         [usize; 2],
+  //pub ker_size:         [usize; 2],
+  pub ker_dims:         [usize; 2],
   pub features:         usize,
   pub dilation:         [usize; 2],
   pub stride:           [usize; 2],
@@ -174,13 +175,16 @@ impl Conv2dShape {
       src_space_axes:   [0, 1],
       src_feature_axis: 2,
       src_batch_axis:   3,
-      src_size:         [0, 0, 0],
+      //src_size:         [0, 0, 0],
+      src_dims:         [0, 0],
+      src_features:     0,
       dst_space_axes:   [0, 1],
       dst_feature_axis: 2,
       dst_batch_axis:   3,
       ker_space_axes:   [0, 1],
       ker_output_axis:  3,
-      ker_size:         [0, 0],
+      //ker_size:         [0, 0],
+      ker_dims:         [0, 0],
       features:         0,
       dilation:         [1, 1],
       stride:           [1, 1],
@@ -197,13 +201,16 @@ impl Conv2dShape {
       src_space_axes:   [1, 2],
       src_feature_axis: 0,
       src_batch_axis:   3,
-      src_size:         [0, 0, 0],
+      //src_size:         [0, 0, 0],
+      src_dims:         [0, 0],
+      src_features:     0,
       dst_space_axes:   [1, 2],
       dst_feature_axis: 0,
       dst_batch_axis:   3,
       ker_space_axes:   [0, 1],
       ker_output_axis:  3,
-      ker_size:         [0, 0],
+      //ker_size:         [0, 0],
+      ker_dims:         [0, 0],
       features:         0,
       dilation:         [1, 1],
       stride:           [1, 1],
@@ -220,13 +227,16 @@ impl Conv2dShape {
       src_space_axes:   [1, 2],
       src_feature_axis: 3,
       src_batch_axis:   0,
-      src_size:         [0, 0, 0],
+      //src_size:         [0, 0, 0],
+      src_dims:         [0, 0],
+      src_features:     0,
       dst_space_axes:   [1, 2],
       dst_feature_axis: 3,
       dst_batch_axis:   0,
       ker_space_axes:   [0, 1],
       ker_output_axis:  3,
-      ker_size:         [0, 0],
+      //ker_size:         [0, 0],
+      ker_dims:         [0, 0],
       features:         0,
       dilation:         [1, 1],
       stride:           [1, 1],
@@ -234,28 +244,38 @@ impl Conv2dShape {
     }
   }
 
-  pub fn calculate_output_size(&self, w_size: [usize; 4], x_size: [usize; 3]) -> [usize; 3] {
+  pub fn calculate_input_size(&self) -> [usize; 3] {
+    let src_x = self.src_dims[0];
+    let src_y = self.src_dims[1];
+    let mut src_size = [0, 0, 0];
+    src_size[self.src_space_axes[0] as usize] = src_x;
+    src_size[self.src_space_axes[1] as usize] = src_y;
+    src_size[self.src_feature_axis as usize] = self.src_features;
+    src_size
+  }
+
+  pub fn _calculate_output_size(&self, w_size: [usize; 4], x_size: [usize; 3]) -> [usize; 3] {
     let src_w = x_size[self.src_space_axes[0] as usize];
     let src_h = x_size[self.src_space_axes[1] as usize];
     let dst_c = w_size[self.ker_output_axis as usize];
-    assert_eq!(src_w, self.src_size[0]);
-    assert_eq!(src_h, self.src_size[1]);
+    assert_eq!(src_w, self.src_dims[0]);
+    assert_eq!(src_h, self.src_dims[1]);
     assert_eq!(dst_c, self.features);
-    self._calculate_output_size()
+    self.calculate_output_size()
   }
 
-  pub fn _calculate_output_size(&self) -> [usize; 3] {
+  pub fn calculate_output_size(&self) -> [usize; 3] {
     // TODO: this assumes NCHW layout.
-    assert!(self.ker_size[0] >= 1);
-    assert!(self.ker_size[1] >= 1);
+    assert!(self.ker_dims[0] >= 1);
+    assert!(self.ker_dims[1] >= 1);
     assert!(self.dilation[0] >= 1);
     assert!(self.dilation[1] >= 1);
     assert!(self.stride[0] >= 1);
     assert!(self.stride[1] >= 1);
-    let src_w = self.src_size[0];
-    let src_h = self.src_size[1];
-    let dst_w = 1 + (src_w + 2 * self.zero_pad[0] - (((self.ker_size[0] - 1) * self.dilation[0]) + 1)) / self.stride[0];
-    let dst_h = 1 + (src_h + 2 * self.zero_pad[1] - (((self.ker_size[1] - 1) * self.dilation[1]) + 1)) / self.stride[1];
+    let src_w = self.src_dims[0];
+    let src_h = self.src_dims[1];
+    let dst_w = 1 + (src_w + 2 * self.zero_pad[0] - (((self.ker_dims[0] - 1) * self.dilation[0]) + 1)) / self.stride[0];
+    let dst_h = 1 + (src_h + 2 * self.zero_pad[1] - (((self.ker_dims[1] - 1) * self.dilation[1]) + 1)) / self.stride[1];
     let mut dst_size = [0, 0, 0];
     dst_size[self.dst_space_axes[0] as usize] = dst_w;
     dst_size[self.dst_space_axes[1] as usize] = dst_h;

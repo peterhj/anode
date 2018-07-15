@@ -139,9 +139,9 @@ fn build_linear(x: Val<GPUDeviceOuterBatchArray1d<f32>>, src_ch: usize, dst_ch: 
 
 fn _build_batch_norm_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<bool>, avg_rate: Val<f32>, conv_shape: Conv2dShape, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
   let w = src(GPUDeviceArray4d::<f32>::kaiming_conv2d_init(
-      [conv_shape.ker_size[0], conv_shape.ker_size[1], conv_shape.src_size[2], conv_shape.features],
-      conv_shape.ker_size,
-      conv_shape.src_size[2],
+      [conv_shape.ker_dims[0], conv_shape.ker_dims[1], conv_shape.src_features, conv_shape.features],
+      conv_shape.ker_dims,
+      conv_shape.src_features,
       conv_shape.features,
       &mut thread_rng()));
   params.push_val(w.clone());
@@ -151,9 +151,9 @@ fn _build_batch_norm_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<b
 
 fn build_batch_norm_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<bool>, avg_rate: Val<f32>, conv_shape: Conv2dShape, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
   let w = src(GPUDeviceArray4d::<f32>::kaiming_conv2d_init(
-      [conv_shape.ker_size[0], conv_shape.ker_size[1], conv_shape.src_size[2], conv_shape.features],
-      conv_shape.ker_size,
-      conv_shape.src_size[2],
+      [conv_shape.ker_dims[0], conv_shape.ker_dims[1], conv_shape.src_features, conv_shape.features],
+      conv_shape.ker_dims,
+      conv_shape.src_features,
       conv_shape.features,
       &mut thread_rng()));
   params.push_val(w.clone());
@@ -176,7 +176,7 @@ fn build_batch_norm_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<bo
 fn build_residual2_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<bool>, avg_rate: Val<f32>, conv_shape: Conv2dShape, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
   // TODO
   let mut conv1 = conv_shape;
-  conv1.ker_size = [3, 3];
+  conv1.ker_dims = [3, 3];
   conv1.stride = [1, 1];
   conv1.zero_pad = [1, 1];
   let y = build_batch_norm_conv(x.clone(), online.clone(), avg_rate.clone(), conv1, params, online_stats, avg_stats);
@@ -184,7 +184,7 @@ fn build_residual2_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<boo
   let y = y.positive_clip_inplace();
   // TODO
   let mut conv2 = conv_shape;
-  conv2.ker_size = [3, 3];
+  conv2.ker_dims = [3, 3];
   conv2.stride = [1, 1];
   conv2.zero_pad = [1, 1];
   let y = build_batch_norm_conv(y, online.clone(), avg_rate.clone(), conv2, params, online_stats, avg_stats);
@@ -195,29 +195,29 @@ fn build_residual2_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<boo
   y
 }
 
-fn build_proj_residual2_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<bool>, avg_rate: Val<f32>, conv_shape: Conv2dShape, src_size: [usize; 2], src_features: usize, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+fn build_proj_residual2_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<bool>, avg_rate: Val<f32>, conv_shape: Conv2dShape, src_dims: [usize; 2], src_features: usize, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
   // TODO
   let mut conv1 = conv_shape;
-  conv1.src_size[0] = src_size[0];
-  conv1.src_size[1] = src_size[1];
-  conv1.src_size[2] = src_features;
-  conv1.ker_size = [3, 3];
+  conv1.src_dims[0] = src_dims[0];
+  conv1.src_dims[1] = src_dims[1];
+  conv1.src_features = src_features;
+  conv1.ker_dims = [3, 3];
   conv1.zero_pad = [1, 1];
   let y = build_batch_norm_conv(x.clone(), online.clone(), avg_rate.clone(), conv1, params, online_stats, avg_stats);
   //let y = y.positive_clip();
   let y = y.positive_clip_inplace();
   // TODO
   let mut conv2 = conv_shape;
-  conv2.ker_size = [3, 3];
+  conv2.ker_dims = [3, 3];
   conv2.stride = [1, 1];
   conv2.zero_pad = [1, 1];
   let y = build_batch_norm_conv(y, online.clone(), avg_rate.clone(), conv2, params, online_stats, avg_stats);
   // TODO
   let mut proj_conv = conv_shape;
-  proj_conv.src_size[0] = src_size[0];
-  proj_conv.src_size[1] = src_size[1];
-  proj_conv.src_size[2] = src_features;
-  proj_conv.ker_size = [1, 1];
+  proj_conv.src_dims[0] = src_dims[0];
+  proj_conv.src_dims[1] = src_dims[1];
+  proj_conv.src_features = src_features;
+  proj_conv.ker_dims = [1, 1];
   proj_conv.zero_pad = [0, 0];
   let proj = build_batch_norm_conv(x, online.clone(), avg_rate.clone(), proj_conv, params, online_stats, avg_stats);
   let y = proj + y;
@@ -230,8 +230,8 @@ fn build_proj_residual2_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Va
 fn build_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<bool>, avg_rate: Val<f32>, conv_shape: Conv2dShape, expand: usize, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
   // TODO
   let mut conv1 = conv_shape;
-  conv1.src_size[2] *= expand;
-  conv1.ker_size = [1, 1];
+  conv1.src_features *= expand;
+  conv1.ker_dims = [1, 1];
   conv1.stride = [1, 1];
   conv1.zero_pad = [0, 0];
   let y = build_batch_norm_conv(x.clone(), online.clone(), avg_rate.clone(), conv1, params, online_stats, avg_stats);
@@ -239,7 +239,7 @@ fn build_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<boo
   let y = y.positive_clip_inplace();
   // TODO
   let mut conv2 = conv_shape;
-  conv2.ker_size = [3, 3];
+  conv2.ker_dims = [3, 3];
   conv2.stride = [1, 1];
   conv2.zero_pad = [1, 1];
   let y = build_batch_norm_conv(y, online.clone(), avg_rate.clone(), conv2, params, online_stats, avg_stats);
@@ -247,7 +247,7 @@ fn build_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<boo
   let y = y.positive_clip_inplace();
   // TODO
   let mut conv3 = conv_shape;
-  conv3.ker_size = [1, 1];
+  conv3.ker_dims = [1, 1];
   conv3.features *= expand;
   conv3.stride = [1, 1];
   conv3.zero_pad = [0, 0];
@@ -259,20 +259,20 @@ fn build_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<boo
   y
 }
 
-fn build_proj_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<bool>, avg_rate: Val<f32>, conv_shape: Conv2dShape, src_size: [usize; 2], src_features: usize, expand: usize, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+fn build_proj_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Val<bool>, avg_rate: Val<f32>, conv_shape: Conv2dShape, src_dims: [usize; 2], src_features: usize, expand: usize, params: &mut NodeVec, online_stats: &mut NodeVec, avg_stats: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
   // TODO
   let mut conv1 = conv_shape;
-  conv1.src_size[0] = src_size[0];
-  conv1.src_size[1] = src_size[1];
-  conv1.src_size[2] = src_features;
-  conv1.ker_size = [1, 1];
+  conv1.src_dims[0] = src_dims[0];
+  conv1.src_dims[1] = src_dims[1];
+  conv1.src_features = src_features;
+  conv1.ker_dims = [1, 1];
   conv1.zero_pad = [0, 0];
   let y = build_batch_norm_conv(x.clone(), online.clone(), avg_rate.clone(), conv1, params, online_stats, avg_stats);
   //let y = y.positive_clip();
   let y = y.positive_clip_inplace();
   // TODO
   let mut conv2 = conv_shape;
-  conv2.ker_size = [3, 3];
+  conv2.ker_dims = [3, 3];
   conv2.stride = [1, 1];
   conv2.zero_pad = [1, 1];
   let y = build_batch_norm_conv(y, online.clone(), avg_rate.clone(), conv2, params, online_stats, avg_stats);
@@ -280,17 +280,17 @@ fn build_proj_residual3_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, online: Va
   let y = y.positive_clip_inplace();
   // TODO
   let mut conv3 = conv_shape;
-  conv3.ker_size = [1, 1];
+  conv3.ker_dims = [1, 1];
   conv3.features *= expand;
   conv3.stride = [1, 1];
   conv3.zero_pad = [0, 0];
   let y = build_batch_norm_conv(y, online.clone(), avg_rate.clone(), conv3, params, online_stats, avg_stats);
   // TODO
   let mut proj_conv = conv_shape;
-  proj_conv.src_size[0] = src_size[0];
-  proj_conv.src_size[1] = src_size[1];
-  proj_conv.src_size[2] = src_features;
-  proj_conv.ker_size = [1, 1];
+  proj_conv.src_dims[0] = src_dims[0];
+  proj_conv.src_dims[1] = src_dims[1];
+  proj_conv.src_features = src_features;
+  proj_conv.ker_dims = [1, 1];
   proj_conv.features *= expand;
   proj_conv.zero_pad = [0, 0];
   let proj = build_batch_norm_conv(x, online.clone(), avg_rate.clone(), proj_conv, params, online_stats, avg_stats);
@@ -315,8 +315,9 @@ fn build_resnet2(batch_sz: usize, n2: usize, n3: usize, n4: usize, n5: usize) ->
   let x = image_var.clone().dequantize(0.0_f32, 1.0_f32);
 
   let mut conv1 = Conv2dShape::default_nchw();
-  conv1.src_size = [224, 224, 3];
-  conv1.ker_size = [3, 3];
+  conv1.src_dims = [224, 224];
+  conv1.src_features = 3;
+  conv1.ker_dims = [3, 3];
   conv1.features = 64;
   conv1.stride = [2, 2];
   conv1.zero_pad = [1, 1];
@@ -335,8 +336,9 @@ fn build_resnet2(batch_sz: usize, n2: usize, n3: usize, n4: usize, n5: usize) ->
   let x = x.max_pool(pool1);
 
   let mut conv2 = Conv2dShape::default_nchw();
-  conv2.src_size = [56, 56, 64];
-  conv2.ker_size = [3, 3];
+  conv2.src_dims = [56, 56];
+  conv2.src_features = 64;
+  conv2.ker_dims = [3, 3];
   conv2.features = 64;
   conv2.stride = [1, 1];
   //conv2.stride = [2, 2];
@@ -349,8 +351,9 @@ fn build_resnet2(batch_sz: usize, n2: usize, n3: usize, n4: usize, n5: usize) ->
   }
 
   let mut conv3 = Conv2dShape::default_nchw();
-  conv3.src_size = [28, 28, 128];
-  conv3.ker_size = [3, 3];
+  conv3.src_dims = [28, 28];
+  conv3.src_features = 128;
+  conv3.ker_dims = [3, 3];
   conv3.features = 128;
   //conv3.stride = [1, 1];
   conv3.stride = [2, 2];
@@ -363,8 +366,9 @@ fn build_resnet2(batch_sz: usize, n2: usize, n3: usize, n4: usize, n5: usize) ->
   }
 
   let mut conv4 = Conv2dShape::default_nchw();
-  conv4.src_size = [14, 14, 256];
-  conv4.ker_size = [3, 3];
+  conv4.src_dims = [14, 14];
+  conv4.src_features = 256;
+  conv4.ker_dims = [3, 3];
   conv4.features = 256;
   //conv4.stride = [1, 1];
   conv4.stride = [2, 2];
@@ -377,8 +381,9 @@ fn build_resnet2(batch_sz: usize, n2: usize, n3: usize, n4: usize, n5: usize) ->
   }
 
   let mut conv5 = Conv2dShape::default_nchw();
-  conv5.src_size = [7, 7, 512];
-  conv5.ker_size = [3, 3];
+  conv5.src_dims = [7, 7];
+  conv5.src_features = 512;
+  conv5.ker_dims = [3, 3];
   conv5.features = 512;
   //conv5.stride = [1, 1];
   conv5.stride = [2, 2];
@@ -425,8 +430,9 @@ fn build_resnet3(batch_sz: usize, n2: usize, n3: usize, n4: usize, n5: usize) ->
   let x = image_var.clone().dequantize(0.0_f32, 1.0_f32);
 
   let mut conv1 = Conv2dShape::default_nchw();
-  conv1.src_size = [224, 224, 3];
-  conv1.ker_size = [3, 3];
+  conv1.src_dims = [224, 224];
+  conv1.src_features = 3;
+  conv1.ker_dims = [3, 3];
   conv1.features = 64;
   conv1.stride = [2, 2];
   conv1.zero_pad = [1, 1];
@@ -445,8 +451,9 @@ fn build_resnet3(batch_sz: usize, n2: usize, n3: usize, n4: usize, n5: usize) ->
   let x = x.max_pool(pool1);
 
   let mut conv2 = Conv2dShape::default_nchw();
-  conv2.src_size = [56, 56, 64];
-  conv2.ker_size = [3, 3];
+  conv2.src_dims = [56, 56];
+  conv2.src_features = 64;
+  conv2.ker_dims = [3, 3];
   conv2.features = 64;
   conv2.stride = [1, 1];
   //conv2.stride = [2, 2];
@@ -459,8 +466,9 @@ fn build_resnet3(batch_sz: usize, n2: usize, n3: usize, n4: usize, n5: usize) ->
   }
 
   let mut conv3 = Conv2dShape::default_nchw();
-  conv3.src_size = [28, 28, 128];
-  conv3.ker_size = [3, 3];
+  conv3.src_dims = [28, 28];
+  conv3.src_features = 128;
+  conv3.ker_dims = [3, 3];
   conv3.features = 128;
   //conv3.stride = [1, 1];
   conv3.stride = [2, 2];
@@ -473,8 +481,9 @@ fn build_resnet3(batch_sz: usize, n2: usize, n3: usize, n4: usize, n5: usize) ->
   }
 
   let mut conv4 = Conv2dShape::default_nchw();
-  conv4.src_size = [14, 14, 256];
-  conv4.ker_size = [3, 3];
+  conv4.src_dims = [14, 14];
+  conv4.src_features = 256;
+  conv4.ker_dims = [3, 3];
   conv4.features = 256;
   //conv4.stride = [1, 1];
   conv4.stride = [2, 2];
@@ -487,8 +496,9 @@ fn build_resnet3(batch_sz: usize, n2: usize, n3: usize, n4: usize, n5: usize) ->
   }
 
   let mut conv5 = Conv2dShape::default_nchw();
-  conv5.src_size = [7, 7, 512];
-  conv5.ker_size = [3, 3];
+  conv5.src_dims = [7, 7];
+  conv5.src_features = 512;
+  conv5.ker_dims = [3, 3];
   conv5.features = 512;
   //conv5.stride = [1, 1];
   conv5.stride = [2, 2];
