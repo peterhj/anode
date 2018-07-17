@@ -31,6 +31,38 @@ use std::path::{PathBuf};
 use std::rc::{Rc};
 use std::sync::{Arc};
 
+pub trait XavierLinearInit<T, R: Rng> {
+  type RValue;
+
+  fn xavier_linear_init(src: usize, dst: usize, seed_rng: &mut R) -> Self::RValue;
+}
+
+impl<R: Rng> XavierLinearInit<f32, R> for GPUDeviceArray2d<f32> {
+  type RValue = Rc<Fn(Txn, GPUDeviceConn) -> Self>;
+
+  fn xavier_linear_init(src_ch: usize, dst_ch: usize, seed_rng: &mut R) -> Self::RValue {
+    //let seed = seed_rng.next_u64();
+    Rc::new(move |_, conn: GPUDeviceConn| {
+      // TODO: seed the local rng here.
+      let shape = [dst_ch, src_ch];
+      let mut h_arr = MemArray2d::<f32>::zeros(shape);
+      {
+        let half_width = (6.0 / (src_ch + dst_ch) as f64).sqrt();
+        let dist = Uniform::new_inclusive(-0.01, 0.01);
+        //let dist = Uniform::new_inclusive(-half_width, half_width);
+        let mut v = h_arr.as_view_mut();
+        let xs = v.flat_slice_mut().unwrap();
+        for x in xs.iter_mut() {
+          *x = dist.sample(&mut thread_rng()) as f32;
+        }
+      }
+      let mut arr = GPUDeviceArray2d::<f32>::zeros(shape, conn.clone());
+      arr.as_view_mut().sync_copy_mem(h_arr.as_view(), conn.clone());
+      arr
+    })
+  }
+}
+
 pub trait KaimingConv2dInit<T, R: Rng> {
   type RValue;
 
@@ -55,12 +87,21 @@ impl<R: Rng> KaimingConv2dInit<f32, R> for GPUDeviceArray4d<f32> {
         for x in xs.iter_mut() {
           *x = dist.sample(&mut thread_rng()) as f32;
         }
+        println!("DEBUG: kaiming conv2d: {} {:?} {:?}",
+            xs.len(), &xs[ .. 10], &xs[xs.len() - 10 .. ]);
       }
       let mut arr = GPUDeviceArray4d::<f32>::zeros(shape, conn.clone());
       arr.as_view_mut().sync_copy_mem(h_arr.as_view(), conn.clone());
       arr
     })
   }
+}
+
+fn build_linear(x: Val<GPUDeviceOuterBatchArray1d<f32>>, src_ch: usize, dst_ch: usize, params: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
+  let w = src(GPUDeviceArray2d::<f32>::xavier_linear_init(src_ch, dst_ch, &mut thread_rng()));
+  params.push_val(w.clone());
+  let x = w.mult(x);
+  x
 }
 
 fn build_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, conv_shape: Conv2dShape, params: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
@@ -74,7 +115,27 @@ fn build_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, conv_shape: Conv2dShape, 
   x
 }
 
-fn build_convnet(batch_sz: usize) {
+fn build_linearnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GPUDeviceOuterBatchScalar<u32>>, Val<GPUDeviceOuterBatchArray1d<f32>>, Val<GPUDeviceScalar<f32>>, NodeVec) {
+  let mut params = NodeVec::default();
+
+  let image_var = src(GPUDeviceOuterBatchArray3d::<u8>::zeros_init(([28, 28, 1], batch_sz)));
+  let label_var = src(GPUDeviceOuterBatchScalar::<u32>::zeros_init(batch_sz));
+
+  let x = image_var.clone().dequantize(0.0_f32, 1.0_f32);
+
+  let x = x.flatten();
+
+  let x = build_linear(x, 28 * 28 * 1, 10, &mut params);
+
+  let logit_var = x.clone();
+
+  let (nll, _) = x.softmax_categorical_nll(label_var.clone());
+  let loss_var = nll.batch_sum();
+
+  (image_var, label_var, logit_var, loss_var, params)
+}
+
+fn build_convnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GPUDeviceOuterBatchScalar<u32>>, Val<GPUDeviceOuterBatchArray1d<f32>>, Val<GPUDeviceScalar<f32>>, NodeVec) {
   let mut params = NodeVec::default();
 
   let image_var = src(GPUDeviceOuterBatchArray3d::<u8>::zeros_init(([28, 28, 1], batch_sz)));
@@ -91,7 +152,7 @@ fn build_convnet(batch_sz: usize) {
   conv1.zero_pad = [2, 2];
 
   let x = build_conv(x, conv1, &mut params);
-  let x = x.positive_clip_inplace();
+  let x = x.positive_clip();
 
   let mut conv1_2 = Conv2dShape::default_nchw();
   conv1_2.src_dims = [28, 28];
@@ -102,7 +163,7 @@ fn build_convnet(batch_sz: usize) {
   conv1_2.zero_pad = [1, 1];
 
   let x = build_conv(x, conv1_2, &mut params);
-  let x = x.positive_clip_inplace();
+  let x = x.positive_clip();
 
   let mut conv2_1 = Conv2dShape::default_nchw();
   conv2_1.src_dims = [28, 28];
@@ -113,7 +174,7 @@ fn build_convnet(batch_sz: usize) {
   conv2_1.zero_pad = [1, 1];
 
   let x = build_conv(x, conv2_1, &mut params);
-  let x = x.positive_clip_inplace();
+  let x = x.positive_clip();
 
   let mut conv2_2 = Conv2dShape::default_nchw();
   conv2_2.src_dims = [14, 14];
@@ -124,7 +185,7 @@ fn build_convnet(batch_sz: usize) {
   conv2_2.zero_pad = [1, 1];
 
   let x = build_conv(x, conv2_2, &mut params);
-  let x = x.positive_clip_inplace();
+  let x = x.positive_clip();
 
   let mut conv3_1 = Conv2dShape::default_nchw();
   conv3_1.src_dims = [14, 14];
@@ -135,7 +196,7 @@ fn build_convnet(batch_sz: usize) {
   conv3_1.zero_pad = [1, 1];
 
   let x = build_conv(x, conv3_1, &mut params);
-  let x = x.positive_clip_inplace();
+  let x = x.positive_clip();
 
   let mut conv3_2 = Conv2dShape::default_nchw();
   conv3_2.src_dims = [7, 7];
@@ -146,11 +207,27 @@ fn build_convnet(batch_sz: usize) {
   conv3_2.zero_pad = [1, 1];
 
   let x = build_conv(x, conv3_2, &mut params);
-  let x = x.positive_clip_inplace();
+  let x = x.positive_clip();
 
+  let mut avg_pool = Pool2dShape::default_nchw();
+  avg_pool.src_size = [7, 7];
+  avg_pool.src_features = 64;
+  avg_pool.ker_size = [7, 7];
+  avg_pool.stride = [1, 1];
+  //avg_pool.stride = [7, 7];
+  avg_pool.zero_pad = [0, 0];
+
+  let x = x.average_pool(avg_pool);
   let x = x.flatten();
 
-  // TODO
+  let x = build_linear(x, 1 * 1 * 64, 10, &mut params);
+
+  let logit_var = x.clone();
+
+  let (nll, _) = x.softmax_categorical_nll(label_var.clone());
+  let loss_var = nll.batch_sum();
+
+  (image_var, label_var, logit_var, loss_var, params)
 }
 
 fn main() {
@@ -167,8 +244,10 @@ fn main() {
 
       let num_classes = 10;
 
-      let batch_sz = 32;
+      //let batch_sz = 32;
+      let batch_sz = 128;
       let batch_reps = 1;
+      let display_interval = 100;
 
       let train_iter = {
         train_data
@@ -176,7 +255,27 @@ fn main() {
           .batch_data(batch_sz)
       };
 
+      let (image_var, label_var, logit_var, loss_var, params) = build_linearnet(batch_sz);
+      //let (image_var, label_var, logit_var, loss_var, params) = build_convnet(batch_sz);
+
+      let mut loss_sink = sink(loss_var.clone());
+      let params = params.reversed();
+      let grads = params.adjoints(&mut loss_sink);
+
       let batch_avg_rate = src_init(0.0_f32);
+      let step_size = src_init(0.0_f32);
+      let momentum = src_init(0.0_f32);
+
+      let batch_grads_vec = grads.clone().vectorize();
+      //let avg_grads_vec = zeros_like(batch_grads_vec.clone()).online_average(batch_avg_rate.clone(), batch_grads_vec.clone());
+      let params_vec = params.clone().vectorize();
+      let grad_vec_step = params_vec.clone().gradient_momentum_step(step_size.clone(), momentum.clone(), batch_grads_vec.clone());
+      let params_devec = params_vec.clone().devectorize(params.clone());
+
+      let init_txn = txn();
+      params.persist(init_txn);
+      println!("DEBUG: train: params count: {}", params.serialize_vec(init_txn, &mut ()));
+      //println!("DEBUG: train: grads count:  {}", grads.serialize_vec(init_txn, &mut ()));
 
       let mut stopwatch = Stopwatch::new();
 
@@ -186,6 +285,7 @@ fn main() {
       let mut loss: f32 = 0.0;
 
       let mut labels = Vec::<u32>::with_capacity(batch_sz);
+      let mut count = 0;
       let mut acc_ct = 0;
       let mut loss_sum: f32 = 0.0;
 
@@ -193,26 +293,70 @@ fn main() {
         let iter_nr = batch_nr / batch_reps;
         let rep_nr = batch_nr % batch_reps;
 
+        for (idx, (image, label)) in batch.into_iter().enumerate() {
+          // TODO
+          image_data.flat_view_mut().unwrap()
+            .as_mut_slice()[idx * 28 * 28 * 1 .. (idx + 1) * 28 * 28 * 1]
+            .copy_from_slice(image.flat_view().unwrap().as_slice());
+          label_data.as_view_mut().as_mut_slice()[idx] = label;
+        }
+
         let batch_txn = txn();
-        /*image_var.deserialize(batch_txn, &mut image_data);
+        image_var.deserialize(batch_txn, &mut image_data);
         label_var.deserialize(batch_txn, &mut label_data);
         params.persist(batch_txn);
         loss_var.eval(batch_txn);
         grads.eval(batch_txn);
-        batch_avg_rate.set(batch_txn, 1.0 / (rep_nr + 1) as f32);
         batch_grads_vec.eval(batch_txn);
-        avg_grads_vec.eval(batch_txn);
+        //batch_avg_rate.set(batch_txn, 1.0 / (rep_nr + 1) as f32);
+        //avg_grads_vec.eval(batch_txn);
         logit_var.serialize(batch_txn, &mut logit_data);
         loss_var.serialize(batch_txn, &mut loss);
-        loss_sum += loss;*/
+
+        count += batch_sz;
+        for idx in 0 .. batch_sz {
+          let label = label_data.as_view().as_slice()[idx];
+          let k = _arg_max(&logit_data.flat_view().unwrap().as_slice()[num_classes * idx .. num_classes * (idx + 1)]);
+          if k == label as _ {
+            acc_ct += 1;
+          }
+        }
+        loss_sum += loss;
 
         if rep_nr == batch_reps - 1 {
           let step_txn = txn();
           // TODO
+          //step_size.set(step_txn, 0.0);
+          step_size.set(step_txn, -0.01 / batch_sz as f32);
+          momentum.set(step_txn, 0.0);
+          params.persist(step_txn);
+          batch_grads_vec.persist(step_txn);
+          //avg_grads_vec.persist(step_txn);
+          assert!(grad_vec_step.eval(step_txn));
 
           let update_txn = txn();
-          /*params_vec.persist(update_txn);
-          assert!(params_devec.eval(update_txn));*/
+          params_vec.persist(update_txn);
+          assert!(params_devec.eval(update_txn));
+        }
+
+        if rep_nr == batch_reps - 1 && ((iter_nr + 1) % display_interval == 0 || iter_nr < display_interval) {
+          println!("DEBUG: train: iters: {} acc: {:.4} ({}/{}) loss: {:.6} elapsed: {:.6} s",
+              iter_nr + 1,
+              acc_ct as f64 / count as f64,
+              acc_ct,
+              count,
+              loss_sum / count as f32,
+              stopwatch.click().lap_time());
+          println!("DEBUG: train:   logits: {:?}", &logit_data.flat_view().unwrap().as_slice()[ .. num_classes]);
+          println!("DEBUG: train:   logits: {:?}", &logit_data.flat_view().unwrap().as_slice()[(batch_sz - 1) * num_classes .. ]);
+          //println!("DEBUG: train:   nll: {:?}", &logit_data.flat_view().unwrap().as_slice()[(batch_sz - 1) * num_classes .. ]);
+          count = 0;
+          acc_ct = 0;
+          loss_sum = 0.0;
+        }
+
+        if rep_nr == batch_reps - 1 && (iter_nr + 1) * batch_sz >= 5 * 60000 {
+          break;
         }
       }
     }).unwrap().join();

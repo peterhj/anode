@@ -431,6 +431,7 @@ impl DequantizeOp<f32> {
                 if x.is_packed() && y.is_packed() {
                   let x = x.flat_view().unwrap();
                   let mut y = y.flat_view_mut().unwrap();
+                  assert_eq!(x.size(), y.size());
                   let mut stream = conn.cuda_stream();
                   unsafe { anode_gpu_dequantize_u8_packed_f32(
                       sz2uint(x.size()),
@@ -5625,13 +5626,17 @@ impl LinearOp {
             let mut guard = section.enter(conn.clone());
             match cap {
               WriteCap::Assign => {
-                let w = w_.get(txn).as_view();
-                let x = x_.get(txn).as_view();
-                let mut y = output.get_mut(txn, token).as_view_mut();
+                let w = w_.get(txn);
+                let x = x_.get(txn);
+                let mut y = output.get_mut(txn, token);
                 guard._wait(w.async_state());
                 guard._wait(x.async_state());
                 guard._wait(y.async_state());
-                y.matrix_mult(w, x, conn);
+                assert_eq!(w.size()[1], x.size());
+                assert_eq!(w.size()[0], y.size());
+                // TODO: set batch size.
+                assert_eq!(x.batch_size(), y.batch_size());
+                y.as_view_mut().matrix_mult(w.as_view(), x.as_view(), conn);
               }
               WriteCap::Accumulate => unimplemented!(),
             }
