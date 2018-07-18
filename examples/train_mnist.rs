@@ -5,7 +5,7 @@ extern crate colorimage;
 extern crate gpudevicemem;
 extern crate memarray;
 extern crate rand;
-//extern crate rngtape;
+extern crate rngtape;
 extern crate sharedmem;
 extern crate superdata;
 
@@ -19,8 +19,8 @@ use gpudevicemem::*;
 use gpudevicemem::array::*;
 use memarray::*;
 use rand::prelude::*;
-use rand::distributions::{Distribution, Uniform, Normal};
-//use rngtape::*;
+use rand::distributions::{Distribution, Uniform, Normal, StandardNormal};
+use rngtape::*;
 use sharedmem::*;
 use superdata::*;
 use superdata::datasets::mnist::*;
@@ -40,7 +40,7 @@ pub trait NormalLinearInit<T, R: Rng> {
   fn normal_linear_init(std_dev: T, src: usize, dst: usize, rng: Rc<RefCell<R>>) -> Self::RValue;
 }
 
-impl<R: Rng> NormalLinearInit<f32, R> for GPUDeviceArray2d<f32> {
+impl<R: Rng + 'static> NormalLinearInit<f32, R> for GPUDeviceArray2d<f32> {
   type RValue = Rc<Fn(Txn, GPUDeviceConn) -> Self>;
 
   fn normal_linear_init(std_dev: f32, src_ch: usize, dst_ch: usize, rng: Rc<RefCell<R>>) -> Self::RValue {
@@ -48,12 +48,12 @@ impl<R: Rng> NormalLinearInit<f32, R> for GPUDeviceArray2d<f32> {
       let shape = [dst_ch, src_ch];
       let mut h_arr = MemArray2d::<f32>::zeros(shape);
       {
-        let dist = StandardNormal::new();
+        let dist = StandardNormal;
         let mut v = h_arr.as_view_mut();
         let xs = v.flat_slice_mut().unwrap();
         let mut rng = rng.borrow_mut();
         for x in xs.iter_mut() {
-          *x = rng.sample(&dist) as f32 * std_dev;
+          *x = rng.sample(dist) as f32 * std_dev;
         }
       }
       let mut arr = GPUDeviceArray2d::<f32>::zeros(shape, conn.clone());
@@ -128,7 +128,7 @@ impl<R: Rng> KaimingConv2dInit<f32, R> for GPUDeviceArray4d<f32> {
   }
 }
 
-fn build_linear_normal<R: Rng>(x: Val<GPUDeviceOuterBatchArray1d<f32>>, std_dev: f32, src_ch: usize, dst_ch: usize, rng: Rc<RefCell<R>>, params: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
+fn build_linear_normal<R: Rng + 'static>(x: Val<GPUDeviceOuterBatchArray1d<f32>>, std_dev: f32, src_ch: usize, dst_ch: usize, rng: Rc<RefCell<R>>, params: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
   let w = src(GPUDeviceArray2d::<f32>::normal_linear_init(std_dev, src_ch, dst_ch, rng));
   params.push_val(w.clone());
   let x = w.mult(x);
@@ -153,7 +153,7 @@ fn build_conv(x: Val<GPUDeviceOuterBatchArray3d<f32>>, conv_shape: Conv2dShape, 
   x
 }
 
-fn build_linearnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GPUDeviceOuterBatchScalar<u32>>, Val<GPUDeviceOuterBatchArray1d<f32>>, Val<GPUDeviceScalar<f32>>, NodeVec) {
+fn build_linearnet<R: Rng + 'static>(batch_sz: usize, rng: Rc<RefCell<R>>) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val<GPUDeviceOuterBatchScalar<u32>>, Val<GPUDeviceOuterBatchArray1d<f32>>, Val<GPUDeviceScalar<f32>>, NodeVec) {
   let mut params = NodeVec::default();
 
   let image_var = src(GPUDeviceOuterBatchArray3d::<u8>::zeros_init(([28, 28, 1], batch_sz)));
@@ -163,9 +163,8 @@ fn build_linearnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val
 
   let x = x.flatten();
 
-  // TODO
-  let x = build_linear(x, 28 * 28 * 1, 10, &mut params);
-  //let x = build_linear_normal(x, 0.01, 28 * 28 * 1, 10, rng.clone(), &mut params);
+  //let x = build_linear(x, 28 * 28 * 1, 10, &mut params);
+  let x = build_linear_normal(x, 0.01, 28 * 28 * 1, 10, rng.clone(), &mut params);
 
   let logit_var = x.clone();
 
@@ -276,8 +275,7 @@ fn main() {
     node.spawn(|proc| {
       println!("DEBUG: hello world: {}", proc.rank());
 
-      // TODO
-      //let rng = Rc::new(RefCell::new(ReplayTapeRng::open(PathBuf::from("rngtape.bin"))));
+      let rng = Rc::new(RefCell::new(ReplayTapeRng::open(PathBuf::from("test_data/mnist_tape.bin"))));
 
       let mut dataset_cfg = MnistConfig::default();
       dataset_cfg.path = Some(PathBuf::from("../datasets/mnist"));
@@ -290,15 +288,15 @@ fn main() {
       //let batch_sz = 32;
       let batch_sz = 128;
       let batch_reps = 1;
-      let display_interval = 100;
+      let display_interval = 1;
 
       let train_iter = {
         train_data
-          .uniform_random(&mut thread_rng())
+          .uniform_random_shared_rng(rng.clone())
           .batch_data(batch_sz)
       };
 
-      let (image_var, label_var, logit_var, loss_var, params) = build_linearnet(batch_sz);
+      let (image_var, label_var, logit_var, loss_var, params) = build_linearnet(batch_sz, rng.clone());
       //let (image_var, label_var, logit_var, loss_var, params) = build_convnet(batch_sz);
 
       let mut loss_sink = sink(loss_var.clone());
@@ -317,8 +315,17 @@ fn main() {
 
       let init_txn = txn();
       params.persist(init_txn);
-      println!("DEBUG: train: params count: {}", params.serialize_vec(init_txn, &mut ()));
-      //println!("DEBUG: train: grads count:  {}", grads.serialize_vec(init_txn, &mut ()));
+      let params_count = params.serialize_vec(init_txn, &mut ());
+      println!("DEBUG: train: params len: {}", params.len());
+      println!("DEBUG: train: params count: {}", params_count);
+      assert_eq!(params_count, 10 * 28 * 28);
+      println!("DEBUG: train: grads len: {}", grads.len());
+
+      let mut params_h = MemArray1d::<f32>::zeros(params_count);
+      let mut grads_h = MemArray1d::<f32>::zeros(params_count);
+      assert_eq!(params_count, params.serialize_vec(init_txn, &mut params_h));
+      println!("DEBUG: train: init: w: {:?}", &params_h.flat_view().unwrap().as_slice()[ .. 10]);
+      println!("DEBUG: train: init: w: {:?}", &params_h.flat_view().unwrap().as_slice()[params_count - 10 .. ]);
 
       let mut stopwatch = Stopwatch::new();
 
@@ -350,7 +357,7 @@ fn main() {
         params.persist(batch_txn);
         loss_var.eval(batch_txn);
         grads.eval(batch_txn);
-        batch_grads_vec.eval(batch_txn);
+        //batch_grads_vec.eval(batch_txn);
         //batch_avg_rate.set(batch_txn, 1.0 / (rep_nr + 1) as f32);
         //avg_grads_vec.eval(batch_txn);
         logit_var.serialize(batch_txn, &mut logit_data);
@@ -368,18 +375,21 @@ fn main() {
 
         if rep_nr == batch_reps - 1 {
           let step_txn = txn();
-          // TODO
-          //step_size.set(step_txn, 0.0);
-          step_size.set(step_txn, -0.01 / batch_sz as f32);
+          step_size.set(step_txn, -0.003);
+          //step_size.set(step_txn, -0.01 / batch_sz as f32);
           momentum.set(step_txn, 0.0);
           params.persist(step_txn);
-          batch_grads_vec.persist(step_txn);
+          grads.persist(step_txn);
+          batch_grads_vec.eval(step_txn);
           //avg_grads_vec.persist(step_txn);
+          //assert_eq!(params_count, grads.serialize_vec(step_txn, &mut grads_h));
+          assert_eq!(params_count, batch_grads_vec.serialize_vec(step_txn, &mut grads_h));
           assert!(grad_vec_step.eval(step_txn));
 
           let update_txn = txn();
           params_vec.persist(update_txn);
           assert!(params_devec.eval(update_txn));
+          assert_eq!(params_count, params.serialize_vec(update_txn, &mut params_h));
         }
 
         if rep_nr == batch_reps - 1 && ((iter_nr + 1) % display_interval == 0 || iter_nr < display_interval) {
@@ -390,14 +400,24 @@ fn main() {
               count,
               loss_sum / count as f32,
               stopwatch.click().lap_time());
-          println!("DEBUG: train:   logits: {:?}", &logit_data.flat_view().unwrap().as_slice()[ .. num_classes]);
-          println!("DEBUG: train:   logits: {:?}", &logit_data.flat_view().unwrap().as_slice()[(batch_sz - 1) * num_classes .. ]);
+
+          //println!("DEBUG: train:   logits: {:?}", &logit_data.flat_view().unwrap().as_slice()[ .. num_classes]);
+          //println!("DEBUG: train:   logits: {:?}", &logit_data.flat_view().unwrap().as_slice()[(batch_sz - 1) * num_classes .. ]);
           //println!("DEBUG: train:   nll: {:?}", &logit_data.flat_view().unwrap().as_slice()[(batch_sz - 1) * num_classes .. ]);
+
+          println!("DEBUG: train:   w: {:?}", &params_h.flat_view().unwrap().as_slice()[100 .. 110]);
+          println!("DEBUG: train:   w: {:?}", &params_h.flat_view().unwrap().as_slice()[params_count - 110 .. params_count - 100]);
+          println!("DEBUG: train:   dw: {:?}", &grads_h.flat_view().unwrap().as_slice()[100 .. 110]);
+          println!("DEBUG: train:   dw: {:?}", &grads_h.flat_view().unwrap().as_slice()[params_count - 110 .. params_count - 100]);
+
           count = 0;
           acc_ct = 0;
           loss_sum = 0.0;
         }
 
+        if (iter_nr + 1) >= 50 {
+          break;
+        }
         if rep_nr == batch_reps - 1 && (iter_nr + 1) * batch_sz >= 5 * 60000 {
           break;
         }

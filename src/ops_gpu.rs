@@ -287,6 +287,7 @@ impl VectorizeOpExt<GPUDeviceArray1d<f32>> for VectorizeOp {
           RWVal::from(Arc::new(move |txn: Txn| {
             let src = src.clone();
             let count = src.serialize_vec(txn, &mut ());
+            println!("DEBUG: VectorizeOp: len: {} count: {}", src.len(), count);
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();

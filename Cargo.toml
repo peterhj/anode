@@ -22,7 +22,7 @@ walkdir = "*"
 
 [dev-dependencies]
 colorimage = { path = "../colorimage" }
-#rngtape = { path = "../rngtape" }
+rngtape = { path = "../rngtape" }
 stb_image = { path = "../rust-stb-image" }
 superdata = { path = "../superdata" }
 time = "*"

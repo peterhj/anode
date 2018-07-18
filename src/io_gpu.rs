@@ -35,7 +35,7 @@ use memarray::*;
 //use std::ops::{Add, Mul};
 //use std::sync::{Arc};
 
-impl<T> FlatIO<MemArray1d<T>> where T: Copy {
+/*impl<T> FlatIO<MemArray1d<T>> where T: Copy {
   pub fn len(&self) -> usize {
     self.buffer.size()
   }
@@ -227,7 +227,7 @@ impl<T> FlatIO<GPUDeviceArray1d<T>> where T: Copy {
     self.offset = next_offset;
     slice
   }
-}
+}*/
 
 impl<T> IOVal for RWVal<GPUDeviceScalar<T>> where T: ZeroBits + 'static {
   fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
@@ -352,7 +352,6 @@ impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
       let mut guard = section.enter(conn.clone());
       let x = self.get(txn, rvar);
       guard._wait(x.async_state());
-      //let mut dst_view = dst.next_view_mut(x.size());
       let mut dst_view = dst.as_view_mut().view_mut(off .. off + x.size());
       x.as_view().sync_dump_mem(dst_view, conn);
       return off + x.size();
@@ -365,9 +364,8 @@ impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
       let mut guard = section.enter(conn.clone());
       let x = self.get(txn, rvar);
       guard._wait(x.async_state());
-      //let mut dst_slice = dst.next_slice_mut(x.size());
+      guard._wait(dst.async_state());
       let mut dst_view = dst.as_view_mut().view_mut(off .. off + x.size());
-      guard._wait(dst_view.async_state());
       dst_view.copy(x.as_view(), conn);
       return off + x.size();
     }
@@ -404,8 +402,8 @@ impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
         let mut guard = section.enter(conn.clone());
         let mut x = self.get_mut(txn, rvar, xvar, token);
         guard._wait(x.async_state());
+        guard._wait(src.async_state());
         let src_view = src.as_view().view(off .. off + x.size());
-        guard._wait(src_view.async_state());
         match cap {
           WriteCap::Assign => {
             x.as_view_mut().copy(src_view, conn);
@@ -422,7 +420,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
 
 impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
   fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
-    if let Some(dst) = dst.downcast_mut::<ArrayIO<MemArray2d<T>>>() {
+    /*if let Some(dst) = dst.downcast_mut::<ArrayIO<MemArray2d<T>>>() {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
@@ -446,7 +444,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
       guard._wait(dst_slice.async_state());
       dst_slice.copy(x.flat_view().unwrap(), conn);
       return;
-    }
+    }*/
     unimplemented!();
   }
 
@@ -469,11 +467,11 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
       }
       return;
     }
-    if let Some(src) = src.downcast_ref::<ArrayIO<MemArray2d<T>>>() {
+    /*if let Some(src) = src.downcast_ref::<ArrayIO<MemArray2d<T>>>() {
       // TODO
       unimplemented!();
     }
-    /*if let Some(src) = src.downcast_ref::<FlatIO<GPUDeviceArray1d<T>>>() {
+    if let Some(src) = src.downcast_ref::<FlatIO<GPUDeviceArray1d<T>>>() {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
@@ -510,7 +508,6 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
       let mut guard = section.enter(conn.clone());
       let x = self.get(txn, rvar);
       guard._wait(x.async_state());
-      //let mut dst_view = dst.next_view_mut(x.size());
       let mut dst_view = dst.as_view_mut().view_mut(off .. off + x.flat_size());
       x.flat_view().unwrap().sync_dump_mem(dst_view, conn);
       return off + x.flat_size();
@@ -523,9 +520,8 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
       let mut guard = section.enter(conn.clone());
       let x = self.get(txn, rvar);
       guard._wait(x.async_state());
-      //let mut dst_slice = dst.next_slice_mut(x.size());
+      guard._wait(dst.async_state());
       let mut dst_view = dst.as_view_mut().view_mut(off .. off + x.flat_size());
-      guard._wait(dst_view.async_state());
       dst_view.copy(x.flat_view().unwrap(), conn);
       return off + x.flat_size();
     }
@@ -565,8 +561,8 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
           WriteCap::Assign => {
             let mut x = self.get_mut(txn, rvar, xvar, token);
             guard._wait(x.async_state());
+            guard._wait(src.async_state());
             let src_view = src.as_view().view(off .. off + x.flat_size());
-            guard._wait(src_view.async_state());
             x.flat_view_mut().unwrap().copy(src_view, conn);
           }
           _ => unimplemented!(),
@@ -581,7 +577,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
 
 impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
   fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
-    if let Some(dst) = dst.downcast_mut::<ArrayIO<MemArray3d<T>>>() {
+    /*if let Some(dst) = dst.downcast_mut::<ArrayIO<MemArray3d<T>>>() {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
@@ -605,7 +601,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
       guard._wait(dst_slice.async_state());
       dst_slice.copy(x.flat_view().unwrap(), conn);
       return;
-    }
+    }*/
     unimplemented!();
   }
 
@@ -682,9 +678,9 @@ impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
       let mut guard = section.enter(conn.clone());
       let x = self.get(txn, rvar);
       guard._wait(x.async_state());
+      guard._wait(dst.async_state());
       //let mut dst_slice = dst.next_slice_mut(x.size());
       let mut dst_view = dst.as_view_mut().view_mut(off .. off + x.flat_size());
-      guard._wait(dst_view.async_state());
       dst_view.copy(x.flat_view().unwrap(), conn);
       return off + x.flat_size();
     }
@@ -724,8 +720,8 @@ impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
           WriteCap::Assign => {
             let mut x = self.get_mut(txn, rvar, xvar, token);
             guard._wait(x.async_state());
+            guard._wait(src.async_state());
             let src_view = src.as_view().view(off .. off + x.flat_size());
-            guard._wait(src_view.async_state());
             x.flat_view_mut().unwrap().copy(src_view, conn);
           }
           _ => unimplemented!(),
@@ -740,7 +736,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
 
 impl<T> IOVal for RWVal<GPUDeviceArray4d<T>> where T: Copy + 'static {
   fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
-    if let Some(dst) = dst.downcast_mut::<FlatIO<GPUDeviceArray1d<T>>>() {
+    /*if let Some(dst) = dst.downcast_mut::<FlatIO<GPUDeviceArray1d<T>>>() {
       let ctx = implicit_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
@@ -752,7 +748,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray4d<T>> where T: Copy + 'static {
       guard._wait(dst_slice.async_state());
       dst_slice.copy(x.flat_view().unwrap(), conn);
       return;
-    }
+    }*/
     unimplemented!();
   }
 
@@ -825,9 +821,9 @@ impl<T> IOVal for RWVal<GPUDeviceArray4d<T>> where T: Copy + 'static {
       let mut guard = section.enter(conn.clone());
       let x = self.get(txn, rvar);
       guard._wait(x.async_state());
+      guard._wait(dst.async_state());
       //let mut dst_slice = dst.next_slice_mut(x.size());
       let mut dst_view = dst.as_view_mut().view_mut(off .. off + x.flat_size());
-      guard._wait(dst_view.async_state());
       dst_view.copy(x.flat_view().unwrap(), conn);
       return off + x.flat_size();
     }
@@ -867,8 +863,8 @@ impl<T> IOVal for RWVal<GPUDeviceArray4d<T>> where T: Copy + 'static {
           WriteCap::Assign => {
             let mut x = self.get_mut(txn, rvar, xvar, token);
             guard._wait(x.async_state());
+            guard._wait(src.async_state());
             let src_view = src.as_view().view(off .. off + x.flat_size());
-            guard._wait(src_view.async_state());
             x.flat_view_mut().unwrap().copy(src_view, conn);
           }
           _ => unimplemented!(),
