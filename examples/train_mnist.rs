@@ -5,6 +5,7 @@ extern crate colorimage;
 extern crate gpudevicemem;
 extern crate memarray;
 extern crate rand;
+//extern crate rngtape;
 extern crate sharedmem;
 extern crate superdata;
 
@@ -19,17 +20,48 @@ use gpudevicemem::array::*;
 use memarray::*;
 use rand::prelude::*;
 use rand::distributions::{Distribution, Uniform, Normal};
+//use rngtape::*;
 use sharedmem::*;
 use superdata::*;
 use superdata::datasets::mnist::*;
 use superdata::image::*;
 use superdata::utils::*;
 
+use std::cell::{RefCell};
 use std::cmp::{max, min};
 use std::env;
 use std::path::{PathBuf};
 use std::rc::{Rc};
 use std::sync::{Arc};
+
+pub trait NormalLinearInit<T, R: Rng> {
+  type RValue;
+
+  fn normal_linear_init(std_dev: T, src: usize, dst: usize, rng: Rc<RefCell<R>>) -> Self::RValue;
+}
+
+impl<R: Rng> NormalLinearInit<f32, R> for GPUDeviceArray2d<f32> {
+  type RValue = Rc<Fn(Txn, GPUDeviceConn) -> Self>;
+
+  fn normal_linear_init(std_dev: f32, src_ch: usize, dst_ch: usize, rng: Rc<RefCell<R>>) -> Self::RValue {
+    Rc::new(move |_, conn: GPUDeviceConn| {
+      let shape = [dst_ch, src_ch];
+      let mut h_arr = MemArray2d::<f32>::zeros(shape);
+      {
+        let dist = StandardNormal::new();
+        let mut v = h_arr.as_view_mut();
+        let xs = v.flat_slice_mut().unwrap();
+        let mut rng = rng.borrow_mut();
+        for x in xs.iter_mut() {
+          *x = rng.sample(&dist) as f32 * std_dev;
+        }
+      }
+      let mut arr = GPUDeviceArray2d::<f32>::zeros(shape, conn.clone());
+      arr.as_view_mut().sync_copy_mem(h_arr.as_view(), conn.clone());
+      arr
+    })
+  }
+}
 
 pub trait XavierLinearInit<T, R: Rng> {
   type RValue;
@@ -48,8 +80,7 @@ impl<R: Rng> XavierLinearInit<f32, R> for GPUDeviceArray2d<f32> {
       let mut h_arr = MemArray2d::<f32>::zeros(shape);
       {
         let half_width = (6.0 / (src_ch + dst_ch) as f64).sqrt();
-        let dist = Uniform::new_inclusive(-0.01, 0.01);
-        //let dist = Uniform::new_inclusive(-half_width, half_width);
+        let dist = Uniform::new_inclusive(-half_width, half_width);
         let mut v = h_arr.as_view_mut();
         let xs = v.flat_slice_mut().unwrap();
         for x in xs.iter_mut() {
@@ -97,6 +128,13 @@ impl<R: Rng> KaimingConv2dInit<f32, R> for GPUDeviceArray4d<f32> {
   }
 }
 
+fn build_linear_normal<R: Rng>(x: Val<GPUDeviceOuterBatchArray1d<f32>>, std_dev: f32, src_ch: usize, dst_ch: usize, rng: Rc<RefCell<R>>, params: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
+  let w = src(GPUDeviceArray2d::<f32>::normal_linear_init(std_dev, src_ch, dst_ch, rng));
+  params.push_val(w.clone());
+  let x = w.mult(x);
+  x
+}
+
 fn build_linear(x: Val<GPUDeviceOuterBatchArray1d<f32>>, src_ch: usize, dst_ch: usize, params: &mut NodeVec) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
   let w = src(GPUDeviceArray2d::<f32>::xavier_linear_init(src_ch, dst_ch, &mut thread_rng()));
   params.push_val(w.clone());
@@ -125,7 +163,9 @@ fn build_linearnet(batch_sz: usize) -> (Val<GPUDeviceOuterBatchArray3d<u8>>, Val
 
   let x = x.flatten();
 
+  // TODO
   let x = build_linear(x, 28 * 28 * 1, 10, &mut params);
+  //let x = build_linear_normal(x, 0.01, 28 * 28 * 1, 10, rng.clone(), &mut params);
 
   let logit_var = x.clone();
 
@@ -235,6 +275,9 @@ fn main() {
   for node in group {
     node.spawn(|proc| {
       println!("DEBUG: hello world: {}", proc.rank());
+
+      // TODO
+      //let rng = Rc::new(RefCell::new(ReplayTapeRng::open(PathBuf::from("rngtape.bin"))));
 
       let mut dataset_cfg = MnistConfig::default();
       dataset_cfg.path = Some(PathBuf::from("../datasets/mnist"));
