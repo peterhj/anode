@@ -600,10 +600,10 @@ fn test_gpu_op_softmax() {
   y.eval(t);
   println!("DEBUG: {:?}", &z.as_view().flat_slice().unwrap()[..]);
   y.serialize(t, &mut z);
+  println!("DEBUG: {:?}", &z.as_view().flat_slice().unwrap()[..]);
   for k in 0 .. 32 {
     assert_eq!(z.as_view().flat_slice().unwrap()[k], 1.0 / 32.0);
   }
-  println!("DEBUG: {:?}", &z.as_view().flat_slice().unwrap()[..]);
 }
 
 #[test]
@@ -634,12 +634,12 @@ fn test_gpu_op_softmax_cat_nll() {
   y.serialize(t, &mut z);
   nll.serialize(t, &mut nll_h);
   data.serialize(t, &mut data_h);
-  for k in 0 .. 32 * 2 {
-    assert_eq!(z.as_view().flat_slice().unwrap()[k], 1.0 / 32.0);
-  }
   println!("DEBUG: {:?}", &z.as_view().flat_slice().unwrap()[..]);
   println!("DEBUG: {:?}", &nll_h.as_view().flat_slice().unwrap()[..]);
   println!("DEBUG: {:?}", &data_h.as_view().flat_slice().unwrap()[..]);
+  for k in 0 .. 32 * 2 {
+    assert_eq!(z.as_view().flat_slice().unwrap()[k], 1.0 / 32.0);
+  }
 }
 
 #[test]
@@ -674,13 +674,13 @@ fn test_gpu_op_softmax_cat_nll_out_of_bounds_nan() {
   nll.serialize(t, &mut nll_h);
   data.serialize(t, &mut data_h);
   loss.serialize(t, &mut loss_h);
-  for k in 0 .. 32 * 2 {
-    assert_eq!(z.as_view().flat_slice().unwrap()[k], 1.0 / 32.0);
-  }
   println!("DEBUG: {:?}", &z.as_view().flat_slice().unwrap()[..]);
   println!("DEBUG: {:?}", &nll_h.as_view().flat_slice().unwrap()[..]);
   println!("DEBUG: {:?}", &data_h.as_view().flat_slice().unwrap()[..]);
   println!("DEBUG: {:?}", loss_h);
+  for k in 0 .. 32 * 2 {
+    assert_eq!(z.as_view().flat_slice().unwrap()[k], 1.0 / 32.0);
+  }
 }
 
 #[test]

@@ -91,6 +91,8 @@ fn main() {
       // "quantize.cu"
       .whitelist_function("anode_gpu_dequantize_u8_packed_f32")
       // "softmax.cu"
+      .whitelist_function("anode_gpu_softmax_packed_block_f32")
+      .whitelist_function("anode_gpu_softmax_packed_deterministic_f32")
       .whitelist_function("anode_gpu_softmax_cat_nll_packed_f32")
       .whitelist_function("anode_gpu_softmax_cat_nll_bwd_packed_f32")
       .whitelist_function("anode_gpu_softmax_cat_nll_bwd_packed_accumulate_f32")

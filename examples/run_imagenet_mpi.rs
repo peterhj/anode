@@ -690,6 +690,7 @@ fn main() {
       let mut loss: f32 = 0.0;
 
       let mut labels = Vec::with_capacity(batch_sz);
+      let mut count = 0;
       let mut acc_ct = 0;
       let mut loss_sum: f32 = 0.0;
 
@@ -739,8 +740,9 @@ fn main() {
         avg_grads_vec.eval(batch_txn);
         logit_var.serialize(batch_txn, &mut logit_data);
         loss_var.serialize(batch_txn, &mut loss);
-        loss_sum += loss;
 
+        count += batch_sz;
+        loss_sum += loss;
         for idx in 0 .. batch_sz {
           let k = _arg_max(&logit_data.flat_view().unwrap().as_slice()[num_classes * idx .. num_classes * (idx + 1)]);
           if k == labels[idx] as _ {
@@ -776,10 +778,11 @@ fn main() {
         if rep_nr == batch_reps - 1 && (iter_nr + 1) % display_interval == 0 {
           println!("DEBUG: train: iters: {} acc: {:.4} ({}/{}) loss: {:.6} elapsed: {:.6} s",
               iter_nr + 1,
-              acc_ct as f64 / (batch_sz * batch_reps) as f64,
-              acc_ct, batch_sz * batch_reps,
-              loss_sum / (batch_sz * batch_reps) as f32,
+              acc_ct as f64 / count as f64,
+              acc_ct, count,
+              loss_sum / count as f32,
               stopwatch.click().lap_time());
+          count = 0;
           acc_ct = 0;
           loss_sum = 0.0;
         }

@@ -353,6 +353,20 @@ void anode_gpu_square_sum_Iabc_Ob_packed_deterministic_f32(
 
 // "softmax.cu"
 
+void anode_gpu_softmax_packed_block_f32(
+    uint32_t dim0,
+    uint32_t dim1,
+    const float *x,
+    float *y,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+void anode_gpu_softmax_packed_deterministic_f32(
+    uint32_t dim0,
+    uint32_t dim1,
+    const float *x,
+    float *y,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
 void anode_gpu_softmax_cat_nll_packed_f32(
     uint32_t dim0,
     uint32_t dim1,

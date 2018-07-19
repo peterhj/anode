@@ -3948,11 +3948,10 @@ impl SoftmaxOp {
       apply: {
         let section = GPULazyAsyncSection::default();
         let x_ = x_.clone();
-        let state_cache = RefCell::new(HashMap::new());
+        //let state_cache = RefCell::new(HashMap::new());
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
           //if let Some((cap, token)) = output.write(txn) {
           output.write(txn, |cap, token| {
-            //implicit_ctx()._debug_print();
             let ctx = implicit_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
@@ -3962,13 +3961,11 @@ impl SoftmaxOp {
             let mut y = output.get_mut(txn, token);
             guard._wait(x.async_state());
             guard._wait(y.async_state());
-            // FIXME: size checks.
-            // FIXME: set batch size.
-            let x_size = x.size();
-            let x_bsz = x.batch_size();
+            assert_eq!(x.size(), y.size());
+            y.set_batch_size(x.batch_size());
             match cap {
               WriteCap::Assign => {
-                // TODO: assumes NCHW layout.
+                /*// TODO: assumes NCHW layout.
                 let xsoftmax_shape = XSoftmaxFullShape::Softmax0d(Softmax0dFullShape{
                   src_feature_axis: 0,
                   src_batch_axis:   1,
@@ -3988,7 +3985,30 @@ impl SoftmaxOp {
                     state,
                     x.as_view(),
                     conn.clone(),
-                );
+                );*/
+                if x.size() <= conn.cuda_kernel_config().block_sz as _ {
+                  // TODO: assumes NCHW layout.
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_softmax_packed_block_f32(
+                      sz2uint(x.size()),
+                      sz2uint(x.batch_size()),
+                      x.as_view().as_dptr(),
+                      y.as_view_mut().as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                } else {
+                  // TODO: assumes NCHW layout.
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_softmax_packed_deterministic_f32(
+                      sz2uint(x.size()),
+                      sz2uint(x.batch_size()),
+                      x.as_view().as_dptr(),
+                      y.as_view_mut().as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
               }
               WriteCap::Accumulate => {
                 // TODO

@@ -16,9 +16,130 @@ limitations under the License.
 
 #include "lib.h"
 #include "common.cuh"
-#include <cassert>
+#include "common_reduce.cuh"
+//#include <cassert>
 #include <cuda_runtime.h>
 #include <math_constants.h>
+
+__global__ void anode_gpu_softmax_packed_block_kernel_f32(
+    uint32_t reduce_inner_dim,
+    uint32_t outer_dim,
+    const float *x,
+    float *y)
+{
+  extern __shared__ float cache[];
+  for (uint32_t blk1 = gblock(); blk1 < outer_dim; blk1 += gblockcount()) {
+    uint32_t idx = Index2::Pack(threadIdx.x, reduce_inner_dim, blk1);
+
+    float x_i;
+    if (threadIdx.x < reduce_inner_dim) {
+      x_i = x[idx];
+      cache[threadIdx.x] = x_i;
+    } else {
+      cache[threadIdx.x] = MaxReduce<float>::InitVal();
+    }
+    __syncthreads();
+    threadblock_reduce_sync<float, MaxReduce<float>>(cache);
+
+    float x_max_accumulator = cache[0];
+    __syncthreads();
+
+    float z_i;
+    if (threadIdx.x < reduce_inner_dim) {
+      z_i = expf(x_i - x_max_accumulator);
+      cache[threadIdx.x] = z_i;
+    } else {
+      cache[threadIdx.x] = AddReduce<float>::InitVal();
+    }
+    __syncthreads();
+    threadblock_reduce_sync<float, AddReduce<float>>(cache);
+
+    float z_sum_accumulator = cache[0];
+    __syncthreads();
+
+    if (threadIdx.x < reduce_inner_dim) {
+      float y_i = z_i / z_sum_accumulator;
+      y[idx] = y_i;
+    }
+    __syncthreads();
+  }
+}
+
+extern "C" void anode_gpu_softmax_packed_block_f32(
+    uint32_t dim0,
+    uint32_t dim1,
+    const float *x,
+    float *y,
+    const KernelConfig *cfg,
+    cudaStream_t stream)
+{
+  anode_gpu_softmax_packed_block_kernel_f32<<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
+      dim0, dim1, x, y);
+}
+
+__global__ void anode_gpu_softmax_packed_deterministic_kernel_f32(
+    uint32_t reduce_inner_dim,
+    uint32_t outer_dim,
+    const float *x,
+    float *y)
+{
+  extern __shared__ float cache[];
+  uint32_t rdup_reduce_inner_dim = (reduce_inner_dim + blockDim.x - 1) / blockDim.x * blockDim.x;
+  for (uint32_t blk1 = gblock(); blk1 < outer_dim; blk1 += gblockcount()) {
+    float x_max_accumulator = MaxReduce<float>::InitVal();
+    for (uint32_t i0 = threadIdx.x; i0 < rdup_reduce_inner_dim; i0 += blockDim.x) {
+      if (i0 < reduce_inner_dim) {
+        uint32_t idx = Index2::Pack(i0, reduce_inner_dim, blk1);
+        float x_i = x[idx];
+        cache[threadIdx.x] = x_i;
+      } else {
+        cache[threadIdx.x] = MaxReduce<float>::InitVal();
+      }
+      __syncthreads();
+      threadblock_reduce_sync<float, MaxReduce<float>>(cache);
+      MaxReduce<float>::Reduce(&x_max_accumulator, cache[0]);
+      __syncthreads();
+    }
+
+    float z_sum_accumulator = AddReduce<float>::InitVal();
+    for (uint32_t i0 = threadIdx.x; i0 < rdup_reduce_inner_dim; i0 += blockDim.x) {
+      if (i0 < reduce_inner_dim) {
+        uint32_t idx = Index2::Pack(i0, reduce_inner_dim, blk1);
+        float x_i = x[idx];
+        float z_i = expf(x_i - x_max_accumulator);
+        cache[threadIdx.x] = z_i;
+      } else {
+        cache[threadIdx.x] = AddReduce<float>::InitVal();
+      }
+      __syncthreads();
+      threadblock_reduce_sync<float, AddReduce<float>>(cache);
+      AddReduce<float>::Reduce(&z_sum_accumulator, cache[0]);
+      __syncthreads();
+    }
+
+    for (uint32_t i0 = threadIdx.x; i0 < rdup_reduce_inner_dim; i0 += blockDim.x) {
+      if (i0 < reduce_inner_dim) {
+        uint32_t idx = Index2::Pack(i0, reduce_inner_dim, blk1);
+        float x_i = x[idx];
+        float z_i = expf(x_i - x_max_accumulator);
+        float y_i = z_i / z_sum_accumulator;
+        y[idx] = y_i;
+      }
+    }
+  }
+}
+
+extern "C" void anode_gpu_softmax_packed_deterministic_f32(
+    uint32_t dim0,
+    uint32_t dim1,
+    const float *x,
+    float *y,
+    const KernelConfig *cfg,
+    cudaStream_t stream)
+{
+  anode_gpu_softmax_packed_deterministic_kernel_f32<<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
+      dim0, dim1, x, y);
+}
 
 __global__ void anode_gpu_softmax_cat_nll_packed_kernel_f32(
     uint32_t len,
@@ -70,7 +191,6 @@ __global__ void anode_gpu_softmax_cat_nll_bwd_packed_kernel_f32(
     Index2::Unpack(idx, &k0, dim0, &i1);
     if (k0 < dim0 && i1 < dim1) {
       uint32_t cat_k = cat_data[i1];
-      // TODO: check sign.
       Write::Write(&dx[idx], dy[i1] * (softmax[idx] - ((float)(cat_k == k0))));
     }
   }
