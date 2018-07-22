@@ -1,16 +1,16 @@
 //extern crate anode;
 extern crate colorimage;
 //extern crate memarray;
+extern crate minidata;
 //extern crate rand;
 extern crate stb_image;
-extern crate superdata;
 
 use colorimage::*;
 //use memarray::*;
+use minidata::*;
+use minidata::datasets::imagenet::*;
+use minidata::utils::{Stopwatch};
 use stb_image::image::{Image};
-use superdata::*;
-use superdata::datasets::imagenet::*;
-use superdata::utils::{Stopwatch};
 
 //use rand::*;
 use std::env;

@@ -4,9 +4,9 @@ extern crate anode;
 extern crate colorimage;
 extern crate gpudevicemem;
 extern crate memarray;
+extern crate minidata;
 extern crate rand;
 extern crate sharedmem;
-extern crate superdata;
 
 use anode::*;
 use anode::log::*;
@@ -17,13 +17,13 @@ use colorimage::*;
 use gpudevicemem::*;
 use gpudevicemem::array::*;
 use memarray::*;
+use minidata::*;
+//use minidata::datasets::imagenet::*;
+use minidata::image::*;
+use minidata::utils::*;
 use rand::prelude::*;
 use rand::distributions::{Distribution, Uniform, Normal};
 use sharedmem::*;
-use superdata::*;
-//use superdata::datasets::imagenet::*;
-use superdata::image::*;
-use superdata::utils::*;
 
 use std::cmp::{max, min};
 use std::env;

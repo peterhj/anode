@@ -5,9 +5,9 @@ extern crate anode;
 extern crate colorimage;
 extern crate gpudevicemem;
 extern crate memarray;
+extern crate minidata;
 extern crate rand;
 extern crate sharedmem;
-extern crate superdata;
 
 //#[cfg(feature = "mpi")] use cray_link::*;
 use anode::*;
@@ -19,14 +19,14 @@ use colorimage::*;
 use gpudevicemem::*;
 use gpudevicemem::array::*;
 use memarray::*;
+use minidata::*;
+use minidata::datasets::imagenet::*;
+use minidata::image::*;
+use minidata::utils::*;
 use rand::prelude::*;
 use rand::distributions::{Distribution, Uniform, Normal};
 //use rand::rngs::mock::*;
 use sharedmem::*;
-use superdata::*;
-use superdata::datasets::imagenet::*;
-use superdata::image::*;
-use superdata::utils::*;
 
 use std::cmp::{max, min};
 use std::env;
@@ -670,6 +670,13 @@ fn main() {
       let step_size = src_init(0.0_f32);
       let momentum = src_init(0.0_f32);
 
+      let lr_schedule = PiecewiseSeries::new(
+          0.1_f32,
+          vec![
+              (150_000, 0.01_f32),
+              (300_000, 0.001_f32),
+          ]);
+
       /*
       let avg_grads = grads.clone().zeros_like_vec().online_average_vec(batch_avg_rate.clone(), grads.clone());
       let grad_step = params.clone().gradient_momentum_step_vec(step_size.clone(), momentum.clone(), avg_grads.clone());
@@ -678,6 +685,7 @@ fn main() {
       //assert_eq!(1, batch_reps);
       let batch_grads_vec = grads.clone().vectorize();
       let avg_grads_vec = zeros_like(batch_grads_vec.clone()).online_average(batch_avg_rate.clone(), batch_grads_vec.clone());
+      //let allreduce_avg_grads_vec = avg_grads_vec.allreduce_spmd(proc.clone());
       let params_vec = params.clone().vectorize();
       let grad_vec_step = params_vec.clone().gradient_momentum_step(step_size.clone(), momentum.clone(), avg_grads_vec.clone());
       let params_devec = params_vec.clone().devectorize(params.clone());
@@ -753,9 +761,7 @@ fn main() {
         if rep_nr == batch_reps - 1 {
           let step_txn = txn();
 
-          // TODO: correct batch size normalization.
-          //step_size.set(step_txn, -0.1 / (batch_sz * batch_reps) as f32);
-          step_size.set(step_txn, -0.1 / batch_sz as f32);
+          step_size.set(step_txn, -lr_schedule.at(iter_nr) / batch_sz as f32);
           momentum.set(step_txn, 0.9);
           params.persist(step_txn);
           avg_grads_vec.persist(step_txn);

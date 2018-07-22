@@ -11,45 +11,37 @@ path = "src/lib.rs"
 default = []
 cuda9 = ["cuda_blas/cuda9", "gpudevicemem/cuda9"]
 gpu = ["cuda", "cuda_blas", "cuda_coll", "cuda_dnn", "gpudevicemem"]
-mpi = ["mpich", "superdata/mpi"]
-#mpi = ["mpich", "cray_shmem", "superdata/shmem"]
+mpi = ["mpich", "minidata/mpi"]
 
 [build-dependencies]
-#bindgen = "^0.32"
 bindgen = "*"
 cc = "*"
 walkdir = "*"
 
 [dev-dependencies]
 colorimage = { path = "../colorimage" }
+minidata = { path = "../minidata" }
 rngtape = { path = "../rngtape" }
 stb_image = { path = "../rust-stb-image" }
-superdata = { path = "../superdata" }
 time = "*"
 
 [dependencies]
-#arithmetic = { path = "../arithmetic" }
 arrayidx = { path = "../arrayidx" }
-#async_execution = { path = "../async_execution" }
 #cray_link = { path = "../cray_link", optional =  true }
 #cray_shmem = { path = "../cray_shmem", optional = true }
 cuda = { path = "../libcuda", optional = true }
 cuda_blas = { path = "../cuda_blas", optional = true }
 cuda_coll = { path = "../cuda_coll", optional = true }
 cuda_dnn = { path = "../cuda_dnn", optional = true }
-dot = "*"
-float = { path = "../libfloat" }
+#dot = "*"
+float = { path = "../float" }
 gpudevicemem = { path = "../gpudevicemem", optional = true }
 lazy_static = "*"
 memarray = { path = "../memarray", features = ["mkl"] }
 mpich = { path = "../libmpich", optional = true}
 num-traits = "*"
-#parking_lot = { version = "*", features = ["nightly"] }
 parking_lot = { version = "^0.5", features = ["nightly"] }
-#rand = { path = "../rand" }
 rand = "^0.5"
-#rng = "*"
-rng = { path = "../rng" }
+#rng = { path = "../rng" }
 sharedmem = { path = "../sharedmem" }
-#time = "*"
 typemap = "*"

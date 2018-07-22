@@ -6,13 +6,13 @@ extern crate alloc_system;
 extern crate colorimage;
 //extern crate gpudevicemem;
 //extern crate memarray;
+extern crate minidata;
 //extern crate rand;
 //extern crate sharedmem;
-extern crate superdata;
 
 use colorimage::*;
-use superdata::*;
-use superdata::datasets::cityscapes::*;
+use minidata::*;
+use minidata::datasets::cityscapes::*;
 
 use std::path::{PathBuf};
 

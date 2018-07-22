@@ -1,10 +1,8 @@
 # anode
 
-`anode` is a framework for constructing dataflow graphs and enabling efficient
-automatic differentiation of dataflow graphs. `anode` is analogous to projects
-like Theano, TensorFlow, and PyTorch.
+Why the name `anode`? Some possible justifications:
 
-Unlike other similar frameworks, `anode` is particularly dedicated to making
-multi-GPU and distributed execution as easy and efficient as possible on common
-systems, including multi-GPU boxes, GPU instances in the cloud, and clusters
-connected with fast interconnect.
+* Dataflow graphs have nodes, and we want to automatically differentiate them,
+  hence autodiff-able nodes.
+* Prepending a `y` to `anode` yields `yanode`:
+  `y`et `ano`ther auto-`d`ifferentiation `e`ngine.

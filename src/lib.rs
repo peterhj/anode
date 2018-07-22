@@ -33,7 +33,7 @@ extern crate arrayidx;
 #[cfg(feature = "gpu")] extern crate cuda_blas;
 #[cfg(feature = "gpu")] extern crate cuda_coll;
 #[cfg(feature = "gpu")] extern crate cuda_dnn;
-extern crate dot;
+//extern crate dot;
 //extern crate float;
 #[cfg(feature = "gpu")] extern crate gpudevicemem;
 #[macro_use] extern crate lazy_static;
@@ -42,7 +42,7 @@ extern crate memarray;
 extern crate num_traits;
 extern crate parking_lot;
 extern crate rand;
-extern crate rng;
+//extern crate rng;
 //extern crate time;
 extern crate typemap;
 

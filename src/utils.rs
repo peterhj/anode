@@ -22,6 +22,31 @@ pub fn _arg_max(xs: &[f32]) -> usize {
   top_k
 }
 
+pub struct PiecewiseSeries<T> {
+  init_val: T,
+  pieces:   Vec<(usize, T)>,
+}
+
+impl<T> PiecewiseSeries<T> {
+  pub fn new(init_val: T, pieces: Vec<(usize, T)>) -> Self {
+    PiecewiseSeries{init_val, pieces}
+  }
+}
+
+impl<T: Clone> PiecewiseSeries<T> {
+  pub fn at(&self, t: usize) -> T {
+    for (p, &(start, ref val)) in self.pieces.iter() {
+      if t < start {
+        match p {
+          0 => return self.init_val.clone(),
+          _ => return self.pieces[p - 1].1.clone(),
+        }
+      }
+    }
+    self.pieces[self.pieces.len() - 1].1.clone()
+  }
+}
+
 pub trait ZerosInit<Shape> {
   type RValue;
 
