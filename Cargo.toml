@@ -19,6 +19,7 @@ cc = "*"
 walkdir = "*"
 
 [dev-dependencies]
+# colorimage can be found at: https://github.com/peterhj/colorimage
 colorimage = { path = "../colorimage" }
 minidata = { path = "../minidata" }
 rngtape = { path = "../rngtape" }
