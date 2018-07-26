@@ -1692,8 +1692,7 @@ impl<T> TCellInner<T> where T: Copy {
   }
 
   pub fn persist(&mut self, txn: Txn) {
-    // TODO
-    unimplemented!();
+    self.propose(txn, |x| x);
   }
 
   pub fn always_get(&mut self) -> T {

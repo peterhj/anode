@@ -12,6 +12,7 @@ extern crate sharedmem;
 use anode::*;
 use anode::log::*;
 use anode::ops::*;
+use anode::proc::*;
 use anode::proc_dist::*;
 use anode::utils::*;
 use colorimage::*;
@@ -164,6 +165,8 @@ fn build_linearnet<R: Rng + 'static>(batch_sz: usize, rng: Rc<RefCell<R>>) -> (V
   let x = x.flatten();
 
   //let x = build_linear(x, 28 * 28 * 1, 10, &mut params);
+  //let x = build_linear_normal(x, 0.01, 10, 10, rng.clone(), &mut params);
+  //let x = build_linear_normal(x, 0.01, 10, 10, rng.clone(), &mut params);
   let x = build_linear_normal(x, 0.01, 28 * 28 * 1, 10, rng.clone(), &mut params);
 
   let logit_var = x.clone();
@@ -275,6 +278,7 @@ fn main() {
     node.spawn(|proc| {
       println!("DEBUG: hello world: {}", proc.rank());
 
+      //let rng = Rc::new(RefCell::new(thread_rng().clone()));
       let rng = Rc::new(RefCell::new(ReplayTapeRng::open(PathBuf::from("test_data/mnist_tape.bin"))));
 
       let mut dataset_cfg = MnistConfig::default();
@@ -339,6 +343,8 @@ fn main() {
       let mut acc_ct = 0;
       let mut loss_sum: f32 = 0.0;
 
+      DynamicGraphLogging::enable();
+
       for (batch_nr, batch) in train_iter.enumerate() {
         let iter_nr = batch_nr / batch_reps;
         let rep_nr = batch_nr % batch_reps;
@@ -391,6 +397,8 @@ fn main() {
           assert!(params_devec.eval(update_txn));
           assert_eq!(params_count, params.serialize_vec(update_txn, &mut params_h));
         }
+
+        DynamicGraphLogging::disable();
 
         if rep_nr == batch_reps - 1 && ((iter_nr + 1) % display_interval == 0 || iter_nr < display_interval) {
           println!("DEBUG: train: iters: {} acc: {:.4} ({}/{}) loss: {:.6} elapsed: {:.6} s",

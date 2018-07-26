@@ -14,6 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+use proc::*;
+
 use std::sync::{Arc, Barrier};
 use std::thread;
 
@@ -90,17 +92,17 @@ pub struct ThreadProc {
   barrier:  Arc<Barrier>,
 }
 
-impl ThreadProc {
-  pub fn rank(&self) -> usize {
+impl Proc<usize> for ThreadProc {
+  fn rank(&self) -> usize {
     self.rank
   }
 
-  pub fn num_ranks(&self) -> usize {
+  fn sup_rank(&self) -> usize {
     self.nranks
   }
 
-  pub fn barrier(&self) {
-    self.barrier.wait();
+  fn wait_barrier(&self) -> bool {
+    self.barrier.wait().is_leader()
   }
 
   /*pub fn allreduce_sum<T: Copy>(&self, _buf: &mut [T]) {

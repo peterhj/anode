@@ -40,7 +40,7 @@ __global__ void anode_gpu_batch_norm_external_3d1_packed_kernel_f32(
   float *x_cache = cache;
   float *reduce_cache = cache + rdup_len_per_blk;
 
-  uint32_t fused_inner_outer_dim = reduce_inner_dim * reduce_outer_dim;
+  //uint32_t fused_inner_outer_dim = reduce_inner_dim * reduce_outer_dim;
   //uint32_t rdup_fused_inner_outer_dim = (fused_inner_outer_dim + blockDim.x - 1) / blockDim.x * blockDim.x;
 
   //uint32_t iter_idx = gtindex();

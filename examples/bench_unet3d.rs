@@ -11,6 +11,7 @@ extern crate sharedmem;
 use anode::*;
 use anode::log::*;
 use anode::ops::*;
+use anode::proc::*;
 use anode::proc_dist::*;
 use anode::utils::*;
 use colorimage::*;
@@ -330,7 +331,7 @@ fn main() {
         params.persist(batch_txn);
         x.eval(batch_txn);
         grads.eval(batch_txn);
-        proc.barrier();
+        proc.wait_barrier();
         if batch_nr < early_trials {
           stopwatch.click();
         }

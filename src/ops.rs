@@ -53,9 +53,10 @@ pub struct MapOp<MapF> { pub f: MapF, }
 pub struct TransposeOp;
 pub struct ConcatenateJoinOp;
 pub struct SumJoinOp;
-pub struct ProductJoinOp;
 pub struct SumJoinAccumulateOp;
-//pub struct SumJoinOp<Variant> { _mrk: PhantomData<Variant> }
+pub struct ProductJoinOp;
+pub struct SliceLikeOp;
+pub struct EmbedLikeOp;
 pub struct FlatSumOp;
 pub struct ReduceSumOp;
 pub struct BatchSumOp;
@@ -125,6 +126,8 @@ pub struct SpacePadOp;
 pub struct VectorizeOp;
 pub struct DevectorizeOp;
 //pub struct GradientMomentumStepOp;
+
+pub struct SumSpmdOp;
 
 #[derive(Clone, Default)] pub struct PositiveClipFlatMap<T: Copy + Default> { _mrk: PhantomData<(T, fn (*mut T))> }
 
@@ -725,6 +728,16 @@ pub trait ConcatenateExt<V> {
   fn concatenate(axis: isize, xs_: Vec<Val<V>>) -> Val<V>;
 }
 
+pub trait ConcatenateJoinOpExt<V> {
+  fn build(axis: isize, xs_: Vec<Val<V>>) -> Val<V>;
+}
+
+impl<V> ConcatenateExt<V> for Val<V> where ConcatenateJoinOp: ConcatenateJoinOpExt<V> {
+  fn concatenate(axis: isize, xs_: Vec<Val<V>>) -> Val<V> {
+    <ConcatenateJoinOp as ConcatenateJoinOpExt<V>>::build(axis, xs_)
+  }
+}
+
 pub trait SumJoinOpMaybeExt<V> {
   fn maybe_build(xs_: Vec<Val<V>>) -> Option<Val<V>>;
   fn maybe_build_inplace(xs_: Vec<Val<V>>) -> Option<(Val<V>, Vec<Val<V>>)>;
@@ -818,6 +831,26 @@ impl<V> Mul<Val<V>> for Val<V> where Val<V>: ProductExt<V> {
 
   fn mul(self, x_: Val<V>) -> Val<V> {
     <Val<V> as ProductExt<V>>::product(vec![self, x_])
+  }
+}
+
+pub trait SliceSplitLikeExt<V> {
+  fn slice_split_like(self, axis: isize, ts_: Vec<Val<V>>) -> Vec<Val<V>>;
+}
+
+pub trait SliceLikeOpExt<V> {
+  fn build(axis: isize, x_: Val<V>, t_: Val<V>, prefix_: Vec<Val<V>>) -> Val<V>;
+}
+
+impl<V> SliceSplitLikeExt<V> for Val<V> where V: 'static, SliceLikeOp: SliceLikeOpExt<V> {
+  fn slice_split_like(self, axis: isize, ts_: Vec<Val<V>>) -> Vec<Val<V>> {
+    let mut ys_ = Vec::with_capacity(ts_.len());
+    for i in 0 .. ts_.len() {
+      let prefix_ = ts_[ .. i].to_owned();
+      let y_ = <SliceLikeOp as SliceLikeOpExt<V>>::build(axis, self.clone(), ts_[i].clone(), prefix_);
+      ys_.push(y_);
+    }
+    ys_
   }
 }
 
@@ -1215,6 +1248,20 @@ pub trait DevectorizeExt<X> {
 impl<X> DevectorizeExt<X> for Val<X> where DevectorizeOp: DevectorizeOpExt<X> {
   fn devectorize(self, dst: NodeVec) -> Val<()> {
     <DevectorizeOp as DevectorizeOpExt<X>>::build(self, dst)
+  }
+}
+
+pub trait SumSpmdOpExt<X, P> {
+  fn build(proc: P, x_: Val<X>) -> Val<X>;
+}
+
+pub trait SumSpmdExt<X, P> {
+  fn sum_spmd(self, proc: P) -> Val<X>;
+}
+
+impl<X, P> SumSpmdExt<X, P> for Val<X> where SumSpmdOp: SumSpmdOpExt<X, P> {
+  fn sum_spmd(self, proc: P) -> Val<X> {
+    <SumSpmdOp as SumSpmdOpExt<X, P>>::build(proc, self)
   }
 }
 

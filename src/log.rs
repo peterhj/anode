@@ -63,6 +63,18 @@ pub fn dump_static_graph() {
   log_static_graph(|logging| logging.dump());
 }
 
+pub struct DynamicGraphLogging;
+
+impl DynamicGraphLogging {
+  pub fn enable() {
+    enable_dynamic_graph_logging();
+  }
+
+  pub fn disable() {
+    disable_dynamic_graph_logging();
+  }
+}
+
 pub struct GraphLogging<K> {
   // TODO
   name:     String,

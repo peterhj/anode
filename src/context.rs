@@ -31,15 +31,14 @@ use std::ptr::{null_mut};
 use std::rc::{Rc};
 use std::sync::{Arc};
 
-static NCCL_GROUP_MUTEX: Mutex<()> = Mutex::new(());
+#[cfg(feature = "gpu")] static NCCL_GROUP_MUTEX: Mutex<()> = Mutex::new(());
 
 lazy_static! {
   static ref DEFAULT_CTX: Mutex<Option<DefaultCtx>> = Mutex::new(None);
 }
 
 thread_local! {
-  static IMPLICIT:  RefCell<Vec<Rc<ExecutionCtx + 'static>>> = RefCell::new(vec![]);
-  //static STREAM:    RefCell<VecDeque<Rc<ExecutionCtx + 'static>>> = RefCell::new(VecDeque::new());
+  static STACK: RefCell<Vec<Rc<dyn ExecutionCtx + 'static>>> = RefCell::new(vec![]);
 }
 
 pub fn default_ctx() -> impl ExecutionCtx {
@@ -47,38 +46,23 @@ pub fn default_ctx() -> impl ExecutionCtx {
   if ctx.is_none() {
     *ctx = Some(DefaultCtx::default());
   }
-  (*ctx.as_ref().unwrap()).clone()
+  (*ctx).clone().unwrap()
 }
 
-pub fn implicit_ctx() -> Rc<ExecutionCtx + 'static> {
-  IMPLICIT.with(|stack| {
+pub fn thread_ctx() -> Rc<dyn ExecutionCtx + 'static> {
+  STACK.with(|stack| {
     let mut stack = stack.borrow_mut();
     if stack.is_empty() {
       // If there is no context, create a `DefaultCtx`.
       stack.push(Rc::new(default_ctx()));
     }
     let ctx = stack.last().unwrap().clone();
-    /*STREAM.with(|stream| {
-      let mut stream = stream.borrow_mut();
-      match stream.len() {
-        0 => {}
-        1 => {
-          let prev_ctx = stream.pop_front().unwrap();
-          // TODO: if `prev_ctx` is different from `ctx`, synchronize.
-          /*if prev_ctx != ctx {
-            prev_ctx.synchronize();
-          }*/
-        }
-        _ => unreachable!(),
-      }
-      stream.push_back(ctx.clone());
-    });*/
     ctx
   })
 }
 
 pub fn push_ctx<Ctx: ExecutionCtx + 'static>(ctx: Ctx) -> CtxGuard {
-  IMPLICIT.with(|stack| {
+  STACK.with(|stack| {
     let mut stack = stack.borrow_mut();
     stack.push(Rc::new(ctx));
   });
@@ -143,7 +127,7 @@ impl !Sync for CtxGuard {}
 
 impl Drop for CtxGuard {
   fn drop(&mut self) {
-    IMPLICIT.with(|stack| {
+    STACK.with(|stack| {
       let mut stack = stack.borrow_mut();
       let maybe_ctx = stack.pop();
       assert!(maybe_ctx.is_some());
@@ -331,7 +315,7 @@ impl MultiGPUDeviceCtx {
       assert_eq!(dst[rank].size(), dst[0].size());
       if dst[rank].size().is_packed(&dst[rank].stride()) {
         let res = unsafe { nccl_state.comm.broadcast(
-            dst[rank].as_mut_dptr(),
+            dst[rank].raw_mut_dptr(),
             dst[rank].size(),
             root_dev.0,
             stream.as_mut_ptr(),
@@ -366,8 +350,8 @@ impl MultiGPUDeviceCtx {
       assert_eq!(src[rank].size(), dst.size());
       if src[rank].size().is_packed(&src[rank].stride()) {
         let res = unsafe { nccl_state.comm.reduce(
-            src[rank].as_dptr(),
-            if rank == root_dev.rank() { dst.as_mut_dptr() } else { null_mut() },
+            src[rank].raw_dptr(),
+            if rank == root_dev.rank() { dst.raw_mut_dptr() } else { null_mut() },
             src[rank].size(),
             op,
             root_dev.0,
@@ -402,8 +386,8 @@ impl MultiGPUDeviceCtx {
       assert_eq!(src[rank].size(), dst[rank].size());
       if src[rank].size().is_packed(&src[rank].stride()) {
         let res = unsafe { nccl_state.comm.all_reduce(
-            src[rank].as_dptr(),
-            dst[rank].as_mut_dptr(),
+            src[rank].raw_dptr(),
+            dst[rank].raw_mut_dptr(),
             src[rank].size(),
             op,
             stream.as_mut_ptr(),
@@ -509,11 +493,11 @@ impl MPIProcessGroup {
 }
 
 pub struct CollectionCtx {
-  ctxs: Vec<Rc<ExecutionCtx + 'static>>,
+  ctxs: Vec<Rc<dyn ExecutionCtx + 'static>>,
 }
 
 impl CollectionCtx {
-  pub fn ctx(&self, ctx_index: usize) -> Rc<ExecutionCtx + 'static> {
+  pub fn ctx(&self, ctx_index: usize) -> Rc<dyn ExecutionCtx + 'static> {
     self.ctxs[ctx_index].clone()
   }
 }

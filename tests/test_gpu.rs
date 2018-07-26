@@ -89,7 +89,7 @@ fn test_gpu_zeros_eval() {
   x.eval(t);
 
   {
-    let ctx = implicit_ctx().gpu();
+    let ctx = thread_ctx().gpu();
     let mut stream = ctx.pool();
     //let x = x.value();
     let v = x.get(t);
@@ -116,7 +116,7 @@ fn test_gpu_zeros_init_uniform() {
   let t = txn();
   x.eval(t);
   {
-    let ctx = implicit_ctx().gpu();
+    let ctx = thread_ctx().gpu();
     let mut stream = ctx.pool();
     let y = x.get(t);
     let mut z = MemArray1d::<f32>::zeros(1024);

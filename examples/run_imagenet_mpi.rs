@@ -13,6 +13,7 @@ extern crate sharedmem;
 use anode::*;
 use anode::log::*;
 use anode::ops::*;
+use anode::proc::*;
 use anode::proc_dist::*;
 use anode::utils::*;
 use colorimage::*;
@@ -685,9 +686,9 @@ fn main() {
       //assert_eq!(1, batch_reps);
       let batch_grads_vec = grads.clone().vectorize();
       let avg_grads_vec = zeros_like(batch_grads_vec.clone()).online_average(batch_avg_rate.clone(), batch_grads_vec.clone());
-      //let allreduce_avg_grads_vec = avg_grads_vec.allreduce_spmd(proc.clone());
+      let sum_avg_grads_vec = avg_grads_vec.clone().sum_spmd(proc.clone());
       let params_vec = params.clone().vectorize();
-      let grad_vec_step = params_vec.clone().gradient_momentum_step(step_size.clone(), momentum.clone(), avg_grads_vec.clone());
+      let grad_vec_step = params_vec.clone().gradient_momentum_step(step_size.clone(), momentum.clone(), sum_avg_grads_vec.clone());
       let params_devec = params_vec.clone().devectorize(params.clone());
 
       let mut stopwatch = Stopwatch::new();
@@ -761,10 +762,11 @@ fn main() {
         if rep_nr == batch_reps - 1 {
           let step_txn = txn();
 
-          step_size.set(step_txn, -lr_schedule.at(iter_nr) / batch_sz as f32);
+          step_size.set(step_txn, -lr_schedule.at(iter_nr) / (proc.sup_rank() * batch_sz) as f32);
           momentum.set(step_txn, 0.9);
           params.persist(step_txn);
           avg_grads_vec.persist(step_txn);
+          assert!(sum_avg_grads_vec.eval(step_txn));
           assert!(grad_vec_step.eval(step_txn));
 
           let update_txn = txn();
@@ -779,7 +781,7 @@ fn main() {
 
         DoubleCheckLogging::disable();
         disable_dynamic_graph_logging();
-        proc.barrier();
+        proc.wait_barrier();
 
         if rep_nr == batch_reps - 1 && (iter_nr + 1) % display_interval == 0 {
           println!("DEBUG: train: iters: {} acc: {:.4} ({}/{}) loss: {:.6} elapsed: {:.6} s",
@@ -795,7 +797,7 @@ fn main() {
 
         if eval_interval.is_some() && (iter_nr + 1) % eval_interval.unwrap() == 0 {
           println!("DEBUG: eval: evaluating...");
-          let val_shard = val_dataset.clone().range_shard(proc.rank(), proc.num_ranks());
+          let val_shard = val_dataset.clone().range_shard(proc.rank(), proc.sup_rank());
           let shard_len = val_shard.len();
           let val_iter = {
             let mut val_splits = async_split_data(num_data_workers, || {

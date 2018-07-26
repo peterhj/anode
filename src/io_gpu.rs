@@ -232,7 +232,7 @@ impl<T> FlatIO<GPUDeviceArray1d<T>> where T: Copy {
 impl<T> IOVal for RWVal<GPUDeviceScalar<T>> where T: ZeroBits + 'static {
   fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
     if let Some(dst) = dst.downcast_mut::<T>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -249,7 +249,7 @@ impl<T> IOVal for RWVal<GPUDeviceScalar<T>> where T: ZeroBits + 'static {
 
   fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &Any) {
     if let Some(src) = src.downcast_ref::<T>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -285,7 +285,7 @@ impl<T> IOVal for RWVal<GPUDeviceScalar<T>> where T: ZeroBits + 'static {
 impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
   fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
     if let Some(dst) = dst.downcast_mut::<MemArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -300,7 +300,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
 
   fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &Any) {
     if let Some(src) = src.downcast_ref::<MemArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -318,7 +318,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
       return;
     }
     /*if let Some(src) = src.downcast_ref::<ArrayIO<MemArray1d<T>>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -345,7 +345,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
       return off + x.size();
     }
     if let Some(dst) = dst.downcast_mut::<MemArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -357,7 +357,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
       return off + x.size();
     }
     if let Some(dst) = dst.downcast_mut::<GPUDeviceArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -374,7 +374,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
 
   fn _deserialize_vec(&self, txn: Txn, rvar: RVar, xvar: RWVar, off: usize, src: &Any) -> usize {
     if let Some(src) = src.downcast_ref::<MemArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -394,7 +394,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
       return off + x.size();
     }
     if let Some(src) = src.downcast_ref::<GPUDeviceArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -421,7 +421,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray1d<T>> where T: Copy + 'static {
 impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
   fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
     /*if let Some(dst) = dst.downcast_mut::<ArrayIO<MemArray2d<T>>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -433,7 +433,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
       return;
     }
     if let Some(dst) = dst.downcast_mut::<FlatIO<GPUDeviceArray1d<T>>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -450,7 +450,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
 
   fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &Any) {
     if let Some(src) = src.downcast_ref::<MemArray2d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -472,7 +472,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
       unimplemented!();
     }
     if let Some(src) = src.downcast_ref::<FlatIO<GPUDeviceArray1d<T>>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -501,7 +501,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
       return off + x.flat_size();
     }
     if let Some(dst) = dst.downcast_mut::<MemArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -513,7 +513,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
       return off + x.flat_size();
     }
     if let Some(dst) = dst.downcast_mut::<GPUDeviceArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -531,7 +531,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
   fn _deserialize_vec(&self, txn: Txn, rvar: RVar, xvar: RWVar, off: usize, src: &Any) -> usize {
     // TODO
     if let Some(src) = src.downcast_ref::<MemArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -551,7 +551,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
       return off + x.flat_size();
     }
     if let Some(src) = src.downcast_ref::<GPUDeviceArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -578,7 +578,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray2d<T>> where T: Copy + 'static {
 impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
   fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
     /*if let Some(dst) = dst.downcast_mut::<ArrayIO<MemArray3d<T>>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -590,7 +590,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
       return;
     }
     if let Some(dst) = dst.downcast_mut::<FlatIO<GPUDeviceArray1d<T>>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -607,7 +607,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
 
   fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &Any) {
     if let Some(src) = src.downcast_ref::<MemArray3d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -629,7 +629,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
       unimplemented!();
     }
     if let Some(src) = src.downcast_ref::<FlatIO<GPUDeviceArray1d<T>>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -658,7 +658,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
       return off + x.flat_size();
     }
     if let Some(dst) = dst.downcast_mut::<MemArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -671,7 +671,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
       return off + x.flat_size();
     }
     if let Some(dst) = dst.downcast_mut::<GPUDeviceArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -690,7 +690,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
   fn _deserialize_vec(&self, txn: Txn, rvar: RVar, xvar: RWVar, off: usize, src: &Any) -> usize {
     // TODO
     if let Some(src) = src.downcast_ref::<MemArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -710,7 +710,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
       return off + x.flat_size();
     }
     if let Some(src) = src.downcast_ref::<GPUDeviceArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -737,7 +737,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray3d<T>> where T: Copy + 'static {
 impl<T> IOVal for RWVal<GPUDeviceArray4d<T>> where T: Copy + 'static {
   fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
     /*if let Some(dst) = dst.downcast_mut::<FlatIO<GPUDeviceArray1d<T>>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -754,7 +754,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray4d<T>> where T: Copy + 'static {
 
   fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &Any) {
     if let Some(src) = src.downcast_ref::<MemArray4d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -772,7 +772,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray4d<T>> where T: Copy + 'static {
       return;
     }
     /*if let Some(src) = src.downcast_ref::<FlatIO<GPUDeviceArray1d<T>>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -801,7 +801,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray4d<T>> where T: Copy + 'static {
       return off + x.flat_size();
     }
     if let Some(dst) = dst.downcast_mut::<MemArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -814,7 +814,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray4d<T>> where T: Copy + 'static {
       return off + x.flat_size();
     }
     if let Some(dst) = dst.downcast_mut::<GPUDeviceArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -833,7 +833,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray4d<T>> where T: Copy + 'static {
   fn _deserialize_vec(&self, txn: Txn, rvar: RVar, xvar: RWVar, off: usize, src: &Any) -> usize {
     // TODO
     if let Some(src) = src.downcast_ref::<MemArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -853,7 +853,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray4d<T>> where T: Copy + 'static {
       return off + x.flat_size();
     }
     if let Some(src) = src.downcast_ref::<GPUDeviceArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -880,7 +880,7 @@ impl<T> IOVal for RWVal<GPUDeviceArray4d<T>> where T: Copy + 'static {
 impl<T> IOVal for RWVal<GPUDeviceOuterBatchScalar<T>> where T: Copy + 'static {
   fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
     if let Some(dst) = dst.downcast_mut::<MemArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -895,7 +895,7 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchScalar<T>> where T: Copy + 'static {
 
   fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &Any) {
     if let Some(src) = src.downcast_ref::<MemArray1d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -929,7 +929,7 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchScalar<T>> where T: Copy + 'static {
 impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray1d<T>> where T: Copy + 'static {
   fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
     if let Some(dst) = dst.downcast_mut::<MemArray2d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -944,7 +944,7 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray1d<T>> where T: Copy + 'static {
 
   fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &Any) {
     if let Some(src) = src.downcast_ref::<MemArray2d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -962,7 +962,7 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray1d<T>> where T: Copy + 'static {
       return;
     }
     /*if let Some(src) = src.downcast_ref::<ArrayIO<MemArray2d<T>>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -998,7 +998,7 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray1d<T>> where T: Copy + 'static {
 impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray3d<T>> where T: Copy + 'static {
   fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
     if let Some(dst) = dst.downcast_mut::<MemArray4d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -1009,7 +1009,7 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray3d<T>> where T: Copy + 'static {
       return;
     }
     /*if let Some(dst) = dst.downcast_mut::<ArrayIO<MemArray4d<T>>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -1025,7 +1025,7 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray3d<T>> where T: Copy + 'static {
 
   fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &Any) {
     if let Some(src) = src.downcast_ref::<MemArray4d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -1044,7 +1044,7 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray3d<T>> where T: Copy + 'static {
       return;
     }
     /*if let Some(src) = src.downcast_ref::<ArrayIO<MemArray4d<T>>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {
@@ -1080,7 +1080,7 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray3d<T>> where T: Copy + 'static {
 impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray4d<T>> where T: Copy + 'static {
   fn _serialize(&self, txn: Txn, rvar: RVar, dst: &mut Any) {
     if let Some(dst) = dst.downcast_mut::<MemArray5d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       let mut section = GPULazyAsyncSection::default();
@@ -1095,7 +1095,7 @@ impl<T> IOVal for RWVal<GPUDeviceOuterBatchArray4d<T>> where T: Copy + 'static {
 
   fn _deserialize(&self, txn: Txn, rvar: RVar, xvar: RWVar, src: &Any) {
     if let Some(src) = src.downcast_ref::<MemArray5d<T>>() {
-      let ctx = implicit_ctx().gpu();
+      let ctx = thread_ctx().gpu();
       let mut pool = ctx.pool();
       let conn = pool.conn();
       if let Some((cap, token)) = self.write(txn, rvar, xvar, WriteMode::Exclusive) {

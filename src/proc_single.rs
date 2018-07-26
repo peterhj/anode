@@ -14,6 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+use ::proc::*;
+
 pub struct DistProcGroup {
   closed:   bool,
 }
@@ -61,18 +63,23 @@ impl DistProc {
     f(self);
     Ok(DistProcJoinHandle{})
   }
+}
 
-  pub fn rank(&self) -> usize {
+impl Proc<usize> for DistProc {
+  fn rank(&self) -> usize {
     0
   }
 
-  pub fn num_ranks(&self) -> usize {
+  fn sup_rank(&self) -> usize {
     1
   }
 
-  pub fn barrier(&self) {
+  fn wait_barrier(&self) -> bool {
+    true
   }
+}
 
-  pub fn allreduce_sum<T: Copy>(&self, _buf: &mut [T]) {
+impl<T> ProcSyncIO<T> for DistProc where T: Copy {
+  fn sync_allreduce_sum_inplace(&self, _buf: &mut [T]) {
   }
 }

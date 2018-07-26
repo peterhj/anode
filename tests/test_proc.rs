@@ -22,10 +22,10 @@ use std::time::{Duration};
 #[test]
 fn test_proc_thread_io() {
   println!();
-  let mut pg = ThreadProcGroup::new(1);
+  let mut pg = ThreadProcGroup::new(2);
   for p in pg {
     p.spawn(|proc| {
-      let src_buf: Vec<i32> = vec![0, 0, 0];
+      let src_buf: Vec<i32> = vec![1, 1, 1];
       let mut dst_buf: Vec<i32> = vec![0, 0, 0];
       let (tx, rx) = proc.allreduce_sum();
       tx.send(&src_buf);

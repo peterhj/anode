@@ -14,6 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+use ::proc::*;
+
 //use cray_shmem::*;
 #[cfg(feature = "gpu")] use gpudevicemem::*;
 use mpich::*;
@@ -51,8 +53,11 @@ impl Default for DistProcGroup {
   }
 }
 
+impl DistProcGroup {
+}
+
 impl Iterator for DistProcGroup {
-  type Item = DistProc;
+  type Item = DistProcSpawner;
 
   fn next(&mut self) -> Option<Self::Item> {
     if self.closed {
@@ -60,16 +65,28 @@ impl Iterator for DistProcGroup {
     }
     // TODO: fork/join-over-SPMD impl.
     self.closed = true;
-    let rank = MPIComm::world().rank() as usize;
-    let nranks = MPIComm::world().num_ranks() as usize;
+    let srank = MPIComm::world().rank() as usize;
+    let nsranks = MPIComm::world().num_ranks() as usize;
     //let shmem_rank = Shmem::rank() as usize;
     //let shmem_nranks = Shmem::num_ranks() as usize;
     //assert_eq!(rank, shmem_rank);
     //assert_eq!(nranks, shmem_nranks);
-    Some(DistProc{
-      rank,
-      nranks,
-    })
+    let proc = DistProc{
+      srank, nsranks,
+    };
+    Some(DistProcSpawner{proc})
+  }
+}
+
+pub struct DistProcSpawner {
+  proc: DistProc,
+}
+
+impl DistProcSpawner {
+  pub fn spawn<F>(self, f: F) -> Result<DistProcJoinHandle, ()> where F: FnOnce(DistProc) + Send + 'static {
+    // TODO
+    f(self.proc);
+    Ok(DistProcJoinHandle{})
   }
 }
 
@@ -89,30 +106,27 @@ impl DistProcJoinHandle {
 
 #[derive(Clone)]
 pub struct DistProc {
-  rank:     usize,
-  nranks:   usize,
+  srank:    usize,
+  nsranks:  usize,
 }
 
-impl DistProc {
-  pub fn spawn<F>(self, f: F) -> Result<DistProcJoinHandle, ()> where F: FnOnce(DistProc) + Send + 'static {
-    // TODO
-    f(self);
-    Ok(DistProcJoinHandle{})
+impl Proc<usize> for DistProc {
+  fn rank(&self) -> usize {
+    self.srank
   }
 
-  pub fn rank(&self) -> usize {
-    self.rank
+  fn sup_rank(&self) -> usize {
+    self.nsranks
   }
 
-  pub fn num_ranks(&self) -> usize {
-    self.nranks
-  }
-
-  pub fn barrier(&self) {
+  fn wait_barrier(&self) -> bool {
     mpi_barrier(&mut MPIComm::world()).unwrap();
+    self.srank == 0
   }
+}
 
-  pub fn allreduce_sum<T: MPIDataTypeExt + Copy>(&self, buf: &mut [T]) {
+impl<T> ProcSyncIO<T> for DistProc where T: MPIDataTypeExt + Copy {
+  fn sync_allreduce_sum_inplace(&self, buf: &mut [T]) {
     let ptr = buf.as_mut_ptr();
     let len = buf.len();
     unsafe { mpi_allreduce(
@@ -120,6 +134,6 @@ impl DistProc {
         ptr, len,
         MPIReduceOp::Sum,
         &mut MPIComm::world(),
-    ).unwrap() };
+    ) }.unwrap();
   }
 }
