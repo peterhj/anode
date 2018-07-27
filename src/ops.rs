@@ -1068,7 +1068,7 @@ where T: Copy,
 {
   fn softmax_categorical_nll(self, category_data_: Val<K>) -> (Val<L>, Val<X>) {
     let softmax_ = <SoftmaxOp as SoftmaxOpExt<X>>::build(self.clone());
-    let nll_ = <SoftmaxCategoricalNLLOp as SoftmaxCategoricalNLLOpExt<T, X, K, L>>::build(self.clone(), softmax_.clone().fix(), category_data_);
+    let nll_ = <SoftmaxCategoricalNLLOp as SoftmaxCategoricalNLLOpExt<T, X, K, L>>::build(self, softmax_.clone().fix(), category_data_);
     (nll_, softmax_)
   }
 }
@@ -1077,11 +1077,7 @@ pub trait SoftmaxNdExt<X> {
   fn softmax_nd(self, feat_axis: isize) -> Val<X>;
 }
 
-pub trait SoftmaxNdCategoricalNLLOpExt<T, X, K, L> {
-  fn build(feat_axis: isize, x_: Val<X>, softmax_: Val<X>, category_data_: Val<K>) -> Val<L>;
-}
-
-pub trait SoftmaxNdCategoricalNLLExt<T, X, K, L> where T: Copy {
+pub trait SoftmaxNdCategoricalNLLExt<X, K, L> {
   fn softmax_nd_categorical_nll(self, feat_axis: isize, category_data_: Val<K>) -> (Val<L>, Val<X>);
 }
 
