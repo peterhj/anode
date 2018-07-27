@@ -21,7 +21,7 @@ limitations under the License.
 #include <cuda_runtime.h>
 #include <math_constants.h>
 
-__global__ void anode_gpu_softmax_packed_block_kernel_f32(
+__global__ void anode_gpu_softmax_packed_block_f32_kernel(
     uint32_t reduce_inner_dim,
     uint32_t outer_dim,
     const float *x,
@@ -73,11 +73,11 @@ extern "C" void anode_gpu_softmax_packed_block_f32(
     const KernelConfig *cfg,
     cudaStream_t stream)
 {
-  anode_gpu_softmax_packed_block_kernel_f32<<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
+  anode_gpu_softmax_packed_block_f32_kernel<<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
       dim0, dim1, x, y);
 }
 
-__global__ void anode_gpu_softmax_packed_deterministic_kernel_f32(
+__global__ void anode_gpu_softmax_packed_deterministic_f32_kernel(
     uint32_t reduce_inner_dim,
     uint32_t outer_dim,
     const float *x,
@@ -137,11 +137,11 @@ extern "C" void anode_gpu_softmax_packed_deterministic_f32(
     const KernelConfig *cfg,
     cudaStream_t stream)
 {
-  anode_gpu_softmax_packed_deterministic_kernel_f32<<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
+  anode_gpu_softmax_packed_deterministic_f32_kernel<<<cfg->flat_block_count(dim1), cfg->flat_block_dim(), cfg->flat_block_len() * sizeof(float), stream>>>(
       dim0, dim1, x, y);
 }
 
-__global__ void anode_gpu_softmax_cat_nll_packed_kernel_f32(
+__global__ void anode_gpu_softmax_cat_nll_packed_f32_kernel(
     uint32_t len,
     uint32_t dim0,
     uint32_t dim1,
@@ -150,14 +150,12 @@ __global__ void anode_gpu_softmax_cat_nll_packed_kernel_f32(
     float *nll)
 {
   for (uint32_t idx = gtindex(); idx < len; idx += gtcount()) {
-    if (idx < dim1) {
-      uint32_t cat_k = cat_data[idx];
-      if (cat_k < dim0) {
-        uint32_t i = Index2::Pack(cat_k, dim0, idx);
-        nll[idx] = -logf(softmax[i]);
-      } else {
-        nll[idx] = 0.0f / 0.0f;
-      }
+    uint32_t cat_k0 = cat_data[idx];
+    if (cat_k0 < dim0) {
+      uint32_t i = Index2::Pack(cat_k0, dim0, idx);
+      nll[idx] = -logf(softmax[i]);
+    } else {
+      nll[idx] = 0.0f / 0.0f;
     }
   }
 }
@@ -172,12 +170,12 @@ extern "C" void anode_gpu_softmax_cat_nll_packed_f32(
     cudaStream_t stream)
 {
   uint32_t len = dim1;
-  anode_gpu_softmax_cat_nll_packed_kernel_f32<<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
+  anode_gpu_softmax_cat_nll_packed_f32_kernel<<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
       len, dim0, dim1, softmax, cat_data, nll);
 }
 
 template <typename Write>
-__global__ void anode_gpu_softmax_cat_nll_bwd_packed_kernel_f32(
+__global__ void anode_gpu_softmax_cat_nll_bwd_packed_f32_kernel(
     uint32_t len,
     uint32_t dim0,
     uint32_t dim1,
@@ -207,7 +205,7 @@ extern "C" void anode_gpu_softmax_cat_nll_bwd_packed_f32(
     cudaStream_t stream)
 {
   uint32_t len = dim0 * dim1;
-  anode_gpu_softmax_cat_nll_bwd_packed_kernel_f32<AssignWrite<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
+  anode_gpu_softmax_cat_nll_bwd_packed_f32_kernel<AssignWrite<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
       len, dim0, dim1, dy, softmax, cat_data, dx);
 }
 
@@ -222,6 +220,147 @@ extern "C" void anode_gpu_softmax_cat_nll_bwd_packed_accumulate_f32(
     cudaStream_t stream)
 {
   uint32_t len = dim0 * dim1;
-  anode_gpu_softmax_cat_nll_bwd_packed_kernel_f32<AccumulateWrite<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
+  anode_gpu_softmax_cat_nll_bwd_packed_f32_kernel<AccumulateWrite<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
       len, dim0, dim1, dy, softmax, cat_data, dx);
+}
+
+__global__ void anode_gpu_softmax_nd_packed_f32_kernel(
+    uint32_t len,
+    uint32_t prefix_dim,
+    uint32_t reduce_dim,
+    uint32_t outer_dim,
+    const float *x,
+    float *y)
+{
+  for (uint32_t idx = gtindex(); idx < len; idx += gtcount()) {
+    uint32_t p, i1;
+    Index2::Unpack(idx, &p, prefix_dim, &i1);
+
+    float x_max_accumulator = MaxReduce<float>::InitVal();
+    for (uint32_t k0 = 0; k0 < reduce_dim; ++k0) {
+      uint32_t i = Index3::Pack(p, prefix_dim, k0, reduce_dim, i1);
+      float x_i = x[i];
+      MaxReduce<float>::Reduce(&x_max_accumulator, x_i);
+    }
+
+    float z_sum_accumulator = AddReduce<float>::InitVal();
+    for (uint32_t k0 = 0; k0 < reduce_dim; ++k0) {
+      uint32_t i = Index3::Pack(p, prefix_dim, k0, reduce_dim, i1);
+      float x_i = x[i];
+      float z_i = expf(x_i - x_max_accumulator);
+      AddReduce<float>::Reduce(&z_sum_accumulator, z_i);
+    }
+
+    for (uint32_t k0 = 0; k0 < reduce_dim; ++k0) {
+      uint32_t i = Index3::Pack(p, prefix_dim, k0, reduce_dim, i1);
+      float x_i = x[i];
+      float z_i = expf(x_i - x_max_accumulator);
+      float y_i = z_i / z_sum_accumulator;
+      y[i] = y_i;
+    }
+  }
+}
+
+extern "C" void anode_gpu_softmax_nd_packed_f32(
+    uint32_t prefix_dim,
+    uint32_t dim0,
+    uint32_t dim1,
+    const float *x,
+    float *y,
+    const KernelConfig *cfg,
+    cudaStream_t stream)
+{
+  uint32_t len = prefix_dim * dim1;
+  anode_gpu_softmax_nd_packed_f32_kernel<<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
+      len, prefix_dim, dim0, dim1, x, y);
+}
+
+__global__ void anode_gpu_softmax_nd_cat_nll_packed_f32_kernel(
+    uint32_t len,
+    uint32_t prefix_dim,
+    uint32_t dim0,
+    uint32_t dim1,
+    const float *softmax,
+    const uint32_t *cat_data,
+    float *nll)
+{
+  for (uint32_t idx = gtindex(); idx < len; idx += gtcount()) {
+    uint32_t cat_k0 = cat_data[idx];
+    if (cat_k0 < dim0) {
+      uint32_t p, i1;
+      Index2::Unpack(idx, &p, prefix_dim, &i1);
+      uint32_t i = Index3::Pack(p, prefix_dim, cat_k0, dim0, i1);
+      nll[idx] = -logf(softmax[i]);
+    } else {
+      nll[idx] = 0.0f / 0.0f;
+    }
+  }
+}
+
+extern "C" void anode_gpu_softmax_nd_cat_nll_packed_f32(
+    uint32_t prefix_dim,
+    uint32_t dim0,
+    uint32_t dim1,
+    const float *softmax,
+    const uint32_t *cat_data,
+    float *nll,
+    const KernelConfig *cfg,
+    cudaStream_t stream)
+{
+  uint32_t len = prefix_dim * dim1;
+  anode_gpu_softmax_nd_cat_nll_packed_f32_kernel<<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
+      len, prefix_dim, dim0, dim1, softmax, cat_data, nll);
+}
+
+template <typename Write>
+__global__ void anode_gpu_softmax_nd_cat_nll_bwd_packed_f32_kernel(
+    uint32_t len,
+    uint32_t prefix_dim,
+    uint32_t dim0,
+    uint32_t dim1,
+    const float *dy,
+    const float *softmax,
+    const uint32_t *cat_data,
+    float *dx)
+{
+  for (uint32_t idx = gtindex(); idx < len; idx += gtcount()) {
+    uint32_t p, k0, i1;
+    Index3::Unpack(idx, &p, prefix_dim, &k0, dim0, &i1);
+    if (p < prefix_dim && k0 < dim0 && i1 < dim1) {
+      uint32_t i = Index2::Pack(p, prefix_dim, i1);
+      Write::Write(&dx[idx], dy[i] * (softmax[idx] - ((float)(cat_data[i] == k0))));
+    }
+  }
+}
+
+extern "C" void anode_gpu_softmax_nd_cat_nll_bwd_packed_f32(
+    uint32_t prefix_dim,
+    uint32_t dim0,
+    uint32_t dim1,
+    const float *dy,
+    const float *softmax,
+    const uint32_t *cat_data,
+    float *dx,
+    const KernelConfig *cfg,
+    cudaStream_t stream)
+{
+  uint32_t len = prefix_dim * dim0 * dim1;
+  anode_gpu_softmax_nd_cat_nll_bwd_packed_f32_kernel<AssignWrite<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
+      len, prefix_dim, dim0, dim1, dy, softmax, cat_data, dx);
+}
+
+extern "C" void anode_gpu_softmax_nd_cat_nll_bwd_packed_accumulate_f32(
+    uint32_t prefix_dim,
+    uint32_t dim0,
+    uint32_t dim1,
+    const float *dy,
+    const float *softmax,
+    const uint32_t *cat_data,
+    float *dx,
+    const KernelConfig *cfg,
+    cudaStream_t stream)
+{
+  uint32_t len = prefix_dim * dim0 * dim1;
+  anode_gpu_softmax_nd_cat_nll_bwd_packed_f32_kernel<AccumulateWrite<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
+      len, prefix_dim, dim0, dim1, dy, softmax, cat_data, dx);
 }

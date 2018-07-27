@@ -45,4 +45,4 @@ parking_lot = { version = "^0.5", features = ["nightly"] }
 rand = "^0.5"
 #rng = { path = "../rng" }
 sharedmem = { path = "../sharedmem" }
-typemap = "*"
+#typemap = "*"

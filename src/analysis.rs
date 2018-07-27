@@ -16,7 +16,7 @@ limitations under the License.
 
 use ::{RWVar};
 
-use typemap::{Key};
+//use typemap::{Key};
 
 use std::cell::{RefCell};
 use std::collections::{HashSet};
@@ -28,9 +28,9 @@ pub struct LivenessAnalysis {
   inner:    Rc<RefCell<LivenessAnalysisInner>>,
 }
 
-impl Key for LivenessAnalysis {
+/*impl Key for LivenessAnalysis {
   type Value = Self;
-}
+}*/
 
 pub struct LivenessAnalysisInner {
   ns:   Vec<LivenessAnalysis>,
@@ -66,6 +66,6 @@ pub struct DominanceAnalysis {
   //inner:    Rc<RefCell<DominanceAnalysisInner>>,
 }
 
-impl Key for DominanceAnalysis {
+/*impl Key for DominanceAnalysis {
   type Value = Self;
-}
+}*/

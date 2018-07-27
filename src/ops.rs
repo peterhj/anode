@@ -90,6 +90,12 @@ pub struct OnlineAverageOp;
 pub struct SoftmaxOp;
 pub struct SoftmaxCategoricalNLLOp;
 pub struct SoftmaxCategoricalNLLBwdOp;
+pub struct Softmax2dOp;
+pub struct Softmax2dCategoricalNLLOp;
+pub struct Softmax2dCategoricalNLLBwdOp;
+pub struct Softmax3dOp;
+pub struct Softmax3dCategoricalNLLOp;
+pub struct Softmax3dCategoricalNLLBwdOp;
 pub struct LinearOp;
 pub struct AffineOp;
 pub struct LeftTransposeLinearOp;
@@ -1065,6 +1071,18 @@ where T: Copy,
     let nll_ = <SoftmaxCategoricalNLLOp as SoftmaxCategoricalNLLOpExt<T, X, K, L>>::build(self.clone(), softmax_.clone().fix(), category_data_);
     (nll_, softmax_)
   }
+}
+
+pub trait SoftmaxNdExt<X> {
+  fn softmax_nd(self, feat_axis: isize) -> Val<X>;
+}
+
+pub trait SoftmaxNdCategoricalNLLOpExt<T, X, K, L> {
+  fn build(feat_axis: isize, x_: Val<X>, softmax_: Val<X>, category_data_: Val<K>) -> Val<L>;
+}
+
+pub trait SoftmaxNdCategoricalNLLExt<T, X, K, L> where T: Copy {
+  fn softmax_nd_categorical_nll(self, feat_axis: isize, category_data_: Val<K>) -> (Val<L>, Val<X>);
 }
 
 pub trait PositiveClipExt<V> {

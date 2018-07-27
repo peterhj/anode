@@ -44,7 +44,7 @@ extern crate parking_lot;
 extern crate rand;
 //extern crate rng;
 //extern crate time;
-extern crate typemap;
+//extern crate typemap;
 
 #[cfg(not(feature = "mpi"))] pub use proc_single as proc_dist;
 #[cfg(feature = "mpi")] pub use proc_mpi as proc_dist;
@@ -59,7 +59,7 @@ use arrayidx::{ArrayIndex};
 #[cfg(feature = "gpu")] use gpudevicemem::{GPUDeviceId};
 use memarray::{Array};
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use typemap::{CloneMap, TypeMap};
+//use typemap::{CloneMap, TypeMap};
 
 use std::any::{Any};
 use std::cell::{Cell, RefCell, RefMut};
@@ -2251,7 +2251,7 @@ impl<T> RWVal<T> where T: 'static {
 pub struct OpBase {
   ref_:     OpRef,
   stack:    WalkStack,
-  tags:     CloneMap,
+  //tags:     CloneMap,
   //tng_op:   RefCell<Option<Val<V>>>,
 }
 
@@ -2260,7 +2260,7 @@ impl Default for OpBase {
     OpBase{
       ref_:     OpRef::default(),
       stack:    WalkStack::default(),
-      tags:     TypeMap::custom(),
+      //tags:     TypeMap::custom(),
       //tng_op:   RefCell::new(None),
     }
   }
@@ -2268,7 +2268,9 @@ impl Default for OpBase {
 
 impl AnalysisTags for OpBase {
   fn liveness(&self) -> Option<LivenessAnalysis> {
-    self.tags.get::<LivenessAnalysis>().map(|x| x.clone())
+    // TODO
+    //self.tags.get::<LivenessAnalysis>().map(|x| x.clone())
+    unimplemented!();
   }
 }
 

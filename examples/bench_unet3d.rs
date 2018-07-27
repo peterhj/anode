@@ -1,12 +1,10 @@
 #![feature(alloc_system)]
 
 extern crate anode;
-extern crate colorimage;
 extern crate gpudevicemem;
 extern crate memarray;
 extern crate minidata;
 extern crate rand;
-extern crate sharedmem;
 
 use anode::*;
 use anode::log::*;
@@ -14,17 +12,12 @@ use anode::ops::*;
 use anode::proc::*;
 use anode::proc_dist::*;
 use anode::utils::*;
-use colorimage::*;
 use gpudevicemem::*;
 use gpudevicemem::array::*;
 use memarray::*;
-use minidata::*;
-//use minidata::datasets::imagenet::*;
-use minidata::image::*;
 use minidata::utils::*;
 use rand::prelude::*;
 use rand::distributions::{Distribution, Uniform, Normal};
-use sharedmem::*;
 
 use std::cmp::{max, min};
 use std::env;

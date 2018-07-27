@@ -4429,12 +4429,12 @@ impl OnlineAverageOpExt<f32, GPUDeviceArray1d<f32>> for OnlineAverageOp {
 
 impl SoftmaxOpExt<GPUDeviceOuterBatchArray1d<f32>> for SoftmaxOp {
   fn build(x_: Val<GPUDeviceOuterBatchArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
-    SoftmaxOp::build_device_obatch_1d_op(x_)
+    SoftmaxOp::build_device_obatch_op(x_)
   }
 }
 
 impl SoftmaxOp {
-  fn build_device_obatch_1d_op(x_: Val<GPUDeviceOuterBatchArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
+  fn build_device_obatch_op(x_: Val<GPUDeviceOuterBatchArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
     let ext = OpExt{
       make_val: {
         let x_ = x_.clone();
@@ -4547,12 +4547,12 @@ impl SoftmaxOp {
 
 impl SoftmaxCategoricalNLLOpExt<f32, GPUDeviceOuterBatchArray1d<f32>, GPUDeviceOuterBatchScalar<u32>, GPUDeviceOuterBatchScalar<f32>> for SoftmaxCategoricalNLLOp {
   fn build(x_: Val<GPUDeviceOuterBatchArray1d<f32>>, fixed_softmax_: Val<GPUDeviceOuterBatchArray1d<f32>>, category_data_: Val<GPUDeviceOuterBatchScalar<u32>>) -> Val<GPUDeviceOuterBatchScalar<f32>> {
-    SoftmaxCategoricalNLLOp::build_device_obatch_1d_op(x_, fixed_softmax_, category_data_)
+    SoftmaxCategoricalNLLOp::build_device_obatch_op(x_, fixed_softmax_, category_data_)
   }
 }
 
 impl SoftmaxCategoricalNLLOp {
-  fn build_device_obatch_1d_op(x_: Val<GPUDeviceOuterBatchArray1d<f32>>, fixed_softmax_: Val<GPUDeviceOuterBatchArray1d<f32>>, category_data_: Val<GPUDeviceOuterBatchScalar<u32>>) -> Val<GPUDeviceOuterBatchScalar<f32>> {
+  fn build_device_obatch_op(x_: Val<GPUDeviceOuterBatchArray1d<f32>>, fixed_softmax_: Val<GPUDeviceOuterBatchArray1d<f32>>, category_data_: Val<GPUDeviceOuterBatchScalar<u32>>) -> Val<GPUDeviceOuterBatchScalar<f32>> {
     let ext = OpExt{
       make_val: {
         let x_ = x_.clone();
@@ -4629,7 +4629,7 @@ impl SoftmaxCategoricalNLLOp {
         let data_ = category_data_.clone();
         Box::new(move |_: Pass, y_: Val<_>, state: RefMut<_>, sink: &mut Sink| {
           if let Some(adj_y_) = y_.adjoint(sink) {
-            let adj_x_ = SoftmaxCategoricalNLLBwdOp::build_device_obatch_1d_op(adj_y_, prob_.clone(), data_.clone());
+            let adj_x_ = SoftmaxCategoricalNLLBwdOp::build_device_obatch_op(adj_y_, prob_.clone(), data_.clone());
             x_.put_adjoint(adj_x_, sink);
           }
         })
@@ -4641,7 +4641,7 @@ impl SoftmaxCategoricalNLLOp {
 }
 
 impl SoftmaxCategoricalNLLBwdOp {
-  fn build_device_obatch_1d_op(adj_y_: Val<GPUDeviceOuterBatchScalar<f32>>, /*x_: Val<GPUDeviceOuterBatchArray1d<f32>>,*/ fixed_softmax_: Val<GPUDeviceOuterBatchArray1d<f32>>, category_data_: Val<GPUDeviceOuterBatchScalar<u32>>) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
+  fn build_device_obatch_op(adj_y_: Val<GPUDeviceOuterBatchScalar<f32>>, /*x_: Val<GPUDeviceOuterBatchArray1d<f32>>,*/ fixed_softmax_: Val<GPUDeviceOuterBatchArray1d<f32>>, category_data_: Val<GPUDeviceOuterBatchScalar<u32>>) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
     let ext = OpExt{
       make_val: {
         let x_ = fixed_softmax_.clone();
@@ -4736,6 +4736,107 @@ impl SoftmaxCategoricalNLLBwdOp {
       inplace: None,
     };
     Val::from(Rc::new(F3Op::new(SoftmaxCategoricalNLLBwdOp, ext, adj_y_, fixed_softmax_, category_data_)))
+  }
+}
+
+impl SoftmaxNdExt<GPUDeviceOuterBatchArray4d<f32>> for Val<GPUDeviceOuterBatchArray4d<f32>> {
+  fn softmax_nd(self, feat_axis: isize) -> Val<GPUDeviceOuterBatchArray4d<f32>> {
+    Softmax3dOp::build_device_obatch_op(feat_axis, self)
+  }
+}
+
+impl Softmax3dOp {
+  fn build_device_obatch_op(feat_axis: isize, x_: Val<GPUDeviceOuterBatchArray4d<f32>>) -> Val<GPUDeviceOuterBatchArray4d<f32>> {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            let y = GPUDeviceOuterBatchArray4d::zeros(x.size(), x.max_batch_size(), conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.enter(conn.clone());
+            let x = x_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            guard._wait(x.async_state());
+            guard._wait(y.async_state());
+            assert_eq!(x.size(), y.size());
+            y.set_batch_size(x.batch_size());
+            match cap {
+              WriteCap::Assign => {
+                let x = x.as_view();
+                let mut y = y.as_view_mut();
+                // TODO: assumes NCDHW layout.
+                assert_eq!(3, feat_axis);
+                let mut stream = conn.cuda_stream();
+                unsafe { anode_gpu_softmax_nd_packed_f32(
+                    sz2uint(x.size().index_cut(4).index_cut(3).flat_len()),
+                    sz2uint(x.size().index_at(3)),
+                    sz2uint(x.size().index_at(4)),
+                    x.raw_dptr(),
+                    y.raw_mut_dptr(),
+                    conn.cuda_kernel_config() as *const _,
+                    stream.as_mut_ptr(),
+                ) };
+              }
+              WriteCap::Accumulate => {
+                // TODO
+                unimplemented!();
+              }
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, y_: Val<_>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // TODO
+            unimplemented!();
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F1Op::new(Softmax3dOp, ext, x_)))
+  }
+}
+
+impl Softmax3dCategoricalNLLOp {
+  fn build_device_obatch_op(feat_axis: isize, x_: Val<GPUDeviceOuterBatchArray4d<f32>>, fixed_softmax_: Val<GPUDeviceOuterBatchArray4d<f32>>, category_data_: Val<GPUDeviceOuterBatchArray3d<u32>>) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+    // TODO
+    unimplemented!();
+  }
+}
+
+impl Softmax3dCategoricalNLLBwdOp {
+  fn build_device_obatch_op(feat_axis: isize, adj_y_: Val<GPUDeviceOuterBatchArray3d<f32>>, fixed_softmax_: Val<GPUDeviceOuterBatchArray4d<f32>>, category_data_: Val<GPUDeviceOuterBatchArray3d<u32>>) -> Val<GPUDeviceOuterBatchArray4d<f32>> {
+    // TODO
+    unimplemented!();
   }
 }
 
