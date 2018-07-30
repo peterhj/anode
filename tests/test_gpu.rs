@@ -91,10 +91,13 @@ fn test_gpu_zeros_eval() {
   {
     let ctx = thread_ctx().gpu();
     let mut stream = ctx.pool();
+    let conn = stream.conn();
+    let section = GPUAsyncSection::new(conn.clone());
+    let guard = section.push(conn.clone());
     //let x = x.value();
     let v = x.get(t);
     let mut h_arr = MemArray1d::<f32>::zeros(1024);
-    v.as_view().sync_dump_mem(h_arr.as_view_mut(), stream.conn());
+    v.as_view().sync_dump_mem(h_arr.as_view_mut(), conn.clone());
     {
       let mut h_arr = h_arr.as_view();
       let x = h_arr.flat_slice().unwrap();
@@ -118,10 +121,13 @@ fn test_gpu_zeros_init_uniform() {
   {
     let ctx = thread_ctx().gpu();
     let mut stream = ctx.pool();
+    let conn = stream.conn();
+    let section = GPUAsyncSection::new(conn.clone());
+    let guard = section.push(conn.clone());
     let y = x.get(t);
     let mut z = MemArray1d::<f32>::zeros(1024);
     println!("DEBUG: {:?}", &z.as_view().as_slice()[.. 10]);
-    y.flat_view().unwrap().sync_dump_mem(z.as_view_mut(), stream.conn());
+    y.flat_view().unwrap().sync_dump_mem(z.as_view_mut(), conn.clone());
     println!("DEBUG: {:?}", &z.as_view().as_slice()[.. 10]);
   }
 }

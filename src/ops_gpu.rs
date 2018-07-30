@@ -828,7 +828,7 @@ where A: GPUDeviceAsync + 'static,
 
 impl<T, A, F> RandomBitsSrcOpExt<A, Rc<F>> for RandomBitsSrcOp
 //where A: GPUDeviceAsync + AsViewMut + 'static,
-where T: Copy,
+where T: Copy + 'static,
       A: FlatView<FlatViewTy=GPUDeviceArrayView1d<T>>
           + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>>
           + GPUDeviceAsync
@@ -6656,10 +6656,12 @@ impl LinearOp {
               WriteCap::Assign => {
                 let a = map_.get(txn).as_view();
                 let x = input_.get(txn).as_view();
-                let y = output.get_mut(txn, token).as_view_mut();
-                gpu_matrix_vector_mult(a, x, y, conn);
+                let mut y = output.get_mut(txn, token).as_view_mut();
+                y.matrix_vector_mult(a, x, conn);
               }
-              WriteCap::Accumulate => unimplemented!(),
+              WriteCap::Accumulate => {
+                unimplemented!();
+              }
             }
           })
         })
@@ -6713,12 +6715,15 @@ impl LinearOp {
         let w_ = w_.clone();
         let x_ = x_.clone();
         Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
           let w_ = w_.clone();
           let x_ = x_.clone();
           RWVal::from(Arc::new(move |txn| {
             let ctx = thread_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
             let w_size = w_.get(txn).size();
             let x_max_bsz = x_.get(txn).max_batch_size();
             GPUDeviceOuterBatchArray1d::zeros(w_size[0], x_max_bsz, conn)
@@ -6798,12 +6803,15 @@ impl LinearOp {
         let w_ = w_.clone();
         let x_ = x_.clone();
         Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
           let w_ = w_.clone();
           let x_ = x_.clone();
           RWVal::from(Arc::new(move |txn| {
             let ctx = thread_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
             let w_size = w_.get(txn).size();
             let x_max_bsz = x_.get(txn).max_batch_size();
             GPUDeviceOuterBatchArray1d::zeros(w_size[1], x_max_bsz, conn)
@@ -6877,12 +6885,15 @@ impl LinearOp {
         let w_ = w_.clone();
         let x_ = x_.clone();
         Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
           let w_ = w_.clone();
           let x_ = x_.clone();
           RWVal::from(Arc::new(move |txn| {
             let ctx = thread_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
             let w_size = w_.get(txn).size();
             let x_size = x_.get(txn).size();
             GPUDeviceArray2d::zeros([w_size, x_size], conn)
@@ -6958,12 +6969,15 @@ impl AffineOp {
         let w_ = w_.clone();
         let x_ = x_.clone();
         Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
           let w_ = w_.clone();
           let x_ = x_.clone();
           RWVal::from(Arc::new(move |txn| {
             let ctx = thread_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
             let w_size = w_.get(txn).size();
             let x_max_bsz = x_.get(txn).max_batch_size();
             GPUDeviceOuterBatchArray1d::zeros(w_size[0], x_max_bsz, conn)

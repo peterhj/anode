@@ -295,7 +295,7 @@ impl MultiGPUDeviceCtx {
     }
   }
 
-  pub fn sync_broadcast_group<T>(&mut self, src: GPUDeviceArrayView1d<T>, mut dst: Vec<GPUDeviceArrayViewMut1d<T>>) where T: NcclDataType {
+  pub fn sync_broadcast_group<T>(&mut self, src: GPUDeviceArrayView1d<T>, mut dst: Vec<GPUDeviceArrayViewMut1d<T>>) where T: NcclDataType + 'static {
     let root_dev = src.device();
     {
       let conn = self.md_pools[root_dev.rank()].conn();
