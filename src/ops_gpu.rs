@@ -90,7 +90,7 @@ impl WriteSectionImpl<GPUDeviceScalar<f32>> for GPUWriteSection {
     let ctx = thread_ctx().gpu();
     let mut pool = ctx.pool();
     let conn = pool.conn();
-    let mut guard = self.section.enter(conn.clone());
+    let mut guard = self.section.push(conn.clone());
     guard._wait(src.async_state());
     guard._wait(dst.async_state());
     dst.as_view_mut().copy(src.as_view(), conn);
@@ -101,7 +101,7 @@ impl WriteSectionImpl<GPUDeviceScalar<f32>> for GPUWriteSection {
     let ctx = thread_ctx().gpu();
     let mut pool = ctx.pool();
     let conn = pool.conn();
-    let mut guard = self.section.enter(conn.clone());
+    let mut guard = self.section.push(conn.clone());
     guard._wait(src.async_state());
     guard._wait(dst.async_state());
     dst.as_view_mut().add(src.as_view(), conn);
@@ -121,7 +121,7 @@ impl WriteSectionImpl<GPUDeviceArray1d<f32>> for GPUWriteSection {
     let ctx = thread_ctx().gpu();
     let mut pool = ctx.pool();
     let conn = pool.conn();
-    let mut guard = self.section.enter(conn.clone());
+    let mut guard = self.section.push(conn.clone());
     guard._wait(src.async_state());
     guard._wait(dst.async_state());
     dst.as_view_mut().copy(src.as_view(), conn);
@@ -131,7 +131,7 @@ impl WriteSectionImpl<GPUDeviceArray1d<f32>> for GPUWriteSection {
     let ctx = thread_ctx().gpu();
     let mut pool = ctx.pool();
     let conn = pool.conn();
-    let mut guard = self.section.enter(conn.clone());
+    let mut guard = self.section.push(conn.clone());
     guard._wait(src.async_state());
     guard._wait(dst.async_state());
     dst.as_view_mut().add(src.as_view(), conn);
@@ -191,7 +191,7 @@ impl WriteSectionImpl<GPUDeviceOuterBatchArray3d<f32>> for GPUWriteSection {
     let ctx = thread_ctx().gpu();
     let mut pool = ctx.pool();
     let conn = pool.conn();
-    let mut guard = self.section.enter(conn.clone());
+    let mut guard = self.section.push(conn.clone());
     guard._wait(src.async_state());
     guard._wait(dst.async_state());
     dst.as_view_mut().copy(src.as_view(), conn);
@@ -201,7 +201,7 @@ impl WriteSectionImpl<GPUDeviceOuterBatchArray3d<f32>> for GPUWriteSection {
     let ctx = thread_ctx().gpu();
     let mut pool = ctx.pool();
     let conn = pool.conn();
-    let mut guard = self.section.enter(conn.clone());
+    let mut guard = self.section.push(conn.clone());
     guard._wait(src.async_state());
     guard._wait(dst.async_state());
     dst.as_view_mut().add(src.as_view(), conn);
@@ -295,7 +295,7 @@ impl VectorizeOpExt<GPUDeviceArray1d<f32>> for VectorizeOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = GPUDeviceArray1d::zeros(count, conn);
             guard._wait(y.async_state());
             y
@@ -455,7 +455,7 @@ impl SumSpmdOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             let y = A::zeros_shape(x.shape(), conn);
@@ -474,7 +474,7 @@ impl SumSpmdOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let mut y = output.get_mut(txn, token);
             guard._wait(x.async_state());
@@ -557,7 +557,7 @@ impl DequantizeOp<f32> {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             let y = GPUDeviceOuterBatchArray4d::zeros(x.size(), x.max_batch_size(), conn);
@@ -576,37 +576,39 @@ impl DequantizeOp<f32> {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let mut y = output.get_mut(txn, token);
             guard._wait(x.async_state());
             guard._wait(y.async_state());
             assert_eq!(y.size(), x.size());
             y.set_batch_size(x.batch_size());
-            match cap {
-              WriteCap::Assign => {
-                if x.is_packed() && y.is_packed() {
-                  let x = x.flat_view().unwrap();
-                  let y = y.flat_view_mut().unwrap();
-                  assert_eq!(x.size(), y.size());
+            let packed = x.is_packed() && y.is_packed();
+            if packed {
+              let x = x.flat_view().unwrap();
+              let mut y = y.flat_view_mut().unwrap();
+              assert_eq!(x.size(), y.size());
+              match cap {
+                WriteCap::Assign => {
+                  let x = x.wait(conn.clone());
+                  let mut y = y.wait_mut(conn.clone());
                   let mut stream = conn.cuda_stream();
                   unsafe { anode_gpu_dequantize_u8_packed_f32(
-                      sz2uint(x.size()),
+                      sz2uint(x.inner().size()),
                       lo,
                       hi,
-                      x.raw_dptr(),
-                      y.raw_mut_dptr(),
+                      x.as_dptr(),
+                      y.as_mut_dptr(),
                       conn.cuda_kernel_config() as *const _,
                       stream.as_mut_ptr(),
                   ) };
-                } else {
+                }
+                WriteCap::Accumulate => {
                   unimplemented!();
                 }
               }
-              WriteCap::Accumulate => {
-                // TODO
-                unimplemented!();
-              }
+            } else {
+              unimplemented!();
             }
             double_check_scalar::<Self, _>(|| {
               //println!("DEBUG: DequantizeOp: double checking: len: {} {}", y.flat_size(), y.flat_view().unwrap().size());
@@ -636,7 +638,7 @@ impl DequantizeOp<f32> {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             let y = GPUDeviceOuterBatchArray3d::zeros(x.size(), x.max_batch_size(), conn);
@@ -655,36 +657,39 @@ impl DequantizeOp<f32> {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let mut y = output.get_mut(txn, token);
             guard._wait(x.async_state());
             guard._wait(y.async_state());
             assert_eq!(y.size(), x.size());
             y.set_batch_size(x.batch_size());
-            match cap {
-              WriteCap::Assign => {
-                if x.is_packed() && y.is_packed() {
-                  let x = x.flat_view().unwrap();
-                  let y = y.flat_view_mut().unwrap();
+            let packed = x.is_packed() && y.is_packed();
+            if packed {
+              let x = x.flat_view().unwrap();
+              let mut y = y.flat_view_mut().unwrap();
+              assert_eq!(x.size(), y.size());
+              match cap {
+                WriteCap::Assign => {
+                  let x = x.wait(conn.clone());
+                  let mut y = y.wait_mut(conn.clone());
                   let mut stream = conn.cuda_stream();
                   unsafe { anode_gpu_dequantize_u8_packed_f32(
-                      sz2uint(x.size()),
+                      sz2uint(x.inner().size()),
                       lo,
                       hi,
-                      x.raw_dptr(),
-                      y.raw_mut_dptr(),
+                      x.as_dptr(),
+                      y.as_mut_dptr(),
                       conn.cuda_kernel_config() as *const _,
                       stream.as_mut_ptr(),
                   ) };
-                } else {
+                }
+                WriteCap::Accumulate => {
                   unimplemented!();
                 }
               }
-              WriteCap::Accumulate => {
-                // TODO
-                unimplemented!();
-              }
+            } else {
+              unimplemented!();
             }
             double_check_scalar::<Self, _>(|| {
               //println!("DEBUG: DequantizeOp: double checking: len: {} {}", y.flat_size(), y.flat_view().unwrap().size());
@@ -720,7 +725,7 @@ where A: GPUDeviceAsync + 'static,
             let conn = pool.conn();
             // FIXME: this part really requires auto-wait and auto-registration.
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
@@ -779,7 +784,7 @@ where A: GPUDeviceAsync + 'static,
             let conn = pool.conn();
             // FIXME: this part really requires auto-wait and auto-registration.
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
@@ -845,7 +850,7 @@ where T: Copy,
             let conn = pool.conn();
             // FIXME: this part really requires auto-wait and auto-registration.
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
@@ -865,7 +870,7 @@ where T: Copy,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 let mut y = output.get_mut(txn, token);
@@ -954,7 +959,7 @@ where T: ZeroBits + Copy + 'static,
             let conn = pool.conn();
             // FIXME: this part really requires auto-wait and auto-registration.
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
@@ -972,7 +977,7 @@ where T: ZeroBits + Copy + 'static,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 let mut y = output.get_mut(txn, token);
@@ -1055,7 +1060,7 @@ where T: ZeroBits + Copy + 'static,
             let conn = pool.conn();
             // FIXME: this part really requires auto-wait and auto-registration.
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
@@ -1073,7 +1078,7 @@ where T: ZeroBits + Copy + 'static,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 let mut y = output.get_mut(txn, token);
@@ -1152,7 +1157,7 @@ where T: ZeroBits + Copy + 'static,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
@@ -1168,7 +1173,7 @@ where T: ZeroBits + Copy + 'static,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 // TODO: zero out the whole thing.
@@ -1249,7 +1254,7 @@ where T: ZeroBits + Copy + 'static,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
@@ -1265,7 +1270,7 @@ where T: ZeroBits + Copy + 'static,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 // TODO: zero out the whole thing.
@@ -1356,7 +1361,7 @@ where T: ZeroBits + Copy + 'static,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
@@ -1373,7 +1378,7 @@ where T: ZeroBits + Copy + 'static,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 // TODO: zero out the whole thing.
@@ -1464,7 +1469,7 @@ where T: ZeroBits + Copy + 'static,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
@@ -1481,7 +1486,7 @@ where T: ZeroBits + Copy + 'static,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 // TODO: zero out the whole thing.
@@ -1572,7 +1577,7 @@ where T: ZeroBits + Copy + 'static,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
@@ -1588,7 +1593,7 @@ where T: ZeroBits + Copy + 'static,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 // TODO: zero out the whole thing.
@@ -1680,7 +1685,7 @@ where T: ZeroBits + Copy + 'static,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
@@ -1696,7 +1701,7 @@ where T: ZeroBits + Copy + 'static,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 // TODO: zero out the whole thing.
@@ -1789,7 +1794,7 @@ where T: Zero + One + Copy + 'static,
             let conn = pool.conn();
             // FIXME: this part really requires auto-wait and auto-registration.
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
@@ -1807,7 +1812,7 @@ where T: Zero + One + Copy + 'static,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 //println!("DEBUG: OnesSrcOp: apply: assign");
@@ -1879,7 +1884,7 @@ where T: Zero + One + Copy + 'static,
             let conn = pool.conn();
             // FIXME: this part really requires auto-wait and auto-registration.
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
@@ -1897,7 +1902,7 @@ where T: Zero + One + Copy + 'static,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 let mut y = output.get_mut(txn, token);
@@ -1992,7 +1997,7 @@ where T: Zero + One + Copy + 'static,
             let conn = pool.conn();
             // FIXME: this part really requires auto-wait and auto-registration.
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
@@ -2010,7 +2015,7 @@ where T: Zero + One + Copy + 'static,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 let mut y = output.get_mut(txn, token);
@@ -2105,7 +2110,7 @@ where T: Zero + One + Copy + 'static,
             let conn = pool.conn();
             // FIXME: this part really requires auto-wait and auto-registration.
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = init_val(txn, conn);
             guard._wait(y.async_state());
             y
@@ -2123,7 +2128,7 @@ where T: Zero + One + Copy + 'static,
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 let mut y = output.get_mut(txn, token);
@@ -2188,7 +2193,7 @@ impl ReshapeOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             let y = GPUDeviceOuterBatchArray1d::zeros(x.flat_size(), x.max_batch_size(), conn);
@@ -2207,7 +2212,7 @@ impl ReshapeOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let mut y = output.get_mut(txn, token);
             guard._wait(x.async_state());
@@ -2276,7 +2281,7 @@ impl ReshapeLikeOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let target = target_.get(txn);
             guard._wait(x.async_state());
@@ -2300,7 +2305,7 @@ impl ReshapeLikeOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let target = target_.get(txn);
             let mut y = output.get_mut(txn, token);
@@ -2399,8 +2404,8 @@ impl ConcatenateJoinOp {
             + AsView
             + AsViewMut
             + 'static,
-        A::ViewTy: GPUDeviceMem<T> + Array,
-        A::ViewMutTy: GPUDeviceMem<T> + Array,
+        A::ViewTy: GPUDeviceAsyncMem<T> + Array,
+        A::ViewMutTy: GPUDeviceAsyncMem<T> + Array,
         SliceLikeOp: SliceLikeOpExt<A>,
   {
     let ext = OpExt{
@@ -2415,7 +2420,7 @@ impl ConcatenateJoinOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x0 = xs_[0].get(txn);
             guard._wait(x0.async_state());
             let x0_size = x0.size();
@@ -2447,7 +2452,7 @@ impl ConcatenateJoinOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let mut y = output.get_mut(txn, token);
             guard._wait(y.async_state());
             let mut packed = y.is_packed();
@@ -2487,14 +2492,18 @@ impl ConcatenateJoinOp {
                 }
                 assert!(x_width <= y_width);
                 assert_eq!(x_height, y_height);
+                let x = x.as_view();
+                let mut y = y.as_view_mut();
                 match cap {
                   WriteCap::Assign => {
+                    let x = x.wait(conn.clone());
+                    let mut y = y.wait_mut(conn.clone());
                     let mut stream = conn.cuda_stream();
                     assert!(unsafe { cuda_memcpy_2d_async(
                         // FIXME: safely slice the y view to apply the offset.
-                        y.as_view_mut().raw_mut_dptr().offset(join_offset as _),
+                        y.as_mut_dptr().offset(join_offset as _),
                         y_width * size_of::<T>(),
-                        x.as_view().raw_dptr(),
+                        x.as_dptr(),
                         x_width * size_of::<T>(),
                         x_width,
                         x_height,
@@ -2619,7 +2628,7 @@ impl SumJoinOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x0 = xs_[0].get(txn);
             guard._wait(x0.async_state());
             let y = A::zeros_shape(x0.shape(), conn);
@@ -2638,7 +2647,7 @@ impl SumJoinOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let mut y = match output.get_mut(txn, token).flat_view_mut() {
               None => panic!(),
               Some(y) => y,
@@ -2896,7 +2905,7 @@ impl ProductJoinOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x0 = xs_[0].get(txn);
             guard._wait(x0.async_state());
             let y = A::zeros_shape(x0.shape(), conn);
@@ -2915,7 +2924,7 @@ impl ProductJoinOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let mut y = match output.get_mut(txn, token).flat_view_mut() {
               None => panic!(),
               Some(y) => y,
@@ -3023,8 +3032,8 @@ impl SliceLikeOp {
             + AsView
             + AsViewMut
             + 'static,
-        A::ViewTy: GPUDeviceMem<T> + Array,
-        A::ViewMutTy: GPUDeviceMem<T> + Array,
+        A::ViewTy: GPUDeviceAsyncMem<T> + Array,
+        A::ViewMutTy: GPUDeviceAsyncMem<T> + Array,
         SliceLikeOp: SliceLikeOpExt<A>,
   {
     let x_axis_offset = TCell::new(0_usize);
@@ -3046,7 +3055,7 @@ impl SliceLikeOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let mut prefix_offset = 0;
             for i in 0 .. prefix_.len() {
               let p = prefix_[i].get(txn);
@@ -3081,7 +3090,7 @@ impl SliceLikeOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             let mut y = output.get_mut(txn, token);
@@ -3118,19 +3127,28 @@ impl SliceLikeOp {
               assert!(x_width >= y_width);
               assert!(slice_offset <= x_width);
               assert_eq!(x_height, y_height);
-              {
-                let mut stream = conn.cuda_stream();
-                assert!(unsafe { cuda_memcpy_2d_async(
-                    y.as_view_mut().raw_mut_dptr(),
-                    y_width * size_of::<T>(),
-                    // FIXME: safely slice the x view to apply the offset.
-                    x.as_view().raw_dptr().offset(slice_offset as _),
-                    x_width * size_of::<T>(),
-                    y_width,
-                    y_height,
-                    CudaMemcpyKind::DeviceToDevice,
-                    &mut *stream,
-                ) }.is_ok());
+              let x = x.as_view();
+              let mut y = y.as_view_mut();
+              match cap {
+                WriteCap::Assign => {
+                  let x = x.wait(conn.clone());
+                  let mut y = y.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  assert!(unsafe { cuda_memcpy_2d_async(
+                      y.as_mut_dptr(),
+                      y_width * size_of::<T>(),
+                      // FIXME: safely slice the x view to apply the offset.
+                      x.as_dptr().offset(slice_offset as _),
+                      x_width * size_of::<T>(),
+                      y_width,
+                      y_height,
+                      CudaMemcpyKind::DeviceToDevice,
+                      &mut *stream,
+                  ) }.is_ok());
+                }
+                WriteCap::Accumulate => {
+                  unimplemented!();
+                }
               }
             } else {
               unimplemented!();
@@ -3195,7 +3213,7 @@ impl BatchMean2dOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x_size = x_.get(txn).size();
             // TODO: assuming NCHW layout.
             let y = GPUDeviceArray1d::zeros(x_size[2], conn);
@@ -3215,55 +3233,60 @@ impl BatchMean2dOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let mut mean = output.get_mut(txn, token);
             guard._wait(x.async_state());
             guard._wait(mean.async_state());
-            // TODO: assuming NCHW layout.
-            assert_eq!([0, 1], axes);
             // FIXME: size checks.
-            // FIXME: set batch size.
-            let x_size = x.size();
-            let x_bsz = x.batch_size();
-            match cap {
-              WriteCap::Assign => {
-                // TODO
-                /*let max_block_ct = conn.cuda_kernel_config().max_block_ct as usize;
-                if x_size[2] < max_block_ct {
-                  /*println!("WARNING: BatchMean2dOp: operation may be slow: {} {}",
-                      x_size[2], max_block_ct);*/
-                  let tile_sz = (max_block_ct + x_size[2] - 1) / x_size[2];
-                  assert!(tile_sz >= 1);
-                  mean.as_view_mut().set_zeros(conn.clone());
+            let packed = x.is_packed() && mean.is_packed();
+            if packed {
+              let x = x.as_view();
+              let mut mean = mean.as_view_mut();
+              // TODO: assuming NCHW layout.
+              assert_eq!([0, 1], axes);
+              match cap {
+                WriteCap::Assign => {
+                  /*// TODO
+                  let max_block_ct = conn.cuda_kernel_config().max_block_ct as usize;
+                  if x_size[2] < max_block_ct {
+                    /*println!("WARNING: BatchMean2dOp: operation may be slow: {} {}",
+                        x_size[2], max_block_ct);*/
+                    let tile_sz = (max_block_ct + x_size[2] - 1) / x_size[2];
+                    assert!(tile_sz >= 1);
+                    mean.as_view_mut().set_zeros(conn.clone());
+                    let mut stream = conn.cuda_stream();
+                    unsafe { anode_gpu_batch_mean_3d1_packed_accumulate_tiledatomic_f32(
+                        sz2uint(x_size[0] * x_size[1]),
+                        sz2uint(x_size[2]),
+                        sz2uint(tile_sz),
+                        sz2uint(x_bsz),
+                        x.as_view().raw_dptr(),
+                        mean.as_view_mut().raw_mut_dptr(),
+                        conn.cuda_kernel_config() as *const _,
+                        stream.as_mut_ptr(),
+                    ) };
+                  } else {*/
+                  /*}*/
+                  let x = x.wait(conn.clone());
+                  let mut mean = mean.wait_mut(conn.clone());
                   let mut stream = conn.cuda_stream();
-                  unsafe { anode_gpu_batch_mean_3d1_packed_accumulate_tiledatomic_f32(
-                      sz2uint(x_size[0] * x_size[1]),
-                      sz2uint(x_size[2]),
-                      sz2uint(tile_sz),
-                      sz2uint(x_bsz),
-                      x.as_view().raw_dptr(),
-                      mean.as_view_mut().raw_mut_dptr(),
+                  unsafe { anode_gpu_batch_mean_3d1_packed_f32(
+                      sz2uint(x.inner().size().index_cut(3).index_cut(2).flat_len()),
+                      sz2uint(x.inner().size().index_at(2)),
+                      sz2uint(x.inner().size().index_at(3)),
+                      x.as_dptr(),
+                      mean.as_mut_dptr(),
                       conn.cuda_kernel_config() as *const _,
                       stream.as_mut_ptr(),
                   ) };
-                } else {*/
-                /*}*/
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_batch_mean_3d1_packed_f32(
-                    sz2uint(x_size[0] * x_size[1]),
-                    sz2uint(x_size[2]),
-                    sz2uint(x_bsz),
-                    x.as_view().raw_dptr(),
-                    mean.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
+                }
+                WriteCap::Accumulate => {
+                  unimplemented!();
+                }
               }
-              WriteCap::Accumulate => {
-                // TODO
-                unimplemented!();
-              }
+            } else {
+              unimplemented!();
             }
           })
         })
@@ -3303,7 +3326,7 @@ impl BatchMean2dBwdOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             let x_size = x.size();
@@ -3326,44 +3349,58 @@ impl BatchMean2dBwdOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let dmean = dmean_.get(txn);
             let x = x_.get(txn);
             let mut dx = output.get_mut(txn, token);
             guard._wait(dmean.async_state());
             guard._wait(x.async_state());
             guard._wait(dx.async_state());
-            // TODO: assuming NCHW layout.
-            assert_eq!([0, 1], axes);
-            // FIXME: size checks.
-            // FIXME: set batch size.
-            let x_size = x.size();
-            let x_bsz = x.batch_size();
-            match cap {
-              WriteCap::Assign => {
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_batch_mean_bwd_3d1_packed_f32(
-                    sz2uint(x_size[0] * x_size[1]),
-                    sz2uint(x_size[2]),
-                    sz2uint(x_bsz),
-                    dmean.as_view().raw_dptr(),
-                    dx.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
+            // TODO: size checks.
+            assert_eq!(x.size(), dx.size());
+            // Set batch size.
+            dx.set_batch_size(x.batch_size());
+            let packed = dmean.is_packed() && x.is_packed() && dx.is_packed();
+            if packed {
+              let dmean = dmean.as_view();
+              let x = x.as_view();
+              let mut dx = dx.as_view_mut();
+              // TODO: assuming NCHW layout.
+              assert_eq!([0, 1], axes);
+              match cap {
+                WriteCap::Assign => {
+                  let dmean = dmean.wait(conn.clone());
+                  let x = x.wait(conn.clone());
+                  let mut dx = dx.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_mean_bwd_3d1_packed_f32(
+                      sz2uint(x.inner().size().index_cut(3).index_cut(2).flat_len()),
+                      sz2uint(x.inner().size().index_at(2)),
+                      sz2uint(x.inner().size().index_at(3)),
+                      dmean.as_dptr(),
+                      dx.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  let dmean = dmean.wait(conn.clone());
+                  let x = x.wait(conn.clone());
+                  let mut dx = dx.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_mean_bwd_3d1_packed_accumulate_f32(
+                      sz2uint(x.inner().size().index_cut(3).index_cut(2).flat_len()),
+                      sz2uint(x.inner().size().index_at(2)),
+                      sz2uint(x.inner().size().index_at(3)),
+                      dmean.as_dptr(),
+                      dx.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
               }
-              WriteCap::Accumulate => {
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_batch_mean_bwd_3d1_packed_accumulate_f32(
-                    sz2uint(x_size[0] * x_size[1]),
-                    sz2uint(x_size[2]),
-                    sz2uint(x_bsz),
-                    dmean.as_view().raw_dptr(),
-                    dx.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
-              }
+            } else {
+              unimplemented!();
             }
           })
         })
@@ -3399,7 +3436,7 @@ impl BatchVariance2dOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x_size = x_.get(txn).size();
             // TODO: assuming NCHW layout.
             let y = GPUDeviceArray1d::zeros(x_size[2], conn);
@@ -3420,38 +3457,45 @@ impl BatchVariance2dOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let mean = mean_.get(txn);
             let mut var = output.get_mut(txn, token);
             guard._wait(x.async_state());
             guard._wait(mean.async_state());
             guard._wait(var.async_state());
-            // TODO: assuming NCHW layout.
-            assert_eq!([0, 1], axes);
             // FIXME: size checks.
-            // FIXME: set batch size.
-            let x_size = x.size();
-            let x_bsz = x.batch_size();
-            match cap {
-              WriteCap::Assign => {
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_batch_var_3d1_packed_f32(
-                    sz2uint(x_size[0] * x_size[1]),
-                    sz2uint(x_size[2]),
-                    sz2uint(x_bsz),
-                    epsilon,
-                    x.as_view().raw_dptr(),
-                    mean.as_view().raw_dptr(),
-                    var.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
+            let packed = x.is_packed() && mean.is_packed() && var.is_packed();
+            if packed {
+              let x = x.as_view();
+              let mean = mean.as_view();
+              let mut var = var.as_view_mut();
+              // TODO: assuming NCHW layout.
+              assert_eq!([0, 1], axes);
+              match cap {
+                WriteCap::Assign => {
+                  let x = x.wait(conn.clone());
+                  let mean = mean.wait(conn.clone());
+                  let mut var = var.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_var_3d1_packed_f32(
+                      sz2uint(x.inner().size().index_cut(3).index_cut(2).flat_len()),
+                      sz2uint(x.inner().size().index_at(2)),
+                      sz2uint(x.inner().size().index_at(3)),
+                      epsilon,
+                      x.as_dptr(),
+                      mean.as_dptr(),
+                      var.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  unimplemented!();
+                }
               }
-              WriteCap::Accumulate => {
-                // TODO
-                unimplemented!();
-              }
+            } else {
+              unimplemented!();
             }
           })
         })
@@ -3491,7 +3535,7 @@ impl BatchVariance2dBwdOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             let x_size = x.size();
@@ -3515,7 +3559,7 @@ impl BatchVariance2dBwdOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let dvar = dvar_.get(txn);
             let x = x_.get(txn);
             let mean = mean_.get(txn);
@@ -3524,41 +3568,58 @@ impl BatchVariance2dBwdOp {
             guard._wait(x.async_state());
             guard._wait(mean.async_state());
             guard._wait(dx.async_state());
-            // TODO: assuming NCHW layout.
-            assert_eq!([0, 1], axes);
             // FIXME: size checks.
-            // FIXME: set batch size.
-            let x_size = x.size();
-            let x_bsz = x.batch_size();
-            match cap {
-              WriteCap::Assign => {
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_batch_var_bwd_3d1_packed_f32(
-                    sz2uint(x_size[0] * x_size[1]),
-                    sz2uint(x_size[2]),
-                    sz2uint(x_bsz),
-                    dvar.as_view().raw_dptr(),
-                    x.as_view().raw_dptr(),
-                    mean.as_view().raw_dptr(),
-                    dx.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
+            assert_eq!(mean.size(), dvar.size());
+            assert_eq!(x.size(), dx.size());
+            dx.set_batch_size(x.batch_size());
+            let packed = dvar.is_packed() && x.is_packed() && mean.is_packed();
+            if packed {
+              let dvar = dvar.as_view();
+              let x = x.as_view();
+              let mean = mean.as_view();
+              let mut dx = dx.as_view_mut();
+              // TODO: assuming NCHW layout.
+              assert_eq!([0, 1], axes);
+              match cap {
+                WriteCap::Assign => {
+                  let dvar = dvar.wait(conn.clone());
+                  let x = x.wait(conn.clone());
+                  let mean = mean.wait(conn.clone());
+                  let mut dx = dx.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_var_bwd_3d1_packed_f32(
+                      sz2uint(x.inner().size().index_cut(3).index_cut(2).flat_len()),
+                      sz2uint(x.inner().size().index_at(2)),
+                      sz2uint(x.inner().size().index_at(3)),
+                      dvar.as_dptr(),
+                      x.as_dptr(),
+                      mean.as_dptr(),
+                      dx.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  let dvar = dvar.wait(conn.clone());
+                  let x = x.wait(conn.clone());
+                  let mean = mean.wait(conn.clone());
+                  let mut dx = dx.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_var_bwd_3d1_packed_accumulate_f32(
+                      sz2uint(x.inner().size().index_cut(3).index_cut(2).flat_len()),
+                      sz2uint(x.inner().size().index_at(2)),
+                      sz2uint(x.inner().size().index_at(3)),
+                      dvar.as_dptr(),
+                      x.as_dptr(),
+                      mean.as_dptr(),
+                      dx.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
               }
-              WriteCap::Accumulate => {
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_batch_var_bwd_3d1_packed_accumulate_f32(
-                    sz2uint(x_size[0] * x_size[1]),
-                    sz2uint(x_size[2]),
-                    sz2uint(x_bsz),
-                    dvar.as_view().raw_dptr(),
-                    x.as_view().raw_dptr(),
-                    mean.as_view().raw_dptr(),
-                    dx.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
-              }
+            } else {
+              unimplemented!();
             }
           })
         })
@@ -3594,7 +3655,7 @@ impl BatchVariance2dBwdMeanOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x_size = x_.get(txn).size();
             // TODO: assuming NCHW layout.
             let y = GPUDeviceArray1d::zeros(x_size[2], conn);
@@ -3616,7 +3677,7 @@ impl BatchVariance2dBwdMeanOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let dvar = dvar_.get(txn);
             let x = x_.get(txn);
             let mean = mean_.get(txn);
@@ -3625,41 +3686,57 @@ impl BatchVariance2dBwdMeanOp {
             guard._wait(x.async_state());
             guard._wait(mean.async_state());
             guard._wait(dmean.async_state());
-            // TODO: assuming NCHW layout.
-            assert_eq!([0, 1], axes);
             // FIXME: size checks.
-            // FIXME: set batch size.
-            let x_size = x.size();
-            let x_bsz = x.batch_size();
-            match cap {
-              WriteCap::Assign => {
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_batch_var_bwd_mean_3d1_packed_f32(
-                    sz2uint(x_size[0] * x_size[1]),
-                    sz2uint(x_size[2]),
-                    sz2uint(x_bsz),
-                    dvar.as_view().raw_dptr(),
-                    x.as_view().raw_dptr(),
-                    mean.as_view().raw_dptr(),
-                    dmean.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
+            assert_eq!(mean.size(), dvar.size());
+            assert_eq!(mean.size(), dmean.size());
+            let packed = dvar.is_packed() && x.is_packed() && mean.is_packed() && dmean.is_packed();
+            if packed {
+              let dvar = dvar.as_view();
+              let x = x.as_view();
+              let mean = mean.as_view();
+              let mut dmean = dmean.as_view_mut();
+              // TODO: assuming NCHW layout.
+              assert_eq!([0, 1], axes);
+              match cap {
+                WriteCap::Assign => {
+                  let dvar = dvar.wait(conn.clone());
+                  let x = x.wait(conn.clone());
+                  let mean = mean.wait(conn.clone());
+                  let mut dmean = dmean.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_var_bwd_mean_3d1_packed_f32(
+                      sz2uint(x.inner().size().index_cut(3).index_cut(2).flat_len()),
+                      sz2uint(x.inner().size().index_at(2)),
+                      sz2uint(x.inner().size().index_at(3)),
+                      dvar.as_dptr(),
+                      x.as_dptr(),
+                      mean.as_dptr(),
+                      dmean.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  let dvar = dvar.wait(conn.clone());
+                  let x = x.wait(conn.clone());
+                  let mean = mean.wait(conn.clone());
+                  let mut dmean = dmean.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_var_bwd_mean_3d1_packed_accumulate_f32(
+                      sz2uint(x.inner().size().index_cut(3).index_cut(2).flat_len()),
+                      sz2uint(x.inner().size().index_at(2)),
+                      sz2uint(x.inner().size().index_at(3)),
+                      dvar.as_dptr(),
+                      x.as_dptr(),
+                      mean.as_dptr(),
+                      dmean.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
               }
-              WriteCap::Accumulate => {
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_batch_var_bwd_mean_3d1_packed_accumulate_f32(
-                    sz2uint(x_size[0] * x_size[1]),
-                    sz2uint(x_size[2]),
-                    sz2uint(x_bsz),
-                    dvar.as_view().raw_dptr(),
-                    x.as_view().raw_dptr(),
-                    mean.as_view().raw_dptr(),
-                    dmean.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
-              }
+            } else {
+              unimplemented!();
             }
           })
         })
@@ -3695,7 +3772,7 @@ impl BatchNormalize2dOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x_size = x_.get(txn).size();
             let x_max_batch_sz = x_.get(txn).max_batch_size();
             let y = GPUDeviceOuterBatchArray3d::zeros(x_size, x_max_batch_sz, conn);
@@ -3717,7 +3794,7 @@ impl BatchNormalize2dOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let mean = mean_.get(txn);
             let var = var_.get(txn);
@@ -3726,31 +3803,45 @@ impl BatchNormalize2dOp {
             guard._wait(mean.async_state());
             guard._wait(var.async_state());
             guard._wait(y.async_state());
-            // TODO: assuming NCHW layout.
-            assert_eq!([0, 1], axes);
             // FIXME: size checks.
-            // FIXME: set batch size.
-            let x_size = x.size();
-            let x_bsz = x.batch_size();
-            match cap {
-              WriteCap::Assign => {
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_batch_norm_3d1_packed_f32(
-                    sz2uint(x_size[0] * x_size[1]),
-                    sz2uint(x_size[2]),
-                    sz2uint(x_bsz),
-                    x.as_view().raw_dptr(),
-                    mean.as_view().raw_dptr(),
-                    var.as_view().raw_dptr(),
-                    y.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
+            assert_eq!(mean.size(), var.size());
+            assert_eq!(x.batch_size(), y.batch_size());
+            // Set batch size.
+            y.set_batch_size(x.batch_size());
+            let packed = x.is_packed() && mean.is_packed() && var.is_packed() && y.is_packed();
+            if packed {
+              let x = x.as_view();
+              let mean = mean.as_view();
+              let var = var.as_view();
+              let mut y = y.as_view_mut();
+              // TODO: assuming NCHW layout.
+              assert_eq!([0, 1], axes);
+              match cap {
+                WriteCap::Assign => {
+                  let x = x.wait(conn.clone());
+                  let mean = mean.wait(conn.clone());
+                  let var = var.wait(conn.clone());
+                  let mut y = y.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_norm_3d1_packed_f32(
+                      sz2uint(x.inner().size().index_cut(3).index_cut(2).flat_len()),
+                      sz2uint(x.inner().size().index_at(2)),
+                      sz2uint(x.inner().size().index_at(3)),
+                      x.as_dptr(),
+                      mean.as_dptr(),
+                      var.as_dptr(),
+                      y.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  // TODO
+                  unimplemented!();
+                }
               }
-              WriteCap::Accumulate => {
-                // TODO
-                unimplemented!();
-              }
+            } else {
+              unimplemented!();
             }
           })
         })
@@ -3796,7 +3887,7 @@ impl BatchNormalize2dBwdOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let dy = dy_.get(txn);
             guard._wait(dy.async_state());
             let x_size = dy.size();
@@ -3819,46 +3910,60 @@ impl BatchNormalize2dBwdOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let dy = dy_.get(txn);
             let var = var_.get(txn);
             let mut dx = output.get_mut(txn, token);
             guard._wait(dy.async_state());
             guard._wait(var.async_state());
             guard._wait(dx.async_state());
-            // TODO: assuming NCHW layout.
-            assert_eq!([0, 1], axes);
             // FIXME: size checks.
-            // FIXME: set batch size.
-            let x_size = dy.size();
-            let x_bsz = dy.batch_size();
-            match cap {
-              WriteCap::Assign => {
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_batch_norm_bwd_3d1_packed_f32(
-                    sz2uint(x_size[0] * x_size[1]),
-                    sz2uint(x_size[2]),
-                    sz2uint(x_bsz),
-                    dy.as_view().raw_dptr(),
-                    var.as_view().raw_dptr(),
-                    dx.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
+            assert_eq!(dx.size(), dy.size());
+            // Set batch size.
+            dx.set_batch_size(dy.batch_size());
+            let packed = dy.is_packed() && var.is_packed() && dx.is_packed();
+            if packed {
+              let dy = dy.as_view();
+              let var = var.as_view();
+              let mut dx = dx.as_view_mut();
+              // TODO: assuming NCHW layout.
+              assert_eq!([0, 1], axes);
+              match cap {
+                WriteCap::Assign => {
+                  let dy = dy.wait(conn.clone());
+                  let var = var.wait(conn.clone());
+                  let mut dx = dx.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_norm_bwd_3d1_packed_f32(
+                      sz2uint(dy.inner().size().index_cut(3).index_cut(2).flat_len()),
+                      sz2uint(dy.inner().size().index_at(2)),
+                      sz2uint(dy.inner().size().index_at(3)),
+                      dy.as_dptr(),
+                      var.as_dptr(),
+                      dx.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  let dy = dy.wait(conn.clone());
+                  let var = var.wait(conn.clone());
+                  let mut dx = dx.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_norm_bwd_3d1_packed_accumulate_f32(
+                      sz2uint(dy.inner().size().index_cut(3).index_cut(2).flat_len()),
+                      sz2uint(dy.inner().size().index_at(2)),
+                      sz2uint(dy.inner().size().index_at(3)),
+                      dy.as_dptr(),
+                      var.as_dptr(),
+                      dx.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
               }
-              WriteCap::Accumulate => {
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_batch_norm_bwd_3d1_packed_accumulate_f32(
-                    sz2uint(x_size[0] * x_size[1]),
-                    sz2uint(x_size[2]),
-                    sz2uint(x_bsz),
-                    dy.as_view().raw_dptr(),
-                    var.as_view().raw_dptr(),
-                    dx.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
-              }
+            } else {
+              unimplemented!();
             }
           })
         })
@@ -3894,7 +3999,7 @@ impl BatchNormalize2dBwdMeanOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let dy = dy_.get(txn);
             guard._wait(dy.async_state());
             let x_size = dy.size();
@@ -3917,46 +4022,58 @@ impl BatchNormalize2dBwdMeanOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let dy = dy_.get(txn);
             let var = var_.get(txn);
             let mut dmean = output.get_mut(txn, token);
             guard._wait(dy.async_state());
             guard._wait(var.async_state());
             guard._wait(dmean.async_state());
-            // TODO: assuming NCHW layout.
-            assert_eq!([0, 1], axes);
             // FIXME: size checks.
-            // FIXME: set batch size.
-            let x_size = dy.size();
-            let x_bsz = dy.batch_size();
-            match cap {
-              WriteCap::Assign => {
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_batch_norm_bwd_mean_3d1_packed_f32(
-                    sz2uint(x_size[0] * x_size[1]),
-                    sz2uint(x_size[2]),
-                    sz2uint(x_bsz),
-                    dy.as_view().raw_dptr(),
-                    var.as_view().raw_dptr(),
-                    dmean.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
+            assert_eq!(var.size(), dmean.size());
+            let packed = dy.is_packed() && var.is_packed() && dmean.is_packed();
+            if packed {
+              let dy = dy.as_view();
+              let var = var.as_view();
+              let mut dmean = dmean.as_view_mut();
+              // TODO: assuming NCHW layout.
+              assert_eq!([0, 1], axes);
+              match cap {
+                WriteCap::Assign => {
+                  let dy = dy.wait(conn.clone());
+                  let var = var.wait(conn.clone());
+                  let mut dmean = dmean.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_norm_bwd_mean_3d1_packed_f32(
+                      sz2uint(dy.inner().size().index_cut(3).index_cut(2).flat_len()),
+                      sz2uint(dy.inner().size().index_at(2)),
+                      sz2uint(dy.inner().size().index_at(3)),
+                      dy.as_dptr(),
+                      var.as_dptr(),
+                      dmean.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  let dy = dy.wait(conn.clone());
+                  let var = var.wait(conn.clone());
+                  let mut dmean = dmean.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_norm_bwd_mean_3d1_packed_accumulate_f32(
+                      sz2uint(dy.inner().size().index_cut(3).index_cut(2).flat_len()),
+                      sz2uint(dy.inner().size().index_at(2)),
+                      sz2uint(dy.inner().size().index_at(3)),
+                      dy.as_dptr(),
+                      var.as_dptr(),
+                      dmean.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
               }
-              WriteCap::Accumulate => {
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_batch_norm_bwd_mean_3d1_packed_accumulate_f32(
-                    sz2uint(x_size[0] * x_size[1]),
-                    sz2uint(x_size[2]),
-                    sz2uint(x_bsz),
-                    dy.as_view().raw_dptr(),
-                    var.as_view().raw_dptr(),
-                    dmean.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
-              }
+            } else {
+              unimplemented!();
             }
           })
         })
@@ -3992,7 +4109,7 @@ impl BatchNormalize2dBwdVarianceOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let dy = dy_.get(txn);
             guard._wait(dy.async_state());
             let x_size = dy.size();
@@ -4017,7 +4134,7 @@ impl BatchNormalize2dBwdVarianceOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let dy = dy_.get(txn);
             let x = x_.get(txn);
             let mean = mean_.get(txn);
@@ -4028,68 +4145,89 @@ impl BatchNormalize2dBwdVarianceOp {
             guard._wait(mean.async_state());
             guard._wait(var.async_state());
             guard._wait(dvar.async_state());
-            // TODO: assuming NCHW layout.
-            assert_eq!([0, 1], axes);
             // FIXME: size checks.
-            // FIXME: set batch size.
-            let x_size = dy.size();
-            let x_bsz = dy.batch_size();
-            match cap {
-              WriteCap::Assign => {
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_batch_norm_bwd_var_3d1_packed_f32(
-                    sz2uint(x_size[0] * x_size[1]),
-                    sz2uint(x_size[2]),
-                    sz2uint(x_bsz),
-                    dy.as_view().raw_dptr(),
-                    x.as_view().raw_dptr(),
-                    mean.as_view().raw_dptr(),
-                    var.as_view().raw_dptr(),
-                    dvar.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
+            assert_eq!(mean.size(), var.size());
+            assert_eq!(mean.size(), dvar.size());
+            assert_eq!(x.size(), dy.size());
+            assert_eq!(x.batch_size(), dy.batch_size());
+            let packed = dy.is_packed() && x.is_packed() && mean.is_packed() && var.is_packed() && dvar.is_packed();
+            if packed {
+              let dy = dy.as_view();
+              let x = x.as_view();
+              let mean = mean.as_view();
+              let var = var.as_view();
+              let mut dvar = dvar.as_view_mut();
+              // TODO: assuming NCHW layout.
+              assert_eq!([0, 1], axes);
+              match cap {
+                WriteCap::Assign => {
+                  /*let max_block_ct = conn.cuda_kernel_config().max_block_ct as usize;
+                  if x_size[2] < max_block_ct {
+                    /*println!("WARNING: BatchMean2dOp: operation may be slow: {} {}",
+                        x_size[2], max_block_ct);*/
+                    let tile_sz = (max_block_ct + x_size[2] - 1) / x_size[2];
+                    assert!(tile_sz >= 1);
+                    mean.as_view_mut().set_zeros(conn.clone());
+                    let mut stream = conn.cuda_stream();
+                    unsafe { anode_gpu_batch_norm_bwd_var_3d1_packed_accumulate_tiledatomic_f32(
+                        sz2uint(x_size[0] * x_size[1]),
+                        sz2uint(x_size[2]),
+                        sz2uint(tile_sz),
+                        sz2uint(x_bsz),
+                        dy.as_view().raw_dptr(),
+                        x.as_view().raw_dptr(),
+                        mean.as_view().raw_dptr(),
+                        var.as_view().raw_dptr(),
+                        dvar.as_view_mut().raw_mut_dptr(),
+                        conn.cuda_kernel_config() as *const _,
+                        stream.as_mut_ptr(),
+                    ) };
+                  } else {
+                    // TODO
+                  }*/
+                  let dy = dy.wait(conn.clone());
+                  let x = x.wait(conn.clone());
+                  let mean = mean.wait(conn.clone());
+                  let var = var.wait(conn.clone());
+                  let mut dvar = dvar.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_norm_bwd_var_3d1_packed_f32(
+                      sz2uint(dy.inner().size().index_cut(3).index_cut(2).flat_len()),
+                      sz2uint(dy.inner().size().index_at(2)),
+                      sz2uint(dy.inner().size().index_at(3)),
+                      dy.as_dptr(),
+                      x.as_dptr(),
+                      mean.as_dptr(),
+                      var.as_dptr(),
+                      dvar.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  let dy = dy.wait(conn.clone());
+                  let x = x.wait(conn.clone());
+                  let mean = mean.wait(conn.clone());
+                  let var = var.wait(conn.clone());
+                  let mut dvar = dvar.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_norm_bwd_var_3d1_packed_accumulate_f32(
+                      sz2uint(dy.inner().size().index_cut(3).index_cut(2).flat_len()),
+                      sz2uint(dy.inner().size().index_at(2)),
+                      sz2uint(dy.inner().size().index_at(3)),
+                      dy.as_dptr(),
+                      x.as_dptr(),
+                      mean.as_dptr(),
+                      var.as_dptr(),
+                      dvar.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
               }
-              WriteCap::Accumulate => {
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_batch_norm_bwd_var_3d1_packed_accumulate_f32(
-                    sz2uint(x_size[0] * x_size[1]),
-                    sz2uint(x_size[2]),
-                    sz2uint(x_bsz),
-                    dy.as_view().raw_dptr(),
-                    x.as_view().raw_dptr(),
-                    mean.as_view().raw_dptr(),
-                    var.as_view().raw_dptr(),
-                    dvar.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
-              }
-            }
-            /*let max_block_ct = conn.cuda_kernel_config().max_block_ct as usize;
-            if x_size[2] < max_block_ct {
-              /*println!("WARNING: BatchMean2dOp: operation may be slow: {} {}",
-                  x_size[2], max_block_ct);*/
-              let tile_sz = (max_block_ct + x_size[2] - 1) / x_size[2];
-              assert!(tile_sz >= 1);
-              mean.as_view_mut().set_zeros(conn.clone());
-              let mut stream = conn.cuda_stream();
-              unsafe { anode_gpu_batch_norm_bwd_var_3d1_packed_accumulate_tiledatomic_f32(
-                  sz2uint(x_size[0] * x_size[1]),
-                  sz2uint(x_size[2]),
-                  sz2uint(tile_sz),
-                  sz2uint(x_bsz),
-                  dy.as_view().raw_dptr(),
-                  x.as_view().raw_dptr(),
-                  mean.as_view().raw_dptr(),
-                  var.as_view().raw_dptr(),
-                  dvar.as_view_mut().raw_mut_dptr(),
-                  conn.cuda_kernel_config() as *const _,
-                  stream.as_mut_ptr(),
-              ) };
             } else {
-              // TODO
-            }*/
+              unimplemented!();
+            }
           })
         })
       },
@@ -4122,7 +4260,7 @@ impl BatchNormalize2dBwdVarianceOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let dy = dy_.get(txn);
             guard._wait(dy.async_state());
             let x_size = dy.size();
@@ -4146,7 +4284,7 @@ impl BatchNormalize2dBwdVarianceOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let dy = dy_.get(txn);
             let y = y_.get(txn);
             let var = var_.get(txn);
@@ -4229,7 +4367,7 @@ impl OnlineAddOpExt<f32, GPUDeviceScalar<f32>> for OnlineAddOp {
             let mut pool = thread_ctx().gpu().pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             guard._wait(y.async_state());
@@ -4272,7 +4410,7 @@ impl OnlineAddOpExt<f32, GPUDeviceArray1d<f32>> for OnlineAddOp {
             let mut pool = thread_ctx().gpu().pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             guard._wait(y.async_state());
@@ -4315,7 +4453,7 @@ impl OnlineDiscountOpExt<f32, GPUDeviceScalar<f32>> for OnlineDiscountOp {
             let mut pool = thread_ctx().gpu().pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             guard._wait(y.async_state());
@@ -4358,7 +4496,7 @@ impl OnlineDiscountOpExt<f32, GPUDeviceArray1d<f32>> for OnlineDiscountOp {
             let mut pool = thread_ctx().gpu().pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             guard._wait(y.async_state());
@@ -4402,7 +4540,7 @@ impl OnlineAverageOpExt<f32, GPUDeviceArray1d<f32>> for OnlineAverageOp {
             let mut pool = thread_ctx().gpu().pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             guard._wait(y.async_state());
@@ -4447,7 +4585,7 @@ impl SoftmaxOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             let y = GPUDeviceOuterBatchArray1d::zeros(x.size(), x.max_batch_size(), conn);
@@ -4467,64 +4605,75 @@ impl SoftmaxOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let mut y = output.get_mut(txn, token);
             guard._wait(x.async_state());
             guard._wait(y.async_state());
             assert_eq!(x.size(), y.size());
             y.set_batch_size(x.batch_size());
-            match cap {
-              WriteCap::Assign => {
-                /*// TODO: assumes NCHW layout.
-                let xsoftmax_shape = XSoftmaxFullShape::Softmax0d(Softmax0dFullShape{
-                  src_feature_axis: 0,
-                  src_batch_axis:   1,
-                  src_size:         [x_size, x_bsz],
-                  dst_feature_axis: 0,
-                  dst_batch_axis:   1,
-                  dst_size:         [x_size, x_bsz],
-                });
-                let mut state_cache = state_cache.borrow_mut();
-                let state = state_cache.entry(xsoftmax_shape.clone()).or_insert_with(|| {
-                  match query_gpu_softmax_state(conn.device(), xsoftmax_shape, conn.clone()) {
-                    None => panic!("invalid softmax config"),
-                    Some(state) => state,
+            let packed = x.is_packed() && y.is_packed();
+            if packed {
+              match cap {
+                WriteCap::Assign => {
+                  let x = x.as_view();
+                  let mut y = y.as_view_mut();
+                  /*// TODO: assumes NCHW layout.
+                  let xsoftmax_shape = XSoftmaxFullShape::Softmax0d(Softmax0dFullShape{
+                    src_feature_axis: 0,
+                    src_batch_axis:   1,
+                    src_size:         [x_size, x_bsz],
+                    dst_feature_axis: 0,
+                    dst_batch_axis:   1,
+                    dst_size:         [x_size, x_bsz],
+                  });
+                  let mut state_cache = state_cache.borrow_mut();
+                  let state = state_cache.entry(xsoftmax_shape.clone()).or_insert_with(|| {
+                    match query_gpu_softmax_state(conn.device(), xsoftmax_shape, conn.clone()) {
+                      None => panic!("invalid softmax config"),
+                      Some(state) => state,
+                    }
+                  });
+                  y.as_view_mut().batch_softmax(
+                      state,
+                      x.as_view(),
+                      conn.clone(),
+                  );*/
+                  if x.size().index_at(0) <= conn.cuda_kernel_config().block_sz as _ {
+                    // TODO: assumes NCHW layout.
+                    let x = x.wait(conn.clone());
+                    let mut y = y.wait_mut(conn.clone());
+                    let mut stream = conn.cuda_stream();
+                    unsafe { anode_gpu_softmax_packed_block_f32(
+                        sz2uint(x.inner().size().index_at(0)),
+                        sz2uint(x.inner().size().index_at(1)),
+                        x.as_dptr(),
+                        y.as_mut_dptr(),
+                        conn.cuda_kernel_config() as *const _,
+                        stream.as_mut_ptr(),
+                    ) };
+                  } else {
+                    // TODO: assumes NCHW layout.
+                    let x = x.wait(conn.clone());
+                    let mut y = y.wait_mut(conn.clone());
+                    let mut stream = conn.cuda_stream();
+                    unsafe { anode_gpu_softmax_packed_deterministic_f32(
+                        sz2uint(x.inner().size().index_at(0)),
+                        sz2uint(x.inner().size().index_at(1)),
+                        x.as_dptr(),
+                        y.as_mut_dptr(),
+                        conn.cuda_kernel_config() as *const _,
+                        stream.as_mut_ptr(),
+                    ) };
                   }
-                });
-                y.as_view_mut().batch_softmax(
-                    state,
-                    x.as_view(),
-                    conn.clone(),
-                );*/
-                if x.size() <= conn.cuda_kernel_config().block_sz as _ {
-                  // TODO: assumes NCHW layout.
-                  let mut stream = conn.cuda_stream();
-                  unsafe { anode_gpu_softmax_packed_block_f32(
-                      sz2uint(x.size()),
-                      sz2uint(x.batch_size()),
-                      x.as_view().raw_dptr(),
-                      y.as_view_mut().raw_mut_dptr(),
-                      conn.cuda_kernel_config() as *const _,
-                      stream.as_mut_ptr(),
-                  ) };
-                } else {
-                  // TODO: assumes NCHW layout.
-                  let mut stream = conn.cuda_stream();
-                  unsafe { anode_gpu_softmax_packed_deterministic_f32(
-                      sz2uint(x.size()),
-                      sz2uint(x.batch_size()),
-                      x.as_view().raw_dptr(),
-                      y.as_view_mut().raw_mut_dptr(),
-                      conn.cuda_kernel_config() as *const _,
-                      stream.as_mut_ptr(),
-                  ) };
+                }
+                WriteCap::Accumulate => {
+                  // TODO
+                  unimplemented!();
                 }
               }
-              WriteCap::Accumulate => {
-                // TODO
-                unimplemented!();
-              }
+            } else {
+              unimplemented!();
             }
           })
         })
@@ -4565,7 +4714,7 @@ impl SoftmaxCategoricalNLLOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             let y = GPUDeviceOuterBatchScalar::zeros((), x.max_batch_size(), conn);
@@ -4576,47 +4725,59 @@ impl SoftmaxCategoricalNLLOp {
       },
       apply: {
         let section = GPULazyAsyncSection::default();
-        //let x_ = x_.clone();
+        let x_ = x_.clone();
         let prob_ = fixed_softmax_.clone();
         let data_ = category_data_.clone();
         Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
           //if let Some((cap, token)) = output.write(txn) {
           output.write(txn, |cap, token| {
-            //thread_ctx()._debug_print();
             let ctx = thread_ctx().gpu();
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
-            //let x = x_.get(txn);
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
             let prob = prob_.get(txn);
             let data = data_.get(txn);
             let mut y = output.get_mut(txn, token);
-            //guard._wait(x.async_state());
+            guard._wait(x.async_state());
             guard._wait(prob.async_state());
             guard._wait(data.async_state());
             guard._wait(y.async_state());
-            // FIXME: size checks.
-            // FIXME: set batch size.
-            let x_size = prob.size();
-            let x_bsz = prob.batch_size();
-            match cap {
-              WriteCap::Assign => {
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_softmax_cat_nll_packed_f32(
-                    sz2uint(x_size),
-                    sz2uint(x_bsz),
-                    prob.as_view().raw_dptr(),
-                    data.as_view().raw_dptr(),
-                    y.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
+            // Size checks.
+            assert_eq!(x.size(), prob.size());
+            assert_eq!(x.batch_size(), prob.batch_size());
+            assert_eq!(x.batch_size(), data.batch_size());
+            // Set batch size.
+            y.set_batch_size(x.batch_size());
+            let packed = x.is_packed() && prob.is_packed() && data.is_packed() && y.is_packed();
+            if packed {
+              let prob = prob.as_view();
+              let data = data.as_view();
+              let mut y = y.as_view_mut();
+              match cap {
+                WriteCap::Assign => {
+                  let prob = prob.wait(conn.clone());
+                  let data = data.wait(conn.clone());
+                  let mut y = y.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_softmax_cat_nll_packed_f32(
+                      sz2uint(prob.inner().size().index_at(0)),
+                      sz2uint(prob.inner().size().index_at(1)),
+                      prob.as_dptr(),
+                      data.as_dptr(),
+                      y.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  // TODO
+                  unimplemented!();
+                }
               }
-              WriteCap::Accumulate => {
-                // TODO
-                unimplemented!();
-              }
+            } else {
+              unimplemented!();
             }
           })
         })
@@ -4654,7 +4815,7 @@ impl SoftmaxCategoricalNLLBwdOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             let y = GPUDeviceOuterBatchArray1d::zeros(x.size(), x.max_batch_size(), conn);
@@ -4676,7 +4837,7 @@ impl SoftmaxCategoricalNLLBwdOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let dy = dy_.get(txn);
             let prob = prob_.get(txn);
             let data = data_.get(txn);
@@ -4685,37 +4846,56 @@ impl SoftmaxCategoricalNLLBwdOp {
             guard._wait(prob.async_state());
             guard._wait(data.async_state());
             guard._wait(dx.async_state());
-            // FIXME: size checks.
-            // FIXME: set batch size.
-            let x_size = prob.size();
-            let x_bsz = prob.batch_size();
-            match cap {
-              WriteCap::Assign => {
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_softmax_cat_nll_bwd_packed_f32(
-                    sz2uint(x_size),
-                    sz2uint(x_bsz),
-                    dy.as_view().raw_dptr(),
-                    prob.as_view().raw_dptr(),
-                    data.as_view().raw_dptr(),
-                    dx.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
+            // Size checks.
+            assert_eq!(prob.size(), dx.size());
+            assert_eq!(dy.batch_size(), prob.batch_size());
+            assert_eq!(dy.batch_size(), data.batch_size());
+            // Set batch size.
+            dx.set_batch_size(dy.batch_size());
+            let packed = dy.is_packed() && prob.is_packed() && data.is_packed() && dx.is_packed();
+            if packed {
+              let dy = dy.as_view();
+              let prob = prob.as_view();
+              let data = data.as_view();
+              let mut dx = dx.as_view_mut();
+              match cap {
+                WriteCap::Assign => {
+                  let dy = dy.wait(conn.clone());
+                  let prob = prob.wait(conn.clone());
+                  let data = data.wait(conn.clone());
+                  let mut dx = dx.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_softmax_cat_nll_bwd_packed_f32(
+                      sz2uint(prob.inner().size().index_at(0)),
+                      sz2uint(prob.inner().size().index_at(1)),
+                      dy.as_dptr(),
+                      prob.as_dptr(),
+                      data.as_dptr(),
+                      dx.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  let dy = dy.wait(conn.clone());
+                  let prob = prob.wait(conn.clone());
+                  let data = data.wait(conn.clone());
+                  let mut dx = dx.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_softmax_cat_nll_bwd_packed_accumulate_f32(
+                      sz2uint(prob.inner().size().index_at(0)),
+                      sz2uint(prob.inner().size().index_at(1)),
+                      dy.as_dptr(),
+                      prob.as_dptr(),
+                      data.as_dptr(),
+                      dx.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
               }
-              WriteCap::Accumulate => {
-                let mut stream = conn.cuda_stream();
-                unsafe { anode_gpu_softmax_cat_nll_bwd_packed_accumulate_f32(
-                    sz2uint(x_size),
-                    sz2uint(x_bsz),
-                    dy.as_view().raw_dptr(),
-                    prob.as_view().raw_dptr(),
-                    data.as_view().raw_dptr(),
-                    dx.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
-              }
+            } else {
+              unimplemented!();
             }
           })
         })
@@ -4759,7 +4939,7 @@ impl Softmax3dOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             let y = GPUDeviceOuterBatchArray4d::zeros(x.size(), x.max_batch_size(), conn);
@@ -4778,7 +4958,7 @@ impl Softmax3dOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let mut y = output.get_mut(txn, token);
             guard._wait(x.async_state());
@@ -4790,18 +4970,20 @@ impl Softmax3dOp {
             let packed = x.is_packed() && y.is_packed();
             if packed {
               let x = x.as_view();
-              let y = y.as_view_mut();
+              let mut y = y.as_view_mut();
               // TODO: assumes NCDHW layout.
               assert_eq!(3, feat_axis);
               match cap {
                 WriteCap::Assign => {
+                  let x = x.wait(conn.clone());
+                  let mut y = y.wait_mut(conn.clone());
                   let mut stream = conn.cuda_stream();
                   unsafe { anode_gpu_softmax_nd_packed_f32(
-                      sz2uint(x.size().index_cut(4).index_cut(3).flat_len()),
-                      sz2uint(x.size().index_at(3)),
-                      sz2uint(x.size().index_at(4)),
-                      x.raw_dptr(),
-                      y.raw_mut_dptr(),
+                      sz2uint(x.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(x.inner().size().index_at(3)),
+                      sz2uint(x.inner().size().index_at(4)),
+                      x.as_dptr(),
+                      y.as_mut_dptr(),
                       conn.cuda_kernel_config() as *const _,
                       stream.as_mut_ptr(),
                   ) };
@@ -4855,7 +5037,7 @@ impl Softmax3dCategoricalNLLOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             let y = GPUDeviceOuterBatchArray3d::zeros(x.size().index_cut(feat_axis), x.max_batch_size(), conn);
@@ -4876,7 +5058,7 @@ impl Softmax3dCategoricalNLLOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let prob = prob_.get(txn);
             let data = data_.get(txn);
@@ -4889,27 +5071,30 @@ impl Softmax3dCategoricalNLLOp {
             assert_eq!(x.size(), prob.size());
             assert_eq!(x.size().index_cut(feat_axis), data.size());
             assert_eq!(x.size().index_cut(feat_axis), y.size());
-            // Set batch size.
             assert_eq!(x.batch_size(), prob.batch_size());
             assert_eq!(x.batch_size(), data.batch_size());
+            // Set batch size.
             y.set_batch_size(x.batch_size());
             let packed = prob.is_packed() && data.is_packed() && y.is_packed();
             if packed {
               let prob = prob.as_view();
               let data = data.as_view();
-              let y = y.as_view_mut();
+              let mut y = y.as_view_mut();
               // TODO: assumes NCDHW layout.
               assert_eq!(3, feat_axis);
               match cap {
                 WriteCap::Assign => {
+                  let prob = prob.wait(conn.clone());
+                  let data = data.wait(conn.clone());
+                  let mut y = y.wait_mut(conn.clone());
                   let mut stream = conn.cuda_stream();
                   unsafe { anode_gpu_softmax_nd_cat_nll_packed_f32(
-                      sz2uint(prob.size().index_cut(4).index_cut(3).flat_len()),
-                      sz2uint(prob.size().index_at(3)),
-                      sz2uint(prob.size().index_at(4)),
-                      prob.raw_dptr(),
-                      data.raw_dptr(),
-                      y.raw_mut_dptr(),
+                      sz2uint(prob.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(prob.inner().size().index_at(3)),
+                      sz2uint(prob.inner().size().index_at(4)),
+                      prob.as_dptr(),
+                      data.as_dptr(),
+                      y.as_mut_dptr(),
                       conn.cuda_kernel_config() as *const _,
                       stream.as_mut_ptr(),
                   ) };
@@ -4958,7 +5143,7 @@ impl Softmax3dCategoricalNLLBwdOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             let y = GPUDeviceOuterBatchArray4d::zeros(x.size(), x.max_batch_size(), conn);
@@ -4979,7 +5164,7 @@ impl Softmax3dCategoricalNLLBwdOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let dy = dy_.get(txn);
             let prob = prob_.get(txn);
             let data = data_.get(txn);
@@ -4992,43 +5177,51 @@ impl Softmax3dCategoricalNLLBwdOp {
             assert_eq!(dx.size(), prob.size());
             assert_eq!(dx.size().index_cut(feat_axis), data.size());
             assert_eq!(dx.size().index_cut(feat_axis), dy.size());
-            // Set batch size.
             assert_eq!(dy.batch_size(), prob.batch_size());
             assert_eq!(dy.batch_size(), data.batch_size());
+            // Set batch size.
             dx.set_batch_size(dy.batch_size());
             let packed = dy.is_packed() && prob.is_packed() && data.is_packed() && dx.is_packed();
             if packed {
               let dy = dy.as_view();
               let prob = prob.as_view();
               let data = data.as_view();
-              let dx = dx.as_view_mut();
+              let mut dx = dx.as_view_mut();
               // TODO: assumes NCDHW layout.
               assert_eq!(3, feat_axis);
               match cap {
                 WriteCap::Assign => {
+                  let dy = dy.wait(conn.clone());
+                  let prob = prob.wait(conn.clone());
+                  let data = data.wait(conn.clone());
+                  let mut dx = dx.wait_mut(conn.clone());
                   let mut stream = conn.cuda_stream();
                   unsafe { anode_gpu_softmax_nd_cat_nll_bwd_packed_f32(
-                      sz2uint(prob.size().index_cut(4).index_cut(3).flat_len()),
-                      sz2uint(prob.size().index_at(3)),
-                      sz2uint(prob.size().index_at(4)),
-                      dy.raw_dptr(),
-                      prob.raw_dptr(),
-                      data.raw_dptr(),
-                      dx.raw_mut_dptr(),
+                      sz2uint(prob.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(prob.inner().size().index_at(3)),
+                      sz2uint(prob.inner().size().index_at(4)),
+                      dy.as_dptr(),
+                      prob.as_dptr(),
+                      data.as_dptr(),
+                      dx.as_mut_dptr(),
                       conn.cuda_kernel_config() as *const _,
                       stream.as_mut_ptr(),
                   ) };
                 }
                 WriteCap::Accumulate => {
+                  let dy = dy.wait(conn.clone());
+                  let prob = prob.wait(conn.clone());
+                  let data = data.wait(conn.clone());
+                  let mut dx = dx.wait_mut(conn.clone());
                   let mut stream = conn.cuda_stream();
                   unsafe { anode_gpu_softmax_nd_cat_nll_bwd_packed_accumulate_f32(
-                      sz2uint(prob.size().index_cut(4).index_cut(3).flat_len()),
-                      sz2uint(prob.size().index_at(3)),
-                      sz2uint(prob.size().index_at(4)),
-                      dy.raw_dptr(),
-                      prob.raw_dptr(),
-                      data.raw_dptr(),
-                      dx.raw_mut_dptr(),
+                      sz2uint(prob.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(prob.inner().size().index_at(3)),
+                      sz2uint(prob.inner().size().index_at(4)),
+                      dy.as_dptr(),
+                      prob.as_dptr(),
+                      data.as_dptr(),
+                      dx.as_mut_dptr(),
                       conn.cuda_kernel_config() as *const _,
                       stream.as_mut_ptr(),
                   ) };
@@ -5142,7 +5335,7 @@ impl BatchSumOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = GPUDeviceScalar::zeros((), conn);
             guard._wait(y.async_state());
             y
@@ -5161,34 +5354,45 @@ impl BatchSumOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let mut y = output.get_mut(txn, token);
             guard._wait(x.async_state());
             guard._wait(y.async_state());
-            match cap {
-              WriteCap::Assign => {
-                let mut stream = conn.cuda_stream();
-                // TODO: should use a higher level wrapper for this.
-                unsafe { gpudevicemem_sum_packed_deterministic_f32(
-                    sz2uint(x.batch_size()),
-                    x.as_view().raw_dptr(),
-                    y.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
+            let packed = x.is_packed() && y.is_packed();
+            if packed {
+              let x = x.as_view();
+              let mut y = y.as_view_mut();
+              match cap {
+                WriteCap::Assign => {
+                  // TODO: should use a higher level wrapper for this.
+                  let x = x.wait(conn.clone());
+                  let mut y = y.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { gpudevicemem_sum_packed_deterministic_f32(
+                      sz2uint(x.inner().size()),
+                      x.as_dptr(),
+                      y.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  // TODO: should use a higher level wrapper for this.
+                  let x = x.wait(conn.clone());
+                  let mut y = y.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { gpudevicemem_sum_packed_accumulate_deterministic_f32(
+                      sz2uint(x.inner().size()),
+                      x.as_dptr(),
+                      y.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
               }
-              WriteCap::Accumulate => {
-                let mut stream = conn.cuda_stream();
-                // TODO: should use a higher level wrapper for this.
-                unsafe { gpudevicemem_sum_packed_accumulate_deterministic_f32(
-                    sz2uint(x.batch_size()),
-                    x.as_view().raw_dptr(),
-                    y.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
-              }
+            } else {
+              unimplemented!();
             }
           })
         })
@@ -5237,7 +5441,7 @@ impl BatchBroadcastOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             //let target = target_.get(txn);
             //guard._wait(target.async_state());
             let y = GPUDeviceOuterBatchScalar::zeros((), target, conn);
@@ -5258,37 +5462,46 @@ impl BatchBroadcastOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
-            //let target = target_.get(txn);
             let mut y = output.get_mut(txn, token);
             guard._wait(x.async_state());
-            //guard._wait(target.async_state());
             guard._wait(y.async_state());
             y.set_batch_size(target);
-            match cap {
-              WriteCap::Assign => {
-                let mut stream = conn.cuda_stream();
-                // TODO: should use a higher level wrapper for this.
-                unsafe { gpudevicemem_bcast_packed_f32(
-                    sz2uint(y.batch_size()),
-                    x.as_view().raw_dptr(),
-                    y.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
+            let packed = x.is_packed() && y.is_packed();
+            if packed {
+              let x = x.as_view();
+              let mut y = y.as_view_mut();
+              match cap {
+                WriteCap::Assign => {
+                  // TODO: should use a higher level wrapper for this.
+                  let x = x.wait(conn.clone());
+                  let mut y = y.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { gpudevicemem_bcast_packed_f32(
+                      sz2uint(y.inner().size()),
+                      x.as_dptr(),
+                      y.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  // TODO: should use a higher level wrapper for this.
+                  let x = x.wait(conn.clone());
+                  let mut y = y.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { gpudevicemem_bcast_packed_accumulate_f32(
+                      sz2uint(y.inner().size()),
+                      x.as_dptr(),
+                      y.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
               }
-              WriteCap::Accumulate => {
-                let mut stream = conn.cuda_stream();
-                // TODO: should use a higher level wrapper for this.
-                unsafe { gpudevicemem_bcast_packed_accumulate_f32(
-                    sz2uint(y.batch_size()),
-                    x.as_view().raw_dptr(),
-                    y.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
-              }
+            } else {
+              unimplemented!();
             }
           })
         })
@@ -5337,7 +5550,7 @@ impl BatchBroadcastLikeOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let target = target_.get(txn);
             guard._wait(target.async_state());
             let y = GPUDeviceOuterBatchScalar::zeros((), target.max_batch_size(), conn);
@@ -5358,7 +5571,7 @@ impl BatchBroadcastLikeOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let target = target_.get(txn);
             let mut y = output.get_mut(txn, token);
@@ -5366,29 +5579,40 @@ impl BatchBroadcastLikeOp {
             guard._wait(target.async_state());
             guard._wait(y.async_state());
             y.set_batch_size(target.batch_size());
-            match cap {
-              WriteCap::Assign => {
-                let mut stream = conn.cuda_stream();
-                // TODO: should use a higher level wrapper for this.
-                unsafe { gpudevicemem_bcast_packed_f32(
-                    sz2uint(y.batch_size()),
-                    x.as_view().raw_dptr(),
-                    y.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
+            let packed = x.is_packed() && y.is_packed();
+            if packed {
+              let x = x.as_view();
+              let mut y = y.as_view_mut();
+              match cap {
+                WriteCap::Assign => {
+                  // TODO: should use a higher level wrapper for this.
+                  let x = x.wait(conn.clone());
+                  let mut y = y.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { gpudevicemem_bcast_packed_f32(
+                      sz2uint(y.inner().size()),
+                      x.as_dptr(),
+                      y.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  // TODO: should use a higher level wrapper for this.
+                  let x = x.wait(conn.clone());
+                  let mut y = y.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { gpudevicemem_bcast_packed_accumulate_f32(
+                      sz2uint(y.inner().size()),
+                      x.as_dptr(),
+                      y.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
               }
-              WriteCap::Accumulate => {
-                let mut stream = conn.cuda_stream();
-                // TODO: should use a higher level wrapper for this.
-                unsafe { gpudevicemem_bcast_packed_accumulate_f32(
-                    sz2uint(y.batch_size()),
-                    x.as_view().raw_dptr(),
-                    y.as_view_mut().raw_mut_dptr(),
-                    conn.cuda_kernel_config() as *const _,
-                    stream.as_mut_ptr(),
-                ) };
-              }
+            } else {
+              unimplemented!();
             }
           })
         })
@@ -5505,16 +5729,18 @@ where T: Copy,
 }
 
 impl ApplyGPUFlatMap<f32> for PositiveClipFlatMap<f32> {
-  fn apply_gpu_flat_map(&self, x: GPUDeviceArrayView1d<f32>, y: GPUDeviceArrayViewMut1d<f32>, conn: GPUDeviceConn) {
+  fn apply_gpu_flat_map(&self, x: GPUDeviceArrayView1d<f32>, mut y: GPUDeviceArrayViewMut1d<f32>, conn: GPUDeviceConn) {
     assert!(x.is_packed());
     assert!(y.is_packed());
     assert!(x.size() <= u32::max_value() as _);
     assert_eq!(x.size(), y.size());
+    let x = x.wait(conn.clone());
+    let mut y = y.wait_mut(conn.clone());
     let mut stream = conn.cuda_stream();
     unsafe { anode_gpu_positive_clip_flat_map_f32(
-        x.size() as _,
-        x.raw_dptr(),
-        y.raw_mut_dptr(),
+        sz2uint(x.inner().size()),
+        x.as_dptr(),
+        y.as_mut_dptr(),
         conn.cuda_kernel_config() as *const _,
         stream.as_mut_ptr(),
     ) };
@@ -5522,19 +5748,22 @@ impl ApplyGPUFlatMap<f32> for PositiveClipFlatMap<f32> {
 }
 
 impl ApplyGPUFlatMapBwd<f32> for PositiveClipFlatMap<f32> {
-  fn apply_gpu_flat_map_bwd(&self, adj_y: GPUDeviceArrayView1d<f32>, y: GPUDeviceArrayView1d<f32>, adj_x: GPUDeviceArrayViewMut1d<f32>, conn: GPUDeviceConn) {
+  fn apply_gpu_flat_map_bwd(&self, adj_y: GPUDeviceArrayView1d<f32>, y: GPUDeviceArrayView1d<f32>, mut adj_x: GPUDeviceArrayViewMut1d<f32>, conn: GPUDeviceConn) {
     assert!(adj_y.is_packed());
     assert!(y.is_packed());
     assert!(adj_x.is_packed());
     assert!(adj_y.size() <= u32::max_value() as _);
     assert_eq!(adj_y.size(), y.size());
     assert_eq!(adj_y.size(), adj_x.size());
+    let adj_y = adj_y.wait(conn.clone());
+    let y = y.wait(conn.clone());
+    let mut adj_x = adj_x.wait_mut(conn.clone());
     let mut stream = conn.cuda_stream();
     unsafe { anode_gpu_positive_clip_flat_map_bwd_f32(
-        adj_y.size() as _,
-        adj_y.raw_dptr(),
-        y.raw_dptr(),
-        adj_x.raw_mut_dptr(),
+        sz2uint(adj_y.inner().size()),
+        adj_y.as_dptr(),
+        y.as_dptr(),
+        adj_x.as_mut_dptr(),
         conn.cuda_kernel_config() as *const _,
         stream.as_mut_ptr(),
     ) };
@@ -5542,14 +5771,15 @@ impl ApplyGPUFlatMapBwd<f32> for PositiveClipFlatMap<f32> {
 }
 
 impl ApplyGPUFlatMapInplace<f32> for PositiveClipFlatMap<f32> {
-  fn apply_gpu_flat_map_inplace(&self, x: GPUDeviceArrayViewMut1d<f32>, conn: GPUDeviceConn) {
+  fn apply_gpu_flat_map_inplace(&self, mut x: GPUDeviceArrayViewMut1d<f32>, conn: GPUDeviceConn) {
     assert!(x.is_packed());
     assert!(x.size() <= u32::max_value() as _);
+    let mut x = x.wait_mut(conn.clone());
     let mut stream = conn.cuda_stream();
     unsafe { anode_gpu_positive_clip_flat_map_f32(
-        x.size() as _,
-        x.raw_dptr(),
-        x.raw_mut_dptr(),
+        sz2uint(x.inner().size()),
+        x.as_dptr(),
+        x.as_mut_dptr(),
         conn.cuda_kernel_config() as *const _,
         stream.as_mut_ptr(),
     ) };
@@ -5557,17 +5787,19 @@ impl ApplyGPUFlatMapInplace<f32> for PositiveClipFlatMap<f32> {
 }
 
 impl ApplyGPUFlatMapBwdInplace<f32> for PositiveClipFlatMap<f32> {
-  fn apply_gpu_flat_map_bwd_inplace(&self, adj_y: GPUDeviceArrayViewMut1d<f32>, y: GPUDeviceArrayView1d<f32>, conn: GPUDeviceConn) {
+  fn apply_gpu_flat_map_bwd_inplace(&self, mut adj_y: GPUDeviceArrayViewMut1d<f32>, y: GPUDeviceArrayView1d<f32>, conn: GPUDeviceConn) {
     assert!(adj_y.is_packed());
     assert!(y.is_packed());
     assert!(adj_y.size() <= u32::max_value() as _);
     assert_eq!(adj_y.size(), y.size());
+    let y = y.wait(conn.clone());
+    let mut adj_y = adj_y.wait_mut(conn.clone());
     let mut stream = conn.cuda_stream();
     unsafe { anode_gpu_positive_clip_flat_map_bwd_f32(
-        adj_y.size() as _,
-        adj_y.raw_dptr(),
-        y.raw_dptr(),
-        adj_y.raw_mut_dptr(),
+        sz2uint(adj_y.inner().size()),
+        adj_y.as_dptr(),
+        y.as_dptr(),
+        adj_y.as_mut_dptr(),
         conn.cuda_kernel_config() as *const _,
         stream.as_mut_ptr(),
     ) };
@@ -5738,7 +5970,7 @@ impl<F> FlatMapOp<F> where F: Clone + 'static {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 let x = x_.get(txn);
@@ -5850,7 +6082,7 @@ impl<F> FlatJoinOp<F> where F: Clone + 'static {
             let mut pool = thread_ctx().gpu().pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 let mut flat_xs = vec![];
@@ -5942,6 +6174,7 @@ impl PositiveClipOp {
   where T: ZeroBits + Default + 'static,
         A: GPUDeviceAsync
             + GPUDeviceZerosShape<T>
+            + DenseArray
             + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>>
             + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>>
             + 'static,
@@ -5961,7 +6194,7 @@ impl PositiveClipOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             let y = A::zeros_shape(x.shape(), conn);
@@ -5980,19 +6213,26 @@ impl PositiveClipOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
-            match cap {
-              WriteCap::Assign => {
-                let x = x_.get(txn);
-                let mut y = output.get_mut(txn, token);
-                guard._wait(x.async_state());
-                guard._wait(y.async_state());
-                let fmap: PositiveClipFlatMap<T> = Default::default();
-                fmap.apply_gpu_flat_map(x.flat_view().unwrap(), y.flat_view_mut().unwrap(), conn);
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            guard._wait(x.async_state());
+            guard._wait(y.async_state());
+            let packed = x.is_packed() && y.is_packed();
+            if packed {
+              let x = x.flat_view().unwrap();
+              let y = y.flat_view_mut().unwrap();
+              match cap {
+                WriteCap::Assign => {
+                  let fmap: PositiveClipFlatMap<T> = Default::default();
+                  fmap.apply_gpu_flat_map(x, y, conn);
+                }
+                WriteCap::Accumulate => {
+                  unimplemented!();
+                }
               }
-              WriteCap::Accumulate => {
-                panic!();
-              }
+            } else {
+              unimplemented!();
             }
           })
         })
@@ -6019,6 +6259,7 @@ impl PositiveClipBwdOp {
   where T: ZeroBits + Default + 'static,
         A: GPUDeviceAsync
             + GPUDeviceZerosShape<T>
+            + DenseArray
             + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>>
             + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>>
             + 'static,
@@ -6037,7 +6278,7 @@ impl PositiveClipBwdOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let adj_y = adj_y_.get(txn);
             guard._wait(adj_y.async_state());
             let adj_x = A::zeros_shape(adj_y.shape(), conn);
@@ -6057,21 +6298,29 @@ impl PositiveClipBwdOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
-            match cap {
-              WriteCap::Assign => {
-                let adj_y = adj_y_.get(txn);
-                let y = y_.get(txn);
-                let mut adj_x = output.get_mut(txn, token);
-                guard._wait(adj_y.async_state());
-                guard._wait(y.async_state());
-                guard._wait(adj_x.async_state());
-                let fmap: PositiveClipFlatMap<T> = Default::default();
-                fmap.apply_gpu_flat_map_bwd(adj_y.flat_view().unwrap(), y.flat_view().unwrap(), adj_x.flat_view_mut().unwrap(), conn);
+            let mut guard = section.push(conn.clone());
+            let adj_y = adj_y_.get(txn);
+            let y = y_.get(txn);
+            let mut adj_x = output.get_mut(txn, token);
+            guard._wait(adj_y.async_state());
+            guard._wait(y.async_state());
+            guard._wait(adj_x.async_state());
+            let packed = adj_y.is_packed() && y.is_packed() && adj_x.is_packed();
+            if packed {
+              let adj_y = adj_y.flat_view().unwrap();
+              let y = y.flat_view().unwrap();
+              let adj_x = adj_x.flat_view_mut().unwrap();
+              match cap {
+                WriteCap::Assign => {
+                  let fmap: PositiveClipFlatMap<T> = Default::default();
+                  fmap.apply_gpu_flat_map_bwd(adj_y, y, adj_x, conn);
+                }
+                WriteCap::Accumulate => {
+                  unimplemented!();
+                }
               }
-              WriteCap::Accumulate => {
-                panic!();
-              }
+            } else {
+              unimplemented!();
             }
           })
         })
@@ -6095,6 +6344,7 @@ impl PositiveClipClobberOp {
   where T: ZeroBits + Default + 'static,
         A: GPUDeviceAsync
             + GPUDeviceZerosShape<T>
+            + DenseArray
             + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>>
             + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>>
             + 'static,
@@ -6116,7 +6366,7 @@ impl PositiveClipClobberOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             let y = A::zeros_shape(x.shape(), conn);
@@ -6134,17 +6384,23 @@ impl PositiveClipClobberOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
-            match cap {
-              WriteCap::Assign => {
-                let mut y = output.get_mut(txn, token);
-                guard._wait(y.async_state());
-                let fmap: PositiveClipFlatMap<T> = Default::default();
-                fmap.apply_gpu_flat_map_inplace(y.flat_view_mut().unwrap(), conn);
+            let mut guard = section.push(conn.clone());
+            let mut y = output.get_mut(txn, token);
+            guard._wait(y.async_state());
+            let packed = y.is_packed();
+            if packed {
+              let y = y.flat_view_mut().unwrap();
+              match cap {
+                WriteCap::Assign => {
+                  let fmap: PositiveClipFlatMap<T> = Default::default();
+                  fmap.apply_gpu_flat_map_inplace(y, conn);
+                }
+                WriteCap::Accumulate => {
+                  unimplemented!();
+                }
               }
-              WriteCap::Accumulate => {
-                panic!();
-              }
+            } else {
+              unimplemented!();
             }
           })
         })
@@ -6174,6 +6430,7 @@ impl PositiveClipBwdClobberOp {
   where T: ZeroBits + Default + 'static,
         A: GPUDeviceAsync
             + GPUDeviceZerosShape<T>
+            + DenseArray
             + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>>
             + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>>
             + 'static,
@@ -6193,7 +6450,7 @@ impl PositiveClipBwdClobberOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let adj_y = adj_y_.get(txn);
             guard._wait(adj_y.async_state());
             let adj_x = A::zeros_shape(adj_y.shape(), conn);
@@ -6212,19 +6469,26 @@ impl PositiveClipBwdClobberOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
-            match cap {
-              WriteCap::Assign => {
-                let y = y_.get(txn);
-                let mut adj_x = output.get_mut(txn, token);
-                guard._wait(y.async_state());
-                guard._wait(adj_x.async_state());
-                let fmap: PositiveClipFlatMap<T> = Default::default();
-                fmap.apply_gpu_flat_map_bwd_inplace(adj_x.flat_view_mut().unwrap(), y.flat_view().unwrap(), conn);
+            let mut guard = section.push(conn.clone());
+            let y = y_.get(txn);
+            let mut adj_x = output.get_mut(txn, token);
+            guard._wait(y.async_state());
+            guard._wait(adj_x.async_state());
+            let packed = y.is_packed() && adj_x.is_packed();
+            if packed {
+              let adj_x = adj_x.flat_view_mut().unwrap();
+              let y = y.flat_view().unwrap();
+              match cap {
+                WriteCap::Assign => {
+                  let fmap: PositiveClipFlatMap<T> = Default::default();
+                  fmap.apply_gpu_flat_map_bwd_inplace(adj_x, y, conn);
+                }
+                WriteCap::Accumulate => {
+                  unimplemented!();
+                }
               }
-              WriteCap::Accumulate => {
-                panic!();
-              }
+            } else {
+              unimplemented!();
             }
           })
         })
@@ -6472,7 +6736,7 @@ impl LinearOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 let w = w_.get(txn);
@@ -6557,7 +6821,7 @@ impl LinearOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 let w = w_.get(txn).as_view();
@@ -6636,7 +6900,7 @@ impl LinearOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 let w = w_.get(txn).as_view();
@@ -6718,7 +6982,7 @@ impl AffineOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 let w = w_.get(txn).as_view();
@@ -6913,7 +7177,7 @@ impl Conv2dLinearOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             //let w_size = w_.get(txn).size();
             //let x_size = x_.get(txn).size();
             let x = x_.get(txn);
@@ -6939,7 +7203,7 @@ impl Conv2dLinearOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 // TODO: set batch size.
@@ -7063,7 +7327,7 @@ impl Conv2dAffineOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             //let w_size = w_.get(txn).size();
             //let x_size = x_.get(txn).size();
             let x = x_.get(txn);
@@ -7089,7 +7353,7 @@ impl Conv2dAffineOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 // TODO: set batch size.
@@ -7286,7 +7550,7 @@ impl LeftTransposeConv2dLinearOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             //let w = w_.get(txn);
             let y = y_.get(txn);
             //guard._wait(w.async_state());
@@ -7313,7 +7577,7 @@ impl LeftTransposeConv2dLinearOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let w = w_.get(txn).as_view();
             let y = y_.get(txn).as_view();
             let mut x = output.get_mut(txn, token).as_view_mut();
@@ -7492,7 +7756,7 @@ impl OuterConv2dLinearOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             // TODO: assumes NCHW layout.
             let w_size = [
               conv_shape.ker_dims[0],
@@ -7519,7 +7783,7 @@ impl OuterConv2dLinearOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 // TODO: set batch size.
@@ -7637,7 +7901,7 @@ impl Conv2dReduceBwdOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let b_size = conv_shape.features;
             let b = GPUDeviceArray1d::zeros(b_size, conn);
             guard._wait(b.async_state());
@@ -7656,7 +7920,7 @@ impl Conv2dReduceBwdOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 let x = x_.get(txn).as_view();
@@ -7835,7 +8099,7 @@ impl Conv3dLinearOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             assert_eq!(x.size(), conv_shape.calculate_input_size());
@@ -7860,7 +8124,7 @@ impl Conv3dLinearOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let w = w_.get(txn).as_view();
             let x = x_.get(txn).as_view();
             let mut y = output.get_mut(txn, token).as_view_mut();
@@ -7965,7 +8229,7 @@ impl Conv3dAffineOp {
             let x_max_bsz = x_.get(txn).max_batch_size();
             let y_size = conv_shape.calculate_output_size();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = GPUDeviceOuterBatchArray4d::zeros(y_size, x_max_bsz, conn);
             guard._wait(y.async_state());
             y
@@ -7986,7 +8250,7 @@ impl Conv3dAffineOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let w = w_.get(txn).as_view();
             let x = x_.get(txn).as_view();
             let b = b_.get(txn).as_view();
@@ -8104,7 +8368,7 @@ impl LeftTransposeConv3dLinearOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = y_.get(txn);
             guard._wait(y.async_state());
             let max_bsz = y.max_batch_size();
@@ -8128,7 +8392,7 @@ impl LeftTransposeConv3dLinearOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let w = w_.get(txn).as_view();
             let y = y_.get(txn).as_view();
             let mut x = output.get_mut(txn, token).as_view_mut();
@@ -8241,7 +8505,7 @@ impl OuterConv3dLinearOp {
               conv_shape.features,
             ];
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let w = GPUDeviceArray5d::zeros(w_size, conn);
             guard._wait(w.async_state());
             w
@@ -8261,7 +8525,7 @@ impl OuterConv3dLinearOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let y = y_.get(txn).as_view();
             let x = x_.get(txn).as_view();
             let mut w = output.get_mut(txn, token).as_view_mut();
@@ -8363,7 +8627,7 @@ impl Conv3dReduceBwdOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let b_size = conv_shape.features;
             let b = GPUDeviceArray1d::zeros(b_size, conn);
             guard._wait(b.async_state());
@@ -8382,7 +8646,7 @@ impl Conv3dReduceBwdOp {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
                 let x = x_.get(txn).as_view();
                 let mut b = output.get_mut(txn, token).as_view_mut();
                 guard._wait(x.async_state());
@@ -8503,7 +8767,7 @@ impl<Pool: PoolOp + 'static> Pool2dOp<Pool> {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             let x_max_bsz = x.max_batch_size();
@@ -8525,7 +8789,7 @@ impl<Pool: PoolOp + 'static> Pool2dOp<Pool> {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 let x = x_.get(txn).as_view();
@@ -8642,7 +8906,7 @@ impl<Pool: PoolOp + 'static> Pool2dBwdOp<Pool> {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             let x_shape = x.shape();
@@ -8665,7 +8929,7 @@ impl<Pool: PoolOp + 'static> Pool2dBwdOp<Pool> {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             match cap {
               WriteCap::Assign => {
                 let dy = dy_.get(txn).as_view();
@@ -8854,7 +9118,7 @@ impl<Pool: PoolOp + 'static> Pool3dOp<Pool> {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             assert_eq!(x.size(), pool_shape.calculate_input_size());
@@ -8877,7 +9141,7 @@ impl<Pool: PoolOp + 'static> Pool3dOp<Pool> {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn).as_view();
             let mut y = output.get_mut(txn, token).as_view_mut();
             guard._wait(x.async_state());
@@ -8960,7 +9224,7 @@ impl<Pool: PoolOp + 'static> Pool3dBwdOp<Pool> {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             guard._wait(x.async_state());
             let x_shape = x.shape();
@@ -8983,7 +9247,7 @@ impl<Pool: PoolOp + 'static> Pool3dBwdOp<Pool> {
             let mut pool = ctx.pool();
             let conn = pool.conn();
             let mut section = section.clone();
-            let mut guard = section.enter(conn.clone());
+            let mut guard = section.push(conn.clone());
             let dy = dy_.get(txn).as_view();
             let y = y_.get(txn).as_view();
             let x = x_.get(txn).as_view();
