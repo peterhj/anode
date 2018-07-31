@@ -26,6 +26,8 @@ use rand::distributions::{Distribution, Uniform, Normal};
 use std::f32;
 use std::rc::{Rc};
 
+pub mod nn;
+
 pub fn _arg_max(xs: &[f32]) -> usize {
   let mut top_x = f32::NEG_INFINITY;
   let mut top_k = 0;

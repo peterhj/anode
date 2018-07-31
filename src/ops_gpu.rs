@@ -531,6 +531,123 @@ impl SumSpmdOp {
   }
 }
 
+impl UpcastOpExt<GPUDeviceOuterBatchScalar<u8>, GPUDeviceOuterBatchScalar<u32>> for UpcastOp {
+  fn build(x_: Val<GPUDeviceOuterBatchScalar<u8>>) -> Val<GPUDeviceOuterBatchScalar<u32>> {
+    UpcastOp::build_device_u8_to_u32_op(x_)
+  }
+}
+
+impl UpcastOpExt<GPUDeviceOuterBatchArray1d<u8>, GPUDeviceOuterBatchArray1d<u32>> for UpcastOp {
+  fn build(x_: Val<GPUDeviceOuterBatchArray1d<u8>>) -> Val<GPUDeviceOuterBatchArray1d<u32>> {
+    UpcastOp::build_device_u8_to_u32_op(x_)
+  }
+}
+
+impl UpcastOpExt<GPUDeviceOuterBatchArray2d<u8>, GPUDeviceOuterBatchArray2d<u32>> for UpcastOp {
+  fn build(x_: Val<GPUDeviceOuterBatchArray2d<u8>>) -> Val<GPUDeviceOuterBatchArray2d<u32>> {
+    UpcastOp::build_device_u8_to_u32_op(x_)
+  }
+}
+
+impl UpcastOpExt<GPUDeviceOuterBatchArray3d<u8>, GPUDeviceOuterBatchArray3d<u32>> for UpcastOp {
+  fn build(x_: Val<GPUDeviceOuterBatchArray3d<u8>>) -> Val<GPUDeviceOuterBatchArray3d<u32>> {
+    UpcastOp::build_device_u8_to_u32_op(x_)
+  }
+}
+
+impl UpcastOpExt<GPUDeviceOuterBatchArray4d<u8>, GPUDeviceOuterBatchArray4d<u32>> for UpcastOp {
+  fn build(x_: Val<GPUDeviceOuterBatchArray4d<u8>>) -> Val<GPUDeviceOuterBatchArray4d<u32>> {
+    UpcastOp::build_device_u8_to_u32_op(x_)
+  }
+}
+
+impl UpcastOp {
+  pub fn build_device_u8_to_u32_op<S, A, B>(x_: Val<A>) -> Val<B>
+  where
+      S: Eq,
+      A: FlatView<FlatViewTy=GPUDeviceArrayView1d<u8>>
+          + Shape<Shape=S>
+          + DenseArray
+          + 'static,
+      B: FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<u32>>
+          + Shape<Shape=S>
+          + DenseArray
+          + GPUDeviceZerosShape<u32>
+          + 'static,
+  {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let y = B::zeros_shape(x.shape(), conn);
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            // TODO: size checks/set batch size.
+            /*assert_eq!(y.size(), x.size());
+            y.set_batch_size(x.batch_size());*/
+            assert!(x.shape() == y.shape());
+            let packed = x.is_packed() && y.is_packed();
+            if packed {
+              let x = x.flat_view().unwrap();
+              let mut y = y.flat_view_mut().unwrap();
+              assert_eq!(x.size(), y.size());
+              match cap {
+                WriteCap::Assign => {
+                  let x = x.wait(conn.clone());
+                  let mut y = y.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_upcast_u8_packed_u32(
+                      sz2uint(x.inner().size()),
+                      x.as_dptr(),
+                      y.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  unimplemented!();
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: None,
+      inplace: None,
+    };
+    Val::from(Rc::new(F1Op::new(UpcastOp, ext, x_)))
+  }
+}
+
 impl DequantizeOpExt<f32, GPUDeviceOuterBatchArray3d<u8>, GPUDeviceOuterBatchArray3d<f32>> for DequantizeOp<f32> {
   fn build(lo: f32, hi: f32, x_: Val<GPUDeviceOuterBatchArray3d<u8>>) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
     DequantizeOp::<f32>::build_device_u8_to_f32_obatch_3d_op(lo, hi, x_)

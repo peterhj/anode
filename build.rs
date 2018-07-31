@@ -49,6 +49,7 @@ fn main() {
       .include("/usr/local/cuda/include")
       .file("routines_gpu/batch_norm.cu")
       .file("routines_gpu/batch_norm_external.cu")
+      .file("routines_gpu/cast.cu")
       .file("routines_gpu/flat_join.cu")
       .file("routines_gpu/flat_map.cu")
       .file("routines_gpu/quantize.cu")
@@ -76,6 +77,8 @@ fn main() {
       .whitelist_function("anode_gpu_batch_norm_bwd_var_3d1_packed_accumulate_f32")
       .whitelist_function("anode_gpu_batch_norm_bwd_var_v2_3d1_packed_f32")
       .whitelist_function("anode_gpu_batch_norm_bwd_var_v2_3d1_packed_accumulate_f32")
+      // "cast.cu"
+      .whitelist_function("anode_gpu_upcast_u8_packed_u32")
       // "flat_map.cu"
       .whitelist_function("anode_gpu_copy_flat_map_f32")
       .whitelist_function("anode_gpu_modulus_flat_map_f32")

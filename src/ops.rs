@@ -33,6 +33,7 @@ pub struct SerializeOp;
 pub struct DeserializeOp;
 
 pub struct CastOp;
+pub struct UpcastOp;
 pub struct DequantizeOp<T> { pub lo: T, pub hi: T }
 
 pub struct SwitchOp;
@@ -549,6 +550,20 @@ pub trait SerializeExt<V> {
 
 pub trait DeserializeExt<V> {
   fn deserialize(&self, src: Val<V>) -> Node;
+}
+
+pub trait UpcastOpExt<V, W> {
+  fn build(x_: Val<V>) -> Val<W>;
+}
+
+pub trait UpcastExt<V, W> {
+  fn upcast(self) -> Val<W>;
+}
+
+impl<V, W> UpcastExt<V, W> for Val<V> where UpcastOp: UpcastOpExt<V, W> {
+  fn upcast(self) -> Val<W> {
+    <UpcastOp as UpcastOpExt<V, W>>::build(self)
+  }
 }
 
 pub trait DequantizeOpExt<T, V, W> {

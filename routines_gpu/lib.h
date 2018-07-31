@@ -248,6 +248,15 @@ void anode_gpu_flat_mult_add_f32(
     const struct KernelConfig *cfg,
     struct CUstream_st *stream);*/
 
+// "cast.cu"
+
+void anode_gpu_upcast_u8_packed_u32(
+    uint32_t len,
+    const uint8_t *x,
+    uint32_t *y,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+
 // "flat_join.cu"
 void anode_gpu_M1_copy_map_M2_unit_step_map_R_product_reduce_flat_join_f32(
     uint32_t len,
