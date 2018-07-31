@@ -21,7 +21,6 @@ walkdir = "*"
 [dev-dependencies]
 # colorimage can be found at: https://github.com/peterhj/colorimage
 colorimage = { path = "../colorimage" }
-minidata = { path = "../minidata" }
 rngtape = { path = "../rngtape" }
 stb_image = { path = "../rust-stb-image" }
 time = "*"
@@ -39,6 +38,7 @@ float = { path = "../float" }
 gpudevicemem = { path = "../gpudevicemem", optional = true }
 lazy_static = "*"
 memarray = { path = "../memarray", features = ["mkl"] }
+minidata = { path = "../minidata", optional = true }
 mpich = { path = "../libmpich", optional = true}
 num-traits = "*"
 parking_lot = { version = "^0.5", features = ["nightly"] }
