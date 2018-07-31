@@ -5140,8 +5140,16 @@ impl SoftmaxNdCategoricalNLLExt<GPUDeviceOuterBatchArray4d<f32>, GPUDeviceOuterB
   }
 }
 
+impl SoftmaxNdCategoricalNLLExt<GPUDeviceOuterBatchArray4d<f32>, GPUDeviceOuterBatchArray4d<u32>, GPUDeviceOuterBatchArray3d<f32>> for Val<GPUDeviceOuterBatchArray4d<f32>> {
+  fn softmax_nd_categorical_nll(self, feat_axis: isize, category_data_: Val<GPUDeviceOuterBatchArray4d<u32>>) -> (Val<GPUDeviceOuterBatchArray3d<f32>>, Val<GPUDeviceOuterBatchArray4d<f32>>) {
+    let softmax_ = self.clone().softmax_nd(feat_axis);
+    let nll_ = Softmax3dCategoricalNLLOp::build_device_obatch_op_v2(feat_axis, self, softmax_.clone().fix(), category_data_);
+    (nll_, softmax_)
+  }
+}
+
 impl Softmax3dCategoricalNLLOp {
-  fn build_device_obatch_op(feat_axis: isize, x_: Val<GPUDeviceOuterBatchArray4d<f32>>, fixed_softmax_: Val<GPUDeviceOuterBatchArray4d<f32>>, category_data_: Val<GPUDeviceOuterBatchArray3d<u32>>) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+  pub fn build_device_obatch_op(feat_axis: isize, x_: Val<GPUDeviceOuterBatchArray4d<f32>>, fixed_softmax_: Val<GPUDeviceOuterBatchArray4d<f32>>, category_data_: Val<GPUDeviceOuterBatchArray3d<u32>>) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
     let ext = OpExt{
       make_val: {
         let x_ = x_.clone();
@@ -5244,10 +5252,115 @@ impl Softmax3dCategoricalNLLOp {
     };
     Val::from(Rc::new(F3Op::new(Softmax3dCategoricalNLLOp, ext, x_, fixed_softmax_, category_data_)))
   }
+
+  pub fn build_device_obatch_op_v2<Cat>(feat_axis: isize, x_: Val<GPUDeviceOuterBatchArray4d<f32>>, fixed_softmax_: Val<GPUDeviceOuterBatchArray4d<f32>>, category_data_: Val<Cat>) -> Val<GPUDeviceOuterBatchArray3d<f32>>
+  where Cat:
+            //SqueezeView<GPUDeviceArrayView4d<u32>>
+            AsView<ViewTy=GPUDeviceArrayView5d<u32>>
+            + DenseArray
+            + 'static,
+  {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let y = GPUDeviceOuterBatchArray3d::zeros(x.size().index_cut(feat_axis), x.max_batch_size(), conn);
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        let prob_ = fixed_softmax_.clone();
+        let data_ = category_data_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let prob = prob_.get(txn);
+            let data = data_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            // Size checks.
+            assert_eq!(x.size(), prob.size());
+            //assert_eq!(x.size().index_cut(feat_axis), data.size());
+            assert_eq!(x.size().index_cut(feat_axis), y.size());
+            assert_eq!(x.batch_size(), prob.batch_size());
+            //assert_eq!(x.batch_size(), data.batch_size());
+            // Set batch size.
+            y.set_batch_size(x.batch_size());
+            let packed = prob.is_packed() && data.is_packed() && y.is_packed();
+            if packed {
+              let prob = prob.as_view();
+              let data = data.as_view().as_view_or_squeeze(feat_axis);
+              let mut y = y.as_view_mut();
+              assert_eq!(data.size(), y.size());
+              // TODO: assumes NCDHW layout.
+              assert_eq!(3, feat_axis);
+              match cap {
+                WriteCap::Assign => {
+                  let prob = prob.wait(conn.clone());
+                  let data = data.wait(conn.clone());
+                  let mut y = y.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_softmax_nd_cat_nll_packed_f32(
+                      sz2uint(prob.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(prob.inner().size().index_at(3)),
+                      sz2uint(prob.inner().size().index_at(4)),
+                      prob.as_dptr(),
+                      data.as_dptr(),
+                      y.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  // TODO
+                  unimplemented!();
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        let x_ = x_.clone();
+        let prob_ = fixed_softmax_.clone();
+        let data_ = category_data_.clone();
+        Box::new(move |_: Pass, y_: Val<_>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            let adj_x_ = Softmax3dCategoricalNLLBwdOp::build_device_obatch_op_v2(feat_axis, adj_y_, prob_.clone(), data_.clone());
+            x_.put_adjoint(adj_x_, sink);
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F3Op::new(Softmax3dCategoricalNLLOp, ext, x_, fixed_softmax_, category_data_)))
+  }
 }
 
 impl Softmax3dCategoricalNLLBwdOp {
-  fn build_device_obatch_op(feat_axis: isize, adj_y_: Val<GPUDeviceOuterBatchArray3d<f32>>, fixed_softmax_: Val<GPUDeviceOuterBatchArray4d<f32>>, category_data_: Val<GPUDeviceOuterBatchArray3d<u32>>) -> Val<GPUDeviceOuterBatchArray4d<f32>> {
+  pub fn build_device_obatch_op(feat_axis: isize, adj_y_: Val<GPUDeviceOuterBatchArray3d<f32>>, fixed_softmax_: Val<GPUDeviceOuterBatchArray4d<f32>>, category_data_: Val<GPUDeviceOuterBatchArray3d<u32>>) -> Val<GPUDeviceOuterBatchArray4d<f32>> {
     let ext = OpExt{
       make_val: {
         let x_ = fixed_softmax_.clone();
@@ -5304,6 +5417,125 @@ impl Softmax3dCategoricalNLLBwdOp {
               let prob = prob.as_view();
               let data = data.as_view();
               let mut dx = dx.as_view_mut();
+              // TODO: assumes NCDHW layout.
+              assert_eq!(3, feat_axis);
+              match cap {
+                WriteCap::Assign => {
+                  let dy = dy.wait(conn.clone());
+                  let prob = prob.wait(conn.clone());
+                  let data = data.wait(conn.clone());
+                  let mut dx = dx.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_softmax_nd_cat_nll_bwd_packed_f32(
+                      sz2uint(prob.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(prob.inner().size().index_at(3)),
+                      sz2uint(prob.inner().size().index_at(4)),
+                      dy.as_dptr(),
+                      prob.as_dptr(),
+                      data.as_dptr(),
+                      dx.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  let dy = dy.wait(conn.clone());
+                  let prob = prob.wait(conn.clone());
+                  let data = data.wait(conn.clone());
+                  let mut dx = dx.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_softmax_nd_cat_nll_bwd_packed_accumulate_f32(
+                      sz2uint(prob.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(prob.inner().size().index_at(3)),
+                      sz2uint(prob.inner().size().index_at(4)),
+                      dy.as_dptr(),
+                      prob.as_dptr(),
+                      data.as_dptr(),
+                      dx.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, dx_: Val<_>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(_) = dx_.adjoint(sink) {
+            // TODO
+            unimplemented!();
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F3Op::new(Softmax3dCategoricalNLLBwdOp, ext, adj_y_, fixed_softmax_, category_data_)))
+  }
+
+  pub fn build_device_obatch_op_v2<Cat>(feat_axis: isize, adj_y_: Val<GPUDeviceOuterBatchArray3d<f32>>, fixed_softmax_: Val<GPUDeviceOuterBatchArray4d<f32>>, category_data_: Val<Cat>) -> Val<GPUDeviceOuterBatchArray4d<f32>>
+  where Cat:
+            //SqueezeView<GPUDeviceArrayView4d<u32>>
+            AsView<ViewTy=GPUDeviceArrayView5d<u32>>
+            + DenseArray
+            + 'static,
+  {
+    let ext = OpExt{
+      make_val: {
+        let x_ = fixed_softmax_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let y = GPUDeviceOuterBatchArray4d::zeros(x.size(), x.max_batch_size(), conn);
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let dy_ = adj_y_.clone();
+        let prob_ = fixed_softmax_.clone();
+        let data_ = category_data_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: OVal<_>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let dy = dy_.get(txn);
+            let prob = prob_.get(txn);
+            let data = data_.get(txn);
+            let mut dx = output.get_mut(txn, token);
+            // Size checks.
+            assert_eq!(dx.size(), prob.size());
+            //assert_eq!(dx.size().index_cut(feat_axis), data.size());
+            assert_eq!(dx.size().index_cut(feat_axis), dy.size());
+            assert_eq!(dy.batch_size(), prob.batch_size());
+            //assert_eq!(dy.batch_size(), data.batch_size());
+            // Set batch size.
+            dx.set_batch_size(dy.batch_size());
+            let packed = dy.is_packed() && prob.is_packed() && data.is_packed() && dx.is_packed();
+            if packed {
+              let dy = dy.as_view();
+              let prob = prob.as_view();
+              let data = data.as_view().as_view_or_squeeze(feat_axis);
+              let mut dx = dx.as_view_mut();
+              assert_eq!(data.size(), dy.size());
               // TODO: assumes NCDHW layout.
               assert_eq!(3, feat_axis);
               match cap {
