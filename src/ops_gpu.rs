@@ -178,6 +178,26 @@ impl WriteSectionImpl<GPUDeviceOuterBatchArray1d<f32>> for GPUWriteSection {
   }
 }
 
+impl WriteSectionExt<GPUDeviceOuterBatchArray2d<f32>> for WriteSection {
+  type Section = GPUWriteSection;
+
+  fn maybe() -> Option<Self::Section> {
+    Some(GPUWriteSection::default())
+  }
+}
+
+impl WriteSectionImpl<GPUDeviceOuterBatchArray2d<f32>> for GPUWriteSection {
+  fn copy(&mut self, dst: &mut GPUDeviceOuterBatchArray2d<f32>, src: &GPUDeviceOuterBatchArray2d<f32>) {
+    // TODO
+    unimplemented!();
+  }
+
+  fn add(&mut self, dst: &mut GPUDeviceOuterBatchArray2d<f32>, src: &GPUDeviceOuterBatchArray2d<f32>) {
+    // TODO
+    unimplemented!();
+  }
+}
+
 impl WriteSectionExt<GPUDeviceOuterBatchArray3d<f32>> for WriteSection {
   type Section = GPUWriteSection;
 
@@ -198,6 +218,36 @@ impl WriteSectionImpl<GPUDeviceOuterBatchArray3d<f32>> for GPUWriteSection {
   }
 
   fn add(&mut self, dst: &mut GPUDeviceOuterBatchArray3d<f32>, src: &GPUDeviceOuterBatchArray3d<f32>) {
+    let ctx = thread_ctx().gpu();
+    let mut pool = ctx.pool();
+    let conn = pool.conn();
+    let mut guard = self.section.push(conn.clone());
+    guard._wait(src.async_state());
+    guard._wait(dst.async_state());
+    dst.as_view_mut().add(src.as_view(), conn);
+  }
+}
+
+impl WriteSectionExt<GPUDeviceOuterBatchArray4d<f32>> for WriteSection {
+  type Section = GPUWriteSection;
+
+  fn maybe() -> Option<Self::Section> {
+    Some(GPUWriteSection::default())
+  }
+}
+
+impl WriteSectionImpl<GPUDeviceOuterBatchArray4d<f32>> for GPUWriteSection {
+  fn copy(&mut self, dst: &mut GPUDeviceOuterBatchArray4d<f32>, src: &GPUDeviceOuterBatchArray4d<f32>) {
+    let ctx = thread_ctx().gpu();
+    let mut pool = ctx.pool();
+    let conn = pool.conn();
+    let mut guard = self.section.push(conn.clone());
+    guard._wait(src.async_state());
+    guard._wait(dst.async_state());
+    dst.as_view_mut().copy(src.as_view(), conn);
+  }
+
+  fn add(&mut self, dst: &mut GPUDeviceOuterBatchArray4d<f32>, src: &GPUDeviceOuterBatchArray4d<f32>) {
     let ctx = thread_ctx().gpu();
     let mut pool = ctx.pool();
     let conn = pool.conn();
