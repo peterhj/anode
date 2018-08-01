@@ -6546,25 +6546,41 @@ impl PositiveClipExt<GPUDeviceOuterBatchArray3d<f32>> for Val<GPUDeviceOuterBatc
 
 impl PositiveClipInplaceExt<GPUDeviceArray1d<f32>> for Val<GPUDeviceArray1d<f32>> {
   fn positive_clip_inplace(self) -> Val<GPUDeviceArray1d<f32>> {
-    PositiveClipClobberOp::build_device_op(self)
+    PositiveClipClobberOp::build_device_op(false, self)
+  }
+
+  fn unstable_positive_clip_inplace(self) -> Val<GPUDeviceArray1d<f32>> {
+    PositiveClipClobberOp::build_device_op(true, self)
   }
 }
 
 impl PositiveClipInplaceExt<GPUDeviceOuterBatchArray1d<f32>> for Val<GPUDeviceOuterBatchArray1d<f32>> {
   fn positive_clip_inplace(self) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
-    PositiveClipClobberOp::build_device_op(self)
+    PositiveClipClobberOp::build_device_op(false, self)
+  }
+
+  fn unstable_positive_clip_inplace(self) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
+    PositiveClipClobberOp::build_device_op(true, self)
   }
 }
 
 impl PositiveClipInplaceExt<GPUDeviceOuterBatchArray3d<f32>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
   fn positive_clip_inplace(self) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
-    PositiveClipClobberOp::build_device_op(self)
+    PositiveClipClobberOp::build_device_op(false, self)
+  }
+
+  fn unstable_positive_clip_inplace(self) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+    PositiveClipClobberOp::build_device_op(true, self)
   }
 }
 
 impl PositiveClipInplaceExt<GPUDeviceOuterBatchArray4d<f32>> for Val<GPUDeviceOuterBatchArray4d<f32>> {
   fn positive_clip_inplace(self) -> Val<GPUDeviceOuterBatchArray4d<f32>> {
-    PositiveClipClobberOp::build_device_op(self)
+    PositiveClipClobberOp::build_device_op(false, self)
+  }
+
+  fn unstable_positive_clip_inplace(self) -> Val<GPUDeviceOuterBatchArray4d<f32>> {
+    PositiveClipClobberOp::build_device_op(true, self)
   }
 }
 
@@ -6739,7 +6755,7 @@ impl PositiveClipBwdOp {
 }
 
 impl PositiveClipClobberOp {
-  pub fn build_device_op<T, A>(old_x_: Val<A>) -> Val<A>
+  pub fn build_device_op<T, A>(clobber_adj: bool, old_x_: Val<A>) -> Val<A>
   where T: ZeroBits + Default + 'static,
         A: GPUDeviceAsync
             + GPUDeviceZerosShape<T>
@@ -6810,8 +6826,11 @@ impl PositiveClipClobberOp {
         let x_ = new_x_.clone();
         Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
           if let Some(adj_y_) = y_.adjoint(sink) {
-            let adj_x_ = PositiveClipBwdOp::build_device_op(adj_y_, y_);
-            //let adj_x_ = PositiveClipBwdClobberOp::build_device_op(adj_y_, y_);
+            let adj_x_ = if clobber_adj {
+              PositiveClipBwdClobberOp::build_device_op(adj_y_, y_)
+            } else {
+              PositiveClipBwdOp::build_device_op(adj_y_, y_)
+            };
             x_.put_adjoint(adj_x_, sink);
           }
         })

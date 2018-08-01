@@ -1110,6 +1110,7 @@ pub trait PositiveClipExt<V> {
 
 pub trait PositiveClipInplaceExt<V> {
   fn positive_clip_inplace(self) -> Val<V> where Self: Sized;
+  fn unstable_positive_clip_inplace(self) -> Val<V> where Self: Sized { unimplemented!(); }
 
   fn rect_inplace(self) -> Val<V> where Self: Sized {
     self.positive_clip_inplace()

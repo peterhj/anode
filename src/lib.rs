@@ -897,10 +897,10 @@ impl<V> Val<V> where V: 'static {
   }
 
   pub fn clobber(&self) -> Val<V> {
-    assert!(self.mode != WriteMode::Accumulate);
+    //assert!(self.mode != WriteMode::Accumulate);
     let rvar = RVar::default();
-    //let xvar = RWVar(rvar);
-    let xvar = self.xvar;
+    let xvar = RWVar(rvar);
+    //let xvar = self.xvar;
     let val = Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
@@ -2086,11 +2086,17 @@ impl<T> RWVal<T> where T: 'static {
         match (l_producers.len(), d_producers.len()) {
           (0, 0) => {}
           (1, _) => {
+            assert!(*complete,
+                "attempting to clobber an incomplete write");
             if l_producers.contains(&(xvar, rvar)) {
               return None;
             }
           }
-          (_, _) => panic!("attempting multiple live writes to `Clobber` val"),
+          //(_, _) => panic!("attempting multiple live writes to `Clobber` val"),
+          (_, _) => {
+            assert!(*complete,
+                "attempting to clobber multiple incomplete writes");
+          }
         }
         *complete = true;
         d_consumers.extend(l_consumers.drain());
