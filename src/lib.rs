@@ -1737,8 +1737,6 @@ impl<T> TCellInner<T> where T: Copy {
     if new_write_txn {
       self.commit();
     }
-    assert!(self.proposal.is_none(),
-        "commit mysteriously failed");
     let prev_value = match self.state.0 {
       None => self.init,
       Some(curr_txn) => if curr_txn <= txn {
