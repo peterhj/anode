@@ -58,6 +58,8 @@ pub struct SumJoinAccumulateOp;
 pub struct ProductJoinOp;
 pub struct SliceLikeOp;
 pub struct EmbedLikeOp;
+pub struct IsNonzeroOp;
+pub struct IsZeroOp;
 pub struct FlatSumOp;
 pub struct ReduceSumOp;
 pub struct BatchSumOp;
@@ -71,6 +73,7 @@ pub struct PositiveClipBwdOp;
 pub struct PositiveClipClobberOp;
 pub struct PositiveClipBwdClobberOp;
 pub struct FlatLinearOp;
+pub struct FlatBroadcastDivideOp;
 pub struct BroadcastLinearOp;
 pub struct BroadcastAffineOp;
 pub struct LinearReduceSumOp;
@@ -873,6 +876,14 @@ impl<V> SliceSplitLikeExt<V> for Val<V> where V: 'static, SliceLikeOp: SliceLike
     }
     ys_
   }
+}
+
+pub trait IsNonzeroExt<V> {
+  fn is_nonzero(self) -> Val<V>;
+}
+
+pub trait IsZeroExt<V> {
+  fn is_zero(self) -> Val<V>;
 }
 
 pub trait ReduceSumExt<V, W> {

@@ -44,7 +44,7 @@ use std::iter::{FromIterator};
 use std::marker::{PhantomData};
 use std::mem::{size_of};
 //use std::ops::{Range, RangeFrom, RangeTo, RangeFull};
-use std::ops::{Add, Mul};
+use std::ops::{Add, Sub, Mul, Div};
 use std::sync::{Arc};
 
 #[inline]
@@ -3350,6 +3350,99 @@ impl SliceLikeOp {
   }
 }
 
+impl IsNonzeroExt<GPUDeviceOuterBatchArray3d<f32>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
+  fn is_nonzero(self) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+    IsNonzeroOp::build_device_obatch_op(self)
+  }
+}
+
+impl IsNonzeroOp {
+  pub fn build_device_obatch_op<T, A>(x_: Val<A>) -> Val<A>
+  where T: ZeroBits + 'static,
+        A: GPUDeviceZerosShape<T>
+            + BatchArray
+            + DenseArray
+            + AsView
+            + AsViewMut
+            + 'static,
+        A::ViewMutTy: GPUDeviceArrayViewMutOpsExt<ViewTy=A::ViewTy>,
+  {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let y = A::zeros_shape(x.shape(), conn);
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        Box::new(move |txn: Txn, _state: RefMut<_>, output: LVal<_>| {
+          output.write(txn, |cap, token| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            // TODO: size checks.
+            assert_eq!(x.size(), y.size());
+            y.set_batch_size(x.batch_size());
+            let packed = x.is_packed() && y.is_packed();
+            if packed {
+              let x = x.as_view();
+              let mut y = y.as_view_mut();
+              match cap {
+                WriteCap::Assign => {
+                  y.is_nonzero(x, conn.clone());
+                }
+                WriteCap::Accumulate => {
+                  unimplemented!();
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        //let x_ = x_.clone();
+        Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // TODO
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::new(Rc::new(F1Op::new(IsNonzeroOp, ext, x_)))
+  }
+}
+
+impl IsZeroOp {
+  pub fn build_device_op<A>(x_: Val<A>) -> Val<A>
+  {
+    // TODO
+    unimplemented!();
+  }
+}
+
 impl BatchMean2dOpExt<f32, GPUDeviceOuterBatchArray3d<f32>, GPUDeviceArray1d<f32>> for BatchMean2dOp {
   fn build(axes: [isize; 2], x_: Val<GPUDeviceOuterBatchArray3d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
     BatchMean2dOp::build_device_f32_op(axes, x_)
@@ -5718,6 +5811,14 @@ where T: Copy,
   }
 }
 
+impl Div<Val<GPUDeviceOuterBatchScalar<f32>>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
+  type Output = Val<GPUDeviceOuterBatchArray3d<f32>>;
+
+  fn div(self, y_: Val<GPUDeviceOuterBatchScalar<f32>>) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+    FlatBroadcastDivideOp::build_device_obatch_3d_1d_f32_op(self, y_)
+  }
+}
+
 impl BatchSumOpExt<GPUDeviceOuterBatchScalar<f32>, GPUDeviceScalar<f32>> for BatchSumOp {
   fn build(x_: Val<GPUDeviceOuterBatchScalar<f32>>) -> Val<GPUDeviceScalar<f32>> {
     //println!("DEBUG: build batch sum op...");
@@ -6927,6 +7028,98 @@ impl PositiveClipBwdClobberOp {
     let new_adj_y_value = new_adj_y_._static_value();
     assert!(new_adj_y_value.is_some());
     Val::with_value_mode(Rc::new(F2Op::new(PositiveClipBwdClobberOp, ext, new_adj_y_, y_)), new_adj_y_value, WriteMode::Clobber)
+  }
+}
+
+impl FlatBroadcastDivideOp {
+  pub fn build_device_obatch_3d_1d_f32_op(x_: Val<GPUDeviceOuterBatchArray3d<f32>>, rdivisor_: Val<GPUDeviceOuterBatchScalar<f32>>) -> Val<GPUDeviceOuterBatchArray3d<f32>>
+  //pub fn build_device_f32_op<A, B>(x_: Val<A>, rdivisor_: Val<B>) -> Val<A>
+  {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let y = GPUDeviceOuterBatchArray3d::zeros_shape(x.shape(), conn);
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        let rdivisor_ = rdivisor_.clone();
+        Box::new(move |txn: Txn, _state: RefMut<_>, output: LVal<_>| {
+          output.write(txn, |cap, token| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let rdivisor = rdivisor_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            // TODO: size checks.
+            assert_eq!(x.size(), y.size());
+            assert_eq!(x.batch_size(), rdivisor.batch_size());
+            y.set_batch_size(x.batch_size());
+            let packed = x.is_packed() && rdivisor.is_packed() && y.is_packed();
+            if packed {
+              let x = x.flat_view().unwrap();
+              let rdivisor = rdivisor.flat_view().unwrap();
+              let mut y = y.flat_view_mut().unwrap();
+              match cap {
+                WriteCap::Assign => {
+                  // TODO: should use a higher level API here.
+                  let x = x.wait(conn.clone());
+                  let rdivisor = rdivisor.wait(conn.clone());
+                  let mut y = y.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { gpudevicemem_flat_bcast_rdiv_I1ab_I2b_Oab_packed_f32(
+                      sz2uint(x.inner().size().index_cut(3).flat_len()),
+                      sz2uint(x.inner().size().index_at(3)),
+                      x.as_dptr(),
+                      rdivisor.as_dptr(),
+                      y.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  unimplemented!();
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        let x_ = x_.clone();
+        let rdivisor_ = rdivisor_.clone();
+        Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // FIXME: no adjoint for rdivisor yet.
+            let adj_x_ = adj_y_ / rdivisor_.clone();
+            x_.put_adjoint(adj_x_, sink);
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::new(Rc::new(F2Op::new(FlatBroadcastDivideOp, ext, x_, rdivisor_)))
   }
 }
 
