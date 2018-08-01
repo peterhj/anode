@@ -2904,7 +2904,7 @@ impl SumJoinOp {
           }
           //if let Some((_, token)) = output.write(txn) {
           output.write(txn, |_, token| {
-            output.finish_write(txn, token);
+            output.finish_write(txn, /*token*/);
           })
         })
         //pass_apply(new_x0_.clone())

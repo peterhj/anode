@@ -899,8 +899,8 @@ impl<V> Val<V> where V: 'static {
   pub fn clobber(&self) -> Val<V> {
     //assert!(self.mode != WriteMode::Accumulate);
     let rvar = RVar::default();
-    let xvar = RWVar(rvar);
-    //let xvar = self.xvar;
+    //let xvar = RWVar(rvar);
+    let xvar = self.xvar;
     let val = Val{
       node:     self.node.clone(),
       op:       self.op.clone(),
@@ -1069,9 +1069,9 @@ impl<V> Val<V> where V: 'static {
     xvalue._get_mut(txn, self.rvar, self.xvar, token, Some(self._graph_key()))
   }
 
-  pub fn finish_write(&self, txn: Txn, token: WriteToken) {
+  pub fn finish_write(&self, txn: Txn, /*token: WriteToken*/) {
     let xvalue = self.op._value3(txn, self.value.as_ref());
-    xvalue.finish_write(txn, self.rvar, self.xvar, token);
+    xvalue.finish_write(txn, self.rvar, self.xvar, /*token*/);
   }
 
   pub fn propose<F: FnOnce(RwLockWriteGuard<V>)>(&self, txn: Txn, f: F) {
@@ -1236,9 +1236,9 @@ impl<V> OVal<V> where V: 'static {
     //self.value.as_ref().unwrap()._get_mut(txn, self.rvar, self.xvar, token, Some(self._graph_key()))
   }
 
-  pub fn finish_write(&self, txn: Txn, token: WriteToken) {
+  pub fn finish_write(&self, txn: Txn, /*token: WriteToken*/) {
     assert!(self.value.is_some());
-    self.value.as_ref().unwrap().finish_write(txn, self.rvar, self.xvar, token);
+    self.value.as_ref().unwrap().finish_write(txn, self.rvar, self.xvar, /*token*/);
   }
 
   pub fn propose<F: FnOnce(RwLockWriteGuard<V>)>(&self, txn: Txn, f: F) -> bool {
@@ -2085,17 +2085,22 @@ impl<T> RWVal<T> where T: 'static {
       WriteMode::Clobber => {
         match (l_producers.len(), d_producers.len()) {
           (0, 0) => {}
+          (0, _) => {
+            assert!(!d_producers.contains(&(xvar, rvar)),
+                "attempting an invalid write (the value has been clobbered)");
+          }
           (1, _) => {
-            assert!(*complete,
-                "attempting to clobber an incomplete write");
+            assert!(!d_producers.contains(&(xvar, rvar)),
+                "attempting an invalid write (the value has been clobbered)");
             if l_producers.contains(&(xvar, rvar)) {
+              assert!(*complete);
               return None;
             }
           }
           //(_, _) => panic!("attempting multiple live writes to `Clobber` val"),
           (_, _) => {
-            assert!(*complete,
-                "attempting to clobber multiple incomplete writes");
+            assert!(!d_producers.contains(&(xvar, rvar)),
+                "attempting an invalid write (the value has been clobbered)");
           }
         }
         *complete = true;
@@ -2186,10 +2191,10 @@ impl<T> RWVal<T> where T: 'static {
     RwLockWriteGuard::map(buf, |buf| buf.data.as_mut().unwrap())
   }
 
-  pub fn finish_write(&self, txn: Txn, rvar: RVar, xvar: RWVar, token: WriteToken) {
+  pub fn finish_write(&self, txn: Txn, rvar: RVar, xvar: RWVar, /*token: WriteToken*/) {
     let mut buf = self.buf.write();
-    assert_eq!(rvar, token.rvar);
-    assert_eq!(xvar, token.xvar);
+    //assert_eq!(rvar, token.rvar);
+    //assert_eq!(xvar, token.xvar);
 
     let mut valid_txn = false;
     if let Some(curr_txn) = buf.curr_txn {
