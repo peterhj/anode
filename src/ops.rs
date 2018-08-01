@@ -626,7 +626,7 @@ impl<T: Clone + 'static> SrcOpCloneExt<T> for SrcOp {
         })
       },
       apply: {
-        Box::new(move |txn: Txn, _: RefMut<_>, output: OVal<_>| {
+        Box::new(move |txn: Txn, _: RefMut<_>, output: LVal<_>| {
           output.write(txn, |_, _| {
             panic!("WARNING: SrcOpExt: should never write");
           })
@@ -654,7 +654,7 @@ impl<V: 'static> SrcOpLikeExt<V> for SrcOp {
         })
       },
       apply: {
-        Box::new(move |txn: Txn, _: RefMut<_>, output: OVal<_>| {
+        Box::new(move |txn: Txn, _: RefMut<_>, output: LVal<_>| {
           output.write(txn, |cap, token| {
             unreachable!();
           })
@@ -1351,28 +1351,28 @@ pub trait WriteSectionImpl<A: 'static>: Clone {
 }
 
 pub trait WriteSectionExt<A: 'static> {
-  type Section: WriteSectionImpl<A>;
+  type Impl: WriteSectionImpl<A>;
 
-  fn maybe() -> Option<Self::Section>;
+  fn maybe() -> Option<Self::Impl>;
 }
 
 impl<A: 'static> WriteSectionImpl<A> for () {
 }
 
 impl<A: 'static> WriteSectionExt<A> for WriteSection {
-  default type Section = ();
+  default type Impl = ();
 
-  default fn maybe() -> Option<Self::Section> {
+  default fn maybe() -> Option<Self::Impl> {
     None
   }
 }
 
-pub fn pass_apply<F, A: 'static>(x_: Val<A>) -> Box<Fn(Txn, RefMut<F>, OVal<A>) -> bool> {
+pub fn pass_apply<F, A: 'static>(x_: Val<A>) -> Box<Fn(Txn, RefMut<F>, LVal<A>) -> bool> {
   let section = match <WriteSection as WriteSectionExt<A>>::maybe() {
     None => unimplemented!("pass_apply: missing WriteSection impl for data type '{}'", unsafe { type_name::<A>() }),
     Some(section) => section,
   };
-  Box::new(move |txn: Txn, _state: RefMut<_>, output: OVal<A>| {
+  Box::new(move |txn: Txn, _state: RefMut<_>, output: LVal<A>| {
     if output._valref().is_some() && x_._valref() != output._valref() {
       //if let Some((cap, token)) = output.write(txn) {
       output.write(txn, |cap, token| {
@@ -1468,13 +1468,13 @@ impl<A: 'static> FixOpExt<A> for FixOp
   }
 }
 
-//pub fn switch_apply<F, A: 'static>(flag: TCell<bool>, off_: Val<A>, on_: Val<A>) -> Box<Fn(Txn, RefMut<F>, OVal<A>) -> bool> {
-pub fn switch_apply<F, A: 'static>(flag: Val<bool>, off_: Val<A>, on_: Val<A>) -> Box<Fn(Txn, RefMut<F>, OVal<A>) -> bool> {
+//pub fn switch_apply<F, A: 'static>(flag: TCell<bool>, off_: Val<A>, on_: Val<A>) -> Box<Fn(Txn, RefMut<F>, LVal<A>) -> bool> {
+pub fn switch_apply<F, A: 'static>(flag: Val<bool>, off_: Val<A>, on_: Val<A>) -> Box<Fn(Txn, RefMut<F>, LVal<A>) -> bool> {
   let section = match <WriteSection as WriteSectionExt<A>>::maybe() {
     None => unimplemented!("switch_apply: missing WriteSection impl for data type '{}'", unsafe { type_name::<A>() }),
     Some(section) => section,
   };
-  Box::new(move |txn: Txn, _state: RefMut<_>, output: OVal<A>| {
+  Box::new(move |txn: Txn, _state: RefMut<_>, output: LVal<A>| {
     let x_ = match *flag.get(txn) {
       false => &off_,
       true  => &on_,
@@ -1527,7 +1527,7 @@ where A: 'static,
         })
       },
       apply: {
-        /*Box::new(move |_: Txn, _state: RefMut<_>, _output: OVal<A>| {
+        /*Box::new(move |_: Txn, _state: RefMut<_>, _output: LVal<A>| {
           // The output should be a simple clone of one of the inputs,
           // so don't want to actually touch it.
         })*/

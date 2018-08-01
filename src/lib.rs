@@ -298,7 +298,7 @@ pub trait AOp<V>: ANode {
 
   fn _make_value(&self) -> RWVal<V>;
   fn _build(&self, pred_vals: Vec<Rc<Any>>) -> Val<V> { unimplemented!(); }
-  fn _apply_output(&self, txn: Txn, output: OVal<V>) -> bool;
+  fn _apply_output(&self, txn: Txn, output: LVal<V>) -> bool;
   fn _push_tangent(&self, pass: Pass, feedfwd: &mut FeedFwd) -> Val<V> { unimplemented!(); }
   //fn tangent(&self) -> Val<V>;
   fn _pop_adjoint(&self, pass: Pass, this: Val<V>, sink: &mut Sink) { unimplemented!(); }
@@ -803,8 +803,8 @@ impl<V> Val<V> where V: 'static {
     }
   }
 
-  /*pub fn downgrade(&self) -> OVal<V> {
-    OVal{
+  /*pub fn downgrade(&self) -> LVal<V> {
+    LVal{
       rvar: self.rvar,
       xvar: self.xvar,
       xval: self.op._value()._clone(),
@@ -989,7 +989,7 @@ impl<V> Val<V> where V: 'static {
 
   pub fn _apply(&self, txn: Txn) -> bool {
     let plc_guard = self.op._placement().map(|plc| plc._place());
-    let w = self.op._apply_output(txn, OVal::with_value(self.rvar, self.xvar, self.mode, self._static_value()));
+    let w = self.op._apply_output(txn, LVal::with_value(self.rvar, self.xvar, self.mode, self._static_value()));
     log_dynamic_graph(|logging| {
       if w {
         logging.insert_node(self._dy_graph_key());
@@ -1067,6 +1067,11 @@ impl<V> Val<V> where V: 'static {
     let xvalue = self.op._value3(txn, self.value.as_ref());
     //xvalue.get_mut(txn, self.rvar, self.xvar, token)
     xvalue._get_mut(txn, self.rvar, self.xvar, token, Some(self._graph_key()))
+  }
+
+  pub fn complete_write(&self, txn: Txn) -> Option<(WriteCap, WriteToken)> {
+    let xvalue = self.op._value3(txn, self.value.as_ref());
+    xvalue.complete_write(txn, self.rvar, self.xvar, self.mode)
   }
 
   pub fn finish_write(&self, txn: Txn, /*token: WriteToken*/) {
@@ -1164,16 +1169,16 @@ impl<V> VIONodeExt for Val<V> where V: 'static {
   }
 }
 
-pub struct OVal<V> {
+pub struct LVal<V> {
   value:    Option<RWVal<V>>,
   rvar:     RVar,
   xvar:     RWVar,
   mode:     WriteMode,
 }
 
-impl<V> OVal<V> where V: 'static {
+impl<V> LVal<V> where V: 'static {
   pub fn new(rvar: RVar, xvar: RWVar, mode: WriteMode, value: RWVal<V>) -> Self {
-    OVal{
+    LVal{
       value:    Some(value),
       rvar:     rvar,
       xvar:     xvar,
@@ -1182,7 +1187,7 @@ impl<V> OVal<V> where V: 'static {
   }
 
   pub fn with_value(rvar: RVar, xvar: RWVar, mode: WriteMode, value: Option<RWVal<V>>) -> Self {
-    OVal{
+    LVal{
       value:    value,
       rvar:     rvar,
       xvar:     xvar,
@@ -1234,6 +1239,23 @@ impl<V> OVal<V> where V: 'static {
     assert!(self.value.is_some());
     self.value.as_ref().unwrap().get_mut(txn, self.rvar, self.xvar, token)
     //self.value.as_ref().unwrap()._get_mut(txn, self.rvar, self.xvar, token, Some(self._graph_key()))
+  }
+
+  pub fn complete_write_v2<F>(&self, txn: Txn, f: F) -> bool where F: FnOnce(WriteCap, WriteToken) {
+    assert!(self.value.is_some());
+    match self.value.as_ref().unwrap().complete_write(txn, self.rvar, self.xvar, self.mode) {
+      Some((cap, token)) => {
+        f(cap, token);
+        true
+      }
+      None => {
+        false
+      }
+    }
+  }
+
+  pub fn complete_write<F>(&self, txn: Txn, f: F) -> bool where F: FnOnce(WriteCap, WriteToken) {
+    self.complete_write_v2(txn, f)
   }
 
   pub fn finish_write(&self, txn: Txn, /*token: WriteToken*/) {
@@ -1816,9 +1838,9 @@ pub struct RWValBuf<T> {
   complete:     bool,
   l_consumers:  Mutex<HashSet<RVar>>,
   d_consumers:  HashSet<RVar>,
-  //l_producers:  HashSet<RWVar>,
-  //d_producers:  HashSet<RWVar>,
+  l_sproducers: HashSet<RWVar>,
   l_producers:  HashSet<(RWVar, RVar)>,
+  d_sproducers: HashSet<RWVar>,
   d_producers:  HashSet<(RWVar, RVar)>,
   data:         Option<T>,
 }
@@ -1831,7 +1853,9 @@ impl<T> Default for RWValBuf<T> {
       complete:     false,
       l_consumers:  Mutex::new(HashSet::new()),
       d_consumers:  HashSet::new(),
+      l_sproducers: HashSet::new(),
       l_producers:  HashSet::new(),
+      d_sproducers: HashSet::new(),
       d_producers:  HashSet::new(),
       data:         None,
     }
@@ -1979,7 +2003,9 @@ impl<T> RWVal<T> where T: 'static {
     buf.complete = false;
     buf.l_consumers.lock().clear();
     buf.d_consumers.clear();
+    buf.l_sproducers.clear();
     buf.l_producers.clear();
+    buf.d_sproducers.clear();
     buf.d_producers.clear();
   }
 
@@ -1989,7 +2015,9 @@ impl<T> RWVal<T> where T: 'static {
     buf.complete = false;
     buf.l_consumers.lock().clear();
     buf.d_consumers.clear();
+    buf.l_sproducers.clear();
     buf.l_producers.clear();
+    buf.d_sproducers.clear();
     buf.d_producers.clear();
     buf.data = None;
   }
@@ -2003,7 +2031,9 @@ impl<T> RWVal<T> where T: 'static {
       buf.complete = true;
       buf.l_consumers.lock().clear();
       buf.d_consumers.clear();
+      buf.l_sproducers.clear();
       buf.l_producers.clear();
+      buf.d_sproducers.clear();
       buf.d_producers.clear();
     }
 
@@ -2012,15 +2042,15 @@ impl<T> RWVal<T> where T: 'static {
     match buf.l_producers.len() {
       0 => {}
       1 => {
-        // FIXME: this check is too strict; need only check xvar.
-        /*assert!(buf.l_producers.contains(&(xvar, rvar)),
-            "`persist` should be called only once and before all other writes");*/
+        assert!(buf.l_sproducers.contains(&xvar),
+            "`persist` should be called only once and before all other writes");
         return;
       }
       _ => panic!("`persist` should be called only once and before all other writes"),
     }
     assert!(buf.l_consumers.lock().is_empty(),
         "`persist` should be called before reads");
+    buf.l_sproducers.insert(xvar);
     buf.l_producers.insert((xvar, rvar));
 
     if buf.data.is_none() {
@@ -2028,14 +2058,24 @@ impl<T> RWVal<T> where T: 'static {
     }
   }
 
+  pub fn complete_write(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) -> Option<(WriteCap, WriteToken)> {
+    self._write(txn, rvar, xvar, mode, true)
+  }
+
   pub fn write(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) -> Option<(WriteCap, WriteToken)> {
+    self._write(txn, rvar, xvar, mode, false)
+  }
+
+  pub fn _write(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, force_seal: bool) -> Option<(WriteCap, WriteToken)> {
     let mut buf = self.buf.write();
     let &mut RWValBuf{
         ref mut curr_txn,
         ref mut complete,
         ref l_consumers,
         ref mut d_consumers,
+        ref mut l_sproducers,
         ref mut l_producers,
+        ref mut d_sproducers,
         ref mut d_producers,
         ref mut data,
         ..} = &mut *buf;
@@ -2047,7 +2087,9 @@ impl<T> RWVal<T> where T: 'static {
       *complete = false;
       l_consumers.clear();
       d_consumers.clear();
+      l_sproducers.clear();
       l_producers.clear();
+      d_sproducers.clear();
       d_producers.clear();
     }
 
@@ -2056,7 +2098,8 @@ impl<T> RWVal<T> where T: 'static {
         match (l_producers.len(), d_producers.len()) {
           (0, 0) => {}
           (1, 0) => {
-            if l_producers.contains(&(xvar, rvar)) {
+            if l_sproducers.contains(&xvar) {
+              assert!(*complete);
               return None;
             }
             panic!("attempting second write to `Exclusive` val");
@@ -2079,6 +2122,7 @@ impl<T> RWVal<T> where T: 'static {
           (_, _) => panic!("all writes to `Accumulate` val must be live"),
         }
         assert!(!*complete);
+        *complete = force_seal;
         assert!(l_consumers.is_empty(),
             "attempting write to `Accumulate` val after read");
       }
@@ -2090,21 +2134,24 @@ impl<T> RWVal<T> where T: 'static {
                 "attempting an invalid write (the value has been clobbered)");
           }
           (1, _) => {
+            assert!(*complete || force_seal);
             assert!(!d_producers.contains(&(xvar, rvar)),
                 "attempting an invalid write (the value has been clobbered)");
-            if l_producers.contains(&(xvar, rvar)) {
+            if l_sproducers.contains(&xvar) {
               assert!(*complete);
               return None;
             }
           }
           //(_, _) => panic!("attempting multiple live writes to `Clobber` val"),
           (_, _) => {
+            assert!(*complete || force_seal);
             assert!(!d_producers.contains(&(xvar, rvar)),
                 "attempting an invalid write (the value has been clobbered)");
           }
         }
         *complete = true;
         d_consumers.extend(l_consumers.drain());
+        d_sproducers.extend(l_sproducers.drain());
         d_producers.extend(l_producers.drain());
       }
     }
@@ -2115,6 +2162,7 @@ impl<T> RWVal<T> where T: 'static {
       (_, true) => WriteCap::Assign,
       _ => unreachable!(),
     };
+    l_sproducers.insert(xvar);
     l_producers.insert((xvar, rvar));
 
     if data.is_none() {
@@ -2287,7 +2335,7 @@ pub struct OpExt<F, V> {
   make_val: Box<Fn(RefMut<F>) -> RWVal<V>>,
   //prepare:  Option<Box<Fn(Txn, RefMut<F>)>>,
   //cleanup:  Option<Box<Fn(Txn, RefMut<F>)>>,
-  apply:    Box<Fn(Txn, RefMut<F>, OVal<V>) -> bool>,
+  apply:    Box<Fn(Txn, RefMut<F>, LVal<V>) -> bool>,
   build:    Option<Box<Fn(Vec<Rc<Any>>) -> Val<V>>>,
   //tangent:  Option<Box<Fn() -> Val<V>>>,
   tangent:  Option<Box<Fn(Pass, RefMut<F>, &mut FeedFwd) -> Val<V>>>,
@@ -2411,12 +2459,12 @@ impl<F, V> ANode for FSrcWrapOp<F, V> where V: 'static {
 
   /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     //println!("DEBUG: FWrap: apply");
-    self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
+    self._apply_output(txn, LVal::new(rvar, xvar, mode, self._value()._clone()));
   }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) -> bool {
     if let Some(value) = any_value.downcast_ref::<Option<RWVal<V>>>() {
-      self._apply_output(txn, OVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())))
+      self._apply_output(txn, LVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())))
     } else {
       unreachable!();
     }
@@ -2461,7 +2509,7 @@ impl<F, V> AOp<V> for FSrcWrapOp<F, V> where V: 'static {
     self.val_._op()._value()
   }*/
 
-  fn _apply_output(&self, txn: Txn, val: OVal<V>) -> bool {
+  fn _apply_output(&self, txn: Txn, val: LVal<V>) -> bool {
     (self.ext.apply)(txn, self.cfg.borrow_mut(), val)
   }
 
@@ -2620,12 +2668,12 @@ impl<F, V> ANode for FSrcOp<F, V> where V: 'static {
 
   /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     //println!("DEBUG: FSrcOp: apply");
-    self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
+    self._apply_output(txn, LVal::new(rvar, xvar, mode, self._value()._clone()));
   }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) -> bool {
     if let Some(value) = any_value.downcast_ref::<Option<RWVal<V>>>() {
-      self._apply_output(txn, OVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())))
+      self._apply_output(txn, LVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())))
     } else {
       unreachable!();
     }
@@ -2707,12 +2755,12 @@ impl<F, V> AOp<V> for FSrcOp<F, V> where V: 'static {
     }
   }
 
-  fn _apply_output(&self, txn: Txn, val: OVal<V>) -> bool {
+  fn _apply_output(&self, txn: Txn, val: LVal<V>) -> bool {
     (self.ext.apply)(txn, self.cfg.borrow_mut(), val)
   }
 }
 
-/*pub struct Pipe1Op<F, V, W> where W: OVal {
+/*pub struct Pipe1Op<F, V, W> where W: LVal {
   base: OpBase,
   ext:  OpExt<W>,
   cfg:  F,
@@ -2723,7 +2771,7 @@ impl<F, V> AOp<V> for FSrcOp<F, V> where V: 'static {
 }
 
 impl<F, V, W> Pipe1Op<F, V, W>
-where V: OVal, W: OVal {
+where V: LVal, W: LVal {
   pub fn attach(&self, txn: Txn, input: Rc<AOp<V>>) {
     // TODO: figure out `attach` semantics.
   }
@@ -2849,12 +2897,12 @@ impl<F, V, W> ANode for F1WrapOp<F, V, W> where V: 'static, W: 'static {
   }
 
   /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
-    self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
+    self._apply_output(txn, LVal::new(rvar, xvar, mode, self._value()._clone()));
   }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) -> bool {
     if let Some(value) = any_value.downcast_ref::<Option<RWVal<W>>>() {
-      self._apply_output(txn, OVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())))
+      self._apply_output(txn, LVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())))
     } else {
       unreachable!();
     }
@@ -2898,7 +2946,7 @@ impl<F, V, W> AOp<W> for F1WrapOp<F, V, W> where V: 'static, W: 'static {
     self.y_._op()._value()
   }*/
 
-  fn _apply_output(&self, txn: Txn, val: OVal<W>) -> bool {
+  fn _apply_output(&self, txn: Txn, val: LVal<W>) -> bool {
     (self.ext.apply)(txn, self.cfg.borrow_mut(), val)
   }
 
@@ -3069,12 +3117,12 @@ impl<F, V1, W> ANode for F1Op<F, V1, W> where V1: 'static, W: 'static {
 
   /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     //println!("DEBUG: F1Op: apply");
-    self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
+    self._apply_output(txn, LVal::new(rvar, xvar, mode, self._value()._clone()));
   }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) -> bool {
     if let Some(value) = any_value.downcast_ref::<Option<RWVal<W>>>() {
-      self._apply_output(txn, OVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())))
+      self._apply_output(txn, LVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())))
     } else {
       unreachable!();
     }
@@ -3187,7 +3235,7 @@ impl<F, V1, W> AOp<W> for F1Op<F, V1, W> where V1: 'static, W: 'static {
     None
   }
 
-  fn _apply_output(&self, txn: Txn, val: OVal<W>) -> bool {
+  fn _apply_output(&self, txn: Txn, val: LVal<W>) -> bool {
     (self.ext.apply)(txn, self.cfg.borrow_mut(), val)
   }
 }
@@ -3355,12 +3403,12 @@ impl<F, V1, V2, W> ANode for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static, 
   }
 
   /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
-    self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
+    self._apply_output(txn, LVal::new(rvar, xvar, mode, self._value()._clone()));
   }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) -> bool {
     if let Some(value) = any_value.downcast_ref::<Option<RWVal<W>>>() {
-      self._apply_output(txn, OVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())))
+      self._apply_output(txn, LVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())))
     } else {
       unreachable!();
     }
@@ -3446,7 +3494,7 @@ impl<F, V1, V2, W> AOp<W> for F2Op<F, V1, V2, W> where V1: 'static, V2: 'static,
     }
   }*/
 
-  fn _apply_output(&self, txn: Txn, val: OVal<W>) -> bool {
+  fn _apply_output(&self, txn: Txn, val: LVal<W>) -> bool {
     (self.ext.apply)(txn, self.cfg.borrow_mut(), val)
   }
 }
@@ -3609,12 +3657,12 @@ impl<F, V1, V2, V3, W> ANode for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: '
   }
 
   /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
-    self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
+    self._apply_output(txn, LVal::new(rvar, xvar, mode, self._value()._clone()));
   }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) -> bool {
     if let Some(value) = any_value.downcast_ref::<Option<RWVal<W>>>() {
-      self._apply_output(txn, OVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())))
+      self._apply_output(txn, LVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())))
     } else {
       unreachable!();
     }
@@ -3704,7 +3752,7 @@ impl<F, V1, V2, V3, W> AOp<W> for F3Op<F, V1, V2, V3, W> where V1: 'static, V2: 
     }
   }*/
 
-  fn _apply_output(&self, txn: Txn, val: OVal<W>) -> bool {
+  fn _apply_output(&self, txn: Txn, val: LVal<W>) -> bool {
     (self.ext.apply)(txn, self.cfg.borrow_mut(), val)
   }
 }
@@ -3818,7 +3866,7 @@ impl<F, V1, V2, V3, V4, W> ANode for F4Op<F, V1, V2, V3, V4, W> where V1: 'stati
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) -> bool {
     if let Some(value) = any_value.downcast_ref::<Option<RWVal<W>>>() {
-      self._apply_output(txn, OVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())))
+      self._apply_output(txn, LVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())))
     } else {
       unreachable!();
     }
@@ -3875,7 +3923,7 @@ impl<F, V1, V2, V3, V4, W> AOp<W> for F4Op<F, V1, V2, V3, V4, W> where V1: 'stat
     }
   }
 
-  fn _apply_output(&self, txn: Txn, val: OVal<W>) -> bool {
+  fn _apply_output(&self, txn: Txn, val: LVal<W>) -> bool {
     (self.ext.apply)(txn, self.cfg.borrow_mut(), val)
   }
 }
@@ -4024,15 +4072,15 @@ impl<F, V> ANode for FSwitchOp<F, V> where V: 'static, V: 'static {
 
   /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
     match self.flag.get(txn) {
-      false => self._apply_output(txn, OVal::new(rvar, xvar, mode, self.x1_._op()._value()._clone())),
-      true  => self._apply_output(txn, OVal::new(rvar, xvar, mode, self.x2_._op()._value()._clone())),
+      false => self._apply_output(txn, LVal::new(rvar, xvar, mode, self.x1_._op()._value()._clone())),
+      true  => self._apply_output(txn, LVal::new(rvar, xvar, mode, self.x2_._op()._value()._clone())),
     }
     self.done.propose(txn, |_| ());
   }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) -> bool {
     if let Some(value) = any_value.downcast_ref::<Option<RWVal<V>>>() {
-      self._apply_output(txn, OVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())))
+      self._apply_output(txn, LVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())))
     } else {
       unreachable!();
     }
@@ -4086,7 +4134,7 @@ impl<F, V> AOp<V> for FSwitchOp<F, V> where V: 'static, V: 'static {
     }
   }*/
 
-  fn _apply_output(&self, txn: Txn, val: OVal<V>) -> bool {
+  fn _apply_output(&self, txn: Txn, val: LVal<V>) -> bool {
     (self.ext.apply)(txn, self.cfg.borrow_mut(), val)
   }
 
@@ -4280,12 +4328,12 @@ impl<F, V, W> ANode for FJoinOp<F, V, W> where V: 'static, W: 'static {
   }
 
   /*fn _apply(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode) {
-    self._apply_output(txn, OVal::new(rvar, xvar, mode, self._value()._clone()));
+    self._apply_output(txn, LVal::new(rvar, xvar, mode, self._value()._clone()));
   }*/
 
   fn _apply_any(&self, txn: Txn, rvar: RVar, xvar: RWVar, mode: WriteMode, any_value: Rc<Any>) -> bool {
     if let Some(value) = any_value.downcast_ref::<Option<RWVal<W>>>() {
-      self._apply_output(txn, OVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())))
+      self._apply_output(txn, LVal::with_value(rvar, xvar, mode, value.as_ref().map(|v| v._clone())))
     } else {
       unreachable!();
     }
@@ -4386,7 +4434,7 @@ impl<F, V, W> AOp<W> for FJoinOp<F, V, W> where V: 'static, W: 'static {
     None
   }
 
-  fn _apply_output(&self, txn: Txn, val: OVal<W>) -> bool {
+  fn _apply_output(&self, txn: Txn, val: LVal<W>) -> bool {
     (self.ext.apply)(txn, self.cfg.borrow_mut(), val)
   }
 }
