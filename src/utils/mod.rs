@@ -53,6 +53,9 @@ impl<T> PiecewiseSeries<T> {
 
 impl<T: Clone> PiecewiseSeries<T> {
   pub fn at(&self, t: usize) -> T {
+    if self.pieces.is_empty() {
+      return self.init_val.clone();
+    }
     for (p, &(start, ref val)) in self.pieces.iter().enumerate() {
       if t < start {
         match p {
