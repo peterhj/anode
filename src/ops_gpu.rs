@@ -40,6 +40,7 @@ use num_traits::identities::*;
 use rand::prelude::{Rng};
 
 use std::cell::{RefMut};
+use std::fmt::{Debug};
 use std::iter::{FromIterator};
 use std::marker::{PhantomData};
 use std::mem::{size_of};
@@ -614,15 +615,16 @@ impl UpcastOpExt<GPUDeviceOuterBatchArray4d<u8>, GPUDeviceOuterBatchArray4d<u32>
 impl UpcastOp {
   pub fn build_device_u8_to_u32_op<S, A, B>(x_: Val<A>) -> Val<B>
   where
-      S: Eq,
+      S: Eq + Debug,
       A: FlatView<FlatViewTy=GPUDeviceArrayView1d<u8>>
           + Shape<Shape=S>
           + DenseArray
           + 'static,
       B: FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<u32>>
           + Shape<Shape=S>
-          + DenseArray
+          + SetShape
           + GPUDeviceZerosShape<u32>
+          + DenseArray
           + 'static,
   {
     let ext = OpExt{
@@ -657,10 +659,7 @@ impl UpcastOp {
             let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let mut y = output.get_mut(txn, token);
-            // TODO: size checks/set batch size.
-            /*assert_eq!(y.size(), x.size());
-            y.set_batch_size(x.batch_size());*/
-            assert!(x.shape() == y.shape());
+            y.set_shape(x.shape());
             let packed = x.is_packed() && y.is_packed();
             if packed {
               let x = x.flat_view().unwrap();
@@ -3352,17 +3351,16 @@ impl SliceLikeOp {
 
 impl IsNonzeroExt<GPUDeviceOuterBatchArray3d<f32>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
   fn is_nonzero(self) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
-    IsNonzeroOp::build_device_obatch_op(self)
+    IsNonzeroOp::build_device_op(self)
   }
 }
 
 impl IsNonzeroOp {
-  pub fn build_device_obatch_op<T, A>(x_: Val<A>) -> Val<A>
+  pub fn build_device_op<T, A>(x_: Val<A>) -> Val<A>
   where T: ZeroBits + 'static,
         A: GPUDeviceZerosShape<T>
-            + BatchArray
+            + SetShape
             + DenseArray
-            + AsView
             + AsViewMut
             + 'static,
         A::ViewMutTy: GPUDeviceArrayViewMutOpsExt<ViewTy=A::ViewTy>,
@@ -3398,9 +3396,7 @@ impl IsNonzeroOp {
             let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let mut y = output.get_mut(txn, token);
-            // TODO: size checks.
-            assert_eq!(x.size(), y.size());
-            y.set_batch_size(x.batch_size());
+            y.set_shape(x.shape());
             let packed = x.is_packed() && y.is_packed();
             if packed {
               let x = x.as_view();
@@ -5811,6 +5807,16 @@ where T: Copy,
   }
 }
 
+impl Mul<f32> for Val<GPUDeviceOuterBatchArray3d<f32>>
+//where Val<GPUDeviceOuterBatchArray3d<f32>>: ConstantOpsExt<f32, GPUDeviceOuterBatchArray3d<f32>>,
+{
+  type Output = Val<GPUDeviceOuterBatchArray3d<f32>>;
+
+  fn mul(self, c: f32) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+    ConstantMultiplyOp::build_device_f32_op(c, self)
+  }
+}
+
 impl Div<Val<GPUDeviceOuterBatchScalar<f32>>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
   type Output = Val<GPUDeviceOuterBatchArray3d<f32>>;
 
@@ -7031,6 +7037,78 @@ impl PositiveClipBwdClobberOp {
   }
 }
 
+impl ConstantMultiplyOp {
+  pub fn build_device_f32_op<A>(c: f32, x_: Val<A>) -> Val<A>
+  where A:
+            GPUDeviceZerosShape<f32>
+            + SetShape
+            + DenseArray
+            + AsViewMut
+            + 'static,
+        A::ViewMutTy: GPUDeviceArrayViewMutConstantOpsExt<f32, ViewTy=A::ViewTy>,
+  {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let y = A::zeros_shape(x.shape(), conn);
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        Box::new(move |txn: Txn, _state: RefMut<_>, output: LVal<_>| {
+          output.write(txn, |cap, token| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            y.set_shape(x.shape());
+            let x = x.as_view();
+            let mut y = y.as_view_mut();
+            match cap {
+              WriteCap::Assign => {
+                y.mult_constant(c, x, conn.clone());
+              }
+              WriteCap::Accumulate => {
+                unimplemented!();
+              }
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        let x_ = x_.clone();
+        Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            let adj_x_ = ConstantMultiplyOp::build_device_f32_op(c, adj_y_);
+            x_.put_adjoint(adj_x_, sink);
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::new(Rc::new(F1Op::new(ConstantMultiplyOp, ext, x_)))
+  }
+}
+
 impl FlatBroadcastDivideOp {
   pub fn build_device_obatch_3d_1d_f32_op(x_: Val<GPUDeviceOuterBatchArray3d<f32>>, rdivisor_: Val<GPUDeviceOuterBatchScalar<f32>>) -> Val<GPUDeviceOuterBatchArray3d<f32>>
   //pub fn build_device_f32_op<A, B>(x_: Val<A>, rdivisor_: Val<B>) -> Val<A>
@@ -7071,7 +7149,7 @@ impl FlatBroadcastDivideOp {
             // TODO: size checks.
             assert_eq!(x.size(), y.size());
             assert_eq!(x.batch_size(), rdivisor.batch_size());
-            y.set_batch_size(x.batch_size());
+            y.set_shape(x.shape());
             let packed = x.is_packed() && rdivisor.is_packed() && y.is_packed();
             if packed {
               let x = x.flat_view().unwrap();

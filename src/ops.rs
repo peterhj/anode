@@ -72,6 +72,8 @@ pub struct PositiveClipOp;
 pub struct PositiveClipBwdOp;
 pub struct PositiveClipClobberOp;
 pub struct PositiveClipBwdClobberOp;
+pub struct ConstantAddOp;
+pub struct ConstantMultiplyOp;
 pub struct FlatLinearOp;
 pub struct FlatBroadcastDivideOp;
 pub struct BroadcastLinearOp;
