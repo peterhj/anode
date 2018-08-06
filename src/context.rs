@@ -41,7 +41,7 @@ thread_local! {
   static STACK: RefCell<Vec<Rc<dyn ExecutionCtx + 'static>>> = RefCell::new(vec![]);
 }
 
-pub fn default_ctx() -> impl ExecutionCtx {
+fn default_ctx() -> impl ExecutionCtx {
   let mut ctx = DEFAULT_CTX.lock();
   if ctx.is_none() {
     *ctx = Some(DefaultCtx::default());

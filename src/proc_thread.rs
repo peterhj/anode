@@ -92,6 +92,16 @@ pub struct ThreadProc {
   barrier:  Arc<Barrier>,
 }
 
+impl FlatProc for ThreadProc {
+  fn flat_rank(&self) -> usize {
+    self.rank
+  }
+
+  fn num_ranks(&self) -> usize {
+    self.nranks
+  }
+}
+
 impl Proc<usize> for ThreadProc {
   fn rank(&self) -> usize {
     self.rank

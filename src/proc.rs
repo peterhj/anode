@@ -14,6 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+pub trait FlatProc {
+  fn flat_rank(&self) -> usize;
+  fn num_ranks(&self) -> usize;
+}
+
 pub trait Proc<K>: Clone {
   fn rank(&self) -> K;
   fn sup_rank(&self) -> K;
@@ -39,4 +44,29 @@ pub trait ProcTxOnce<Buf: ?Sized> {
 
 pub trait ProcRxOnce<Buf: ?Sized> {
   fn recv(self, buf: &mut Buf);
+}
+
+#[derive(Clone)]
+pub struct SingleProc;
+
+impl FlatProc for SingleProc {
+  fn flat_rank(&self) -> usize {
+    0
+  }
+
+  fn num_ranks(&self) -> usize {
+    1
+  }
+}
+
+impl Proc<()> for SingleProc {
+  fn rank(&self) -> () {
+  }
+
+  fn sup_rank(&self) -> () {
+  }
+
+  fn wait_barrier(&self) -> bool {
+    true
+  }
 }

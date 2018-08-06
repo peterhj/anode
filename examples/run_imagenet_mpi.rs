@@ -762,7 +762,7 @@ fn main() {
         if rep_nr == batch_reps - 1 {
           let step_txn = txn();
 
-          step_size.set(step_txn, -lr_schedule.at(iter_nr) / (proc.sup_rank() * batch_sz) as f32);
+          step_size.set(step_txn, -lr_schedule.at(iter_nr) / (proc.num_ranks() * batch_sz) as f32);
           momentum.set(step_txn, 0.9);
           params.persist(step_txn);
           avg_grads_vec.persist(step_txn);
@@ -797,7 +797,7 @@ fn main() {
 
         if eval_interval.is_some() && (iter_nr + 1) % eval_interval.unwrap() == 0 {
           println!("DEBUG: eval: evaluating...");
-          let val_shard = val_dataset.clone().range_shard(proc.rank(), proc.sup_rank());
+          let val_shard = val_dataset.clone().range_shard(proc.rank(), proc.num_ranks());
           let shard_len = val_shard.len();
           let val_iter = {
             let mut val_splits = async_split_data(num_data_workers, || {

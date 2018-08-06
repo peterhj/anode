@@ -110,6 +110,16 @@ pub struct DistProc {
   nsranks:  usize,
 }
 
+impl FlatProc for DistProc {
+  fn flat_rank(&self) -> usize {
+    self.srank
+  }
+
+  fn num_ranks(&self) -> usize {
+    self.nsranks
+  }
+}
+
 impl Proc<usize> for DistProc {
   fn rank(&self) -> usize {
     self.srank

@@ -65,6 +65,16 @@ impl DistProc {
   }
 }
 
+impl FlatProc for DistProc {
+  fn flat_rank(&self) -> usize {
+    0
+  }
+
+  fn num_ranks(&self) -> usize {
+    1
+  }
+}
+
 impl Proc<usize> for DistProc {
   fn rank(&self) -> usize {
     0
