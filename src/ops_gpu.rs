@@ -5777,6 +5777,33 @@ impl Add<Val<GPUDeviceArray1d<f32>>> for f32 {
   }
 }
 
+impl Add<Val<f32>> for Val<GPUDeviceArray1d<f32>> {
+  type Output = Val<GPUDeviceArray1d<f32>>;
+
+  fn add(self, rhs_: Val<f32>) -> Val<GPUDeviceArray1d<f32>> {
+    FlatBroadcastAddOp::build_device_1d_f32_op(self, rhs_)
+  }
+}
+
+impl Add<Val<GPUDeviceArray1d<f32>>> for Val<f32> {
+  type Output = Val<GPUDeviceArray1d<f32>>;
+
+  fn add(self, rhs_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+    FlatBroadcastAddOp::build_device_1d_f32_op(rhs_, self)
+  }
+}
+
+impl<T> Add<Val<GPUDeviceArray1d<T>>> for Val<GPUDeviceOuterBatchArray1d<T>>
+where T: Copy,
+{
+  type Output = Val<GPUDeviceOuterBatchArray1d<T>>;
+
+  fn add(self, y_: Val<GPUDeviceArray1d<T>>) -> Val<GPUDeviceOuterBatchArray1d<T>> {
+    // TODO
+    unimplemented!();
+  }
+}
+
 impl<T> Mul<T> for Val<GPUDeviceArray1d<T>>
 where T: Copy,
       Val<GPUDeviceArray1d<T>>: ConstantOpsExt<T, GPUDeviceArray1d<T>>,
@@ -5796,17 +5823,6 @@ impl Mul<Val<GPUDeviceArray1d<f32>>> for f32 {
   }
 }
 
-impl<T> Add<Val<GPUDeviceArray1d<T>>> for Val<GPUDeviceOuterBatchArray1d<T>>
-where T: Copy,
-{
-  type Output = Val<GPUDeviceOuterBatchArray1d<T>>;
-
-  fn add(self, y_: Val<GPUDeviceArray1d<T>>) -> Val<GPUDeviceOuterBatchArray1d<T>> {
-    // TODO
-    unimplemented!();
-  }
-}
-
 impl Mul<f32> for Val<GPUDeviceOuterBatchArray3d<f32>>
 //where Val<GPUDeviceOuterBatchArray3d<f32>>: ConstantOpsExt<f32, GPUDeviceOuterBatchArray3d<f32>>,
 {
@@ -5817,11 +5833,19 @@ impl Mul<f32> for Val<GPUDeviceOuterBatchArray3d<f32>>
   }
 }
 
+impl Div<Val<f32>> for Val<GPUDeviceArray1d<f32>> {
+  type Output = Val<GPUDeviceArray1d<f32>>;
+
+  fn div(self, rhs_: Val<f32>) -> Val<GPUDeviceArray1d<f32>> {
+    FlatBroadcastDivideOp::build_device_1d_f32_op(self, rhs_)
+  }
+}
+
 impl Div<Val<GPUDeviceOuterBatchScalar<f32>>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
   type Output = Val<GPUDeviceOuterBatchArray3d<f32>>;
 
-  fn div(self, y_: Val<GPUDeviceOuterBatchScalar<f32>>) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
-    FlatBroadcastDivideOp::build_device_obatch_3d_1d_f32_op(self, y_)
+  fn div(self, rhs_: Val<GPUDeviceOuterBatchScalar<f32>>) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+    FlatBroadcastDivideOp::build_device_obatch_3d_1d_f32_op(self, rhs_)
   }
 }
 
@@ -7221,7 +7245,151 @@ impl ConstantMultiplyOp {
   }
 }
 
+impl FlatBroadcastAddOp {
+  pub fn build_device_1d_f32_op(x_: Val<GPUDeviceArray1d<f32>>, rhs_: Val<f32>) -> Val<GPUDeviceArray1d<f32>> {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let y = GPUDeviceArray::zeros_shape(x.shape(), conn);
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        let rhs_ = rhs_.clone();
+        Box::new(move |txn: Txn, _state: RefMut<_>, output: LVal<_>| {
+          output.write(txn, |cap, token| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let rhs = rhs_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            // TODO: size checks.
+            assert_eq!(x.size(), y.size());
+            y.set_shape(x.shape());
+            let packed = x.is_packed() && y.is_packed();
+            if packed {
+              let x = x.as_view();
+              let mut y = y.as_view_mut();
+              match cap {
+                WriteCap::Assign => {
+                  y.add_constant(*rhs, x, conn.clone());
+                }
+                WriteCap::Accumulate => {
+                  unimplemented!();
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        let x_ = x_.clone();
+        let rhs_ = rhs_.clone();
+        Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // FIXME
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::new(Rc::new(F2Op::new(FlatBroadcastAddOp, ext, x_, rhs_)))
+  }
+}
+
 impl FlatBroadcastDivideOp {
+  pub fn build_device_1d_f32_op(x_: Val<GPUDeviceArray1d<f32>>, rdivisor_: Val<f32>) -> Val<GPUDeviceArray1d<f32>> {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let y = GPUDeviceArray::zeros_shape(x.shape(), conn);
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        let rdivisor_ = rdivisor_.clone();
+        Box::new(move |txn: Txn, _state: RefMut<_>, output: LVal<_>| {
+          output.write(txn, |cap, token| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let rdivisor = rdivisor_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            // TODO: size checks.
+            assert_eq!(x.size(), y.size());
+            y.set_shape(x.shape());
+            let packed = x.is_packed() && y.is_packed();
+            if packed {
+              let x = x.as_view();
+              let mut y = y.as_view_mut();
+              match cap {
+                WriteCap::Assign => {
+                  y.div_constant(x, *rdivisor, conn.clone());
+                }
+                WriteCap::Accumulate => {
+                  unimplemented!();
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        let x_ = x_.clone();
+        let rdivisor_ = rdivisor_.clone();
+        Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // FIXME
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::new(Rc::new(F2Op::new(FlatBroadcastDivideOp, ext, x_, rdivisor_)))
+  }
+
   pub fn build_device_obatch_3d_1d_f32_op(x_: Val<GPUDeviceOuterBatchArray3d<f32>>, rdivisor_: Val<GPUDeviceOuterBatchScalar<f32>>) -> Val<GPUDeviceOuterBatchArray3d<f32>>
   //pub fn build_device_f32_op<A, B>(x_: Val<A>, rdivisor_: Val<B>) -> Val<A>
   {

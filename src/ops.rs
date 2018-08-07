@@ -19,7 +19,7 @@ use ::*;
 use std::intrinsics::{type_name};
 use std::iter::{FromIterator};
 use std::marker::{PhantomData};
-use std::ops::{Add, Mul, Div};
+use std::ops::{Add, Sub, Mul, Div};
 use std::rc::{Rc};
 
 //pub struct DefaultOpVariant;
@@ -68,14 +68,18 @@ pub struct BatchBroadcastLikeOp;
 pub struct FlatMapOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatMapInplaceOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatJoinOp<FlatJoin> { pub f: FlatJoin }
+pub struct PowerOp;
 pub struct SqrtOp;
 pub struct PositiveClipOp;
 pub struct PositiveClipBwdOp;
 pub struct PositiveClipClobberOp;
 pub struct PositiveClipBwdClobberOp;
 pub struct ConstantAddOp;
+pub struct ConstantSubtractOp;
+pub struct ConstantLSubtractOp;
 pub struct ConstantMultiplyOp;
 pub struct FlatLinearOp;
+pub struct FlatBroadcastAddOp;
 pub struct FlatBroadcastDivideOp;
 pub struct BroadcastLinearOp;
 pub struct BroadcastAffineOp;
@@ -1111,6 +1115,10 @@ pub trait SoftmaxNdCategoricalNLLExt<X, K, L> {
   fn softmax_nd_categorical_nll(self, feat_axis: isize, category_data_: Val<K>) -> (Val<L>, Val<X>);
 }
 
+pub trait PowerExt<V, E> {
+  fn power(self, exp: Val<E>) -> Val<V>;
+}
+
 pub trait SqrtExt<V> {
   fn sqrt(self) -> Val<V> where Self: Sized;
 }
@@ -1335,31 +1343,31 @@ where T: Copy,
 }
 
 pub trait AdamStepExt<T, X> {
-  fn adam_step(self, step_size: Val<T>, decay_rate_1: Val<T>, decay_rate_2: Val<T>, epsilon: T, grad: Val<X>) -> Val<X>;
+  fn adam_step(self, step_size: Val<T>, decay_rate_1: Val<T>, decay_rate_2: Val<T>, iter_ct: Val<i32>, epsilon: Val<T>, grad: Val<X>) -> Val<X>;
 }
 
-impl<T, X> AdamStepExt<T, X> for Val<X>
-where T: Copy,
-      X: 'static,
-      Val<X>: Add<T, Output=Val<X>>,
-      Val<X>: Mul<Val<T>, Output=Val<X>>,
+impl<X> AdamStepExt<f32, X> for Val<X>
+where X: 'static,
+      Val<X>: Add<Val<f32>, Output=Val<X>>,
+      Val<X>: Mul<Val<f32>, Output=Val<X>>,
+      Val<X>: Div<Val<f32>, Output=Val<X>>,
       Val<X>: Mul<Val<X>, Output=Val<X>>,
       Val<X>: Div<Val<X>, Output=Val<X>>,
-      Val<X>: OnlineAddExt<T, X>,
-      Val<X>: OnlineAverageExt<T, X>,
+      Val<X>: OnlineAddExt<f32, X>,
+      Val<X>: OnlineAverageExt<f32, X>,
       Val<X>: SqrtExt<X>,
       ZerosSrcOp: ZerosSrcOpLikeExt<X>,
 {
-  fn adam_step(self, step_size: Val<T>, decay_rate_1: Val<T>, decay_rate_2: Val<T>, epsilon: T, grad: Val<X>) -> Val<X> {
+  fn adam_step(self, step_size: Val<f32>, decay_rate_1: Val<f32>, decay_rate_2: Val<f32>, iter_ct: Val<i32>, epsilon: Val<f32>, grad: Val<X>) -> Val<X> {
     let grad_mavg = zeros_like(grad.clone());
     let grad2_mavg = zeros_like(grad.clone());
-    let grad_mavg_update = grad_mavg.clone().online_average(decay_rate_1, grad.clone());
-    let grad2_mavg_update = grad2_mavg.clone().online_average(decay_rate_2, grad.clone() * grad.clone());
-    // FIXME: normalization.
-    let dir = grad_mavg / (grad2_mavg.sqrt() + epsilon);
+    let grad_mavg_update = grad_mavg.clone().online_average(decay_rate_1.clone(), grad.clone());
+    let grad2_mavg_update = grad2_mavg.clone().online_average(decay_rate_2.clone(), grad.clone() * grad.clone());
+    let norm_1 = (1.0_f32 - (1.0_f32 - decay_rate_1.clone()).power(iter_ct.clone()));
+    let norm_2 = (1.0_f32 - (1.0_f32 - decay_rate_2.clone()).power(iter_ct.clone()));
+    let dir = (grad_mavg / norm_1) / ((grad2_mavg / norm_2).sqrt() + epsilon);
     let step_update = self.online_add(step_size, dir.clone());
-    unimplemented!();
-    //step_update
+    step_update
   }
 }
 
@@ -1586,5 +1594,208 @@ where A: 'static,
     };
     //Val::from(Rc::new(FSwitchOp::new(SwitchOp, ext, flag, off_, on_)))
     Val::with_value(Rc::new(FSwitchOp::new(SwitchOp, ext, flag, off_, on_)), None)
+  }
+}
+
+impl SumJoinOpExt<f32> for SumJoinOp {
+  fn build(xs_: Vec<Val<f32>>) -> Val<f32> {
+    SumJoinOp::build_scalar_f32_op(xs_)
+  }
+
+  fn build_inplace(xs_: Vec<Val<f32>>) -> (Val<f32>, Vec<Val<f32>>) {
+    // TODO
+    unimplemented!();
+  }
+}
+
+impl SumJoinOp {
+  fn build_scalar_f32_op(xs_: Vec<Val<f32>>) -> Val<f32> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          RWVal::from(Arc::new(move |_txn: Txn| 0.0))
+        })
+      },
+      apply: {
+        let xs_ = xs_.clone();
+        Box::new(move |txn, _state: RefMut<_>, output: LVal<_>| {
+          output.write(txn, |cap, token| {
+            let mut y = output.get_mut(txn, token);
+            let x0 = xs_[0].get(txn);
+            match cap {
+              WriteCap::Assign => {
+                *y = *x0;
+              }
+              WriteCap::Accumulate => {
+                *y += *x0;
+              }
+            }
+            for i in 1 .. xs_.len() {
+              let x = xs_[i].get(txn);
+              *y += *x;
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, this: Val<_>, _state: RefMut<Self>, sink: &mut Sink| {
+          if let Some(this_adj) = this.adjoint(sink) {
+            // FIXME
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::new(Rc::new(FJoinOp::new(SumJoinOp, ext, xs_)))
+  }
+}
+
+impl Sub<f32> for Val<f32> {
+  type Output = Val<f32>;
+
+  fn sub(self, rhs: f32) -> Val<f32> {
+    ConstantSubtractOp::build_scalar_f32_op(self, rhs)
+  }
+}
+
+impl Sub<Val<f32>> for f32 {
+  type Output = Val<f32>;
+
+  fn sub(self, rhs: Val<f32>) -> Val<f32> {
+    ConstantLSubtractOp::build_scalar_f32_op(rhs, self)
+  }
+}
+
+impl ConstantSubtractOp {
+  fn build_scalar_f32_op(x_: Val<f32>, c: f32) -> Val<f32> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          RWVal::from(Arc::new(move |_txn: Txn| 0.0))
+        })
+      },
+      apply: {
+        let x_ = x_.clone();
+        Box::new(move |txn, _state: RefMut<_>, output: LVal<_>| {
+          output.write(txn, |cap, token| {
+            let x = x_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            match cap {
+              WriteCap::Assign => {
+                *y = *x - c;
+              }
+              WriteCap::Accumulate => {
+                *y += *x - c;
+              }
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, this: Val<_>, _state: RefMut<Self>, sink: &mut Sink| {
+          if let Some(this_adj) = this.adjoint(sink) {
+            // FIXME
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::new(Rc::new(F1Op::new(ConstantSubtractOp, ext, x_)))
+  }
+}
+
+impl ConstantLSubtractOp {
+  fn build_scalar_f32_op(x_: Val<f32>, c: f32) -> Val<f32> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          RWVal::from(Arc::new(move |_txn: Txn| 0.0))
+        })
+      },
+      apply: {
+        let x_ = x_.clone();
+        Box::new(move |txn, _state: RefMut<_>, output: LVal<_>| {
+          output.write(txn, |cap, token| {
+            let x = x_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            match cap {
+              WriteCap::Assign => {
+                *y = c - *x;
+              }
+              WriteCap::Accumulate => {
+                *y += c - *x;
+              }
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, this: Val<_>, _state: RefMut<Self>, sink: &mut Sink| {
+          if let Some(this_adj) = this.adjoint(sink) {
+            // FIXME
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::new(Rc::new(F1Op::new(ConstantLSubtractOp, ext, x_)))
+  }
+}
+
+impl PowerExt<f32, i32> for Val<f32> {
+  fn power(self, exp_: Val<i32>) -> Val<f32> {
+    PowerOp::build_scalar_f32_exp_i32_op(self, exp_)
+  }
+}
+
+impl PowerOp {
+  fn build_scalar_f32_exp_i32_op(x_: Val<f32>, exp_: Val<i32>) -> Val<f32> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          RWVal::from(Arc::new(move |_txn: Txn| 0.0))
+        })
+      },
+      apply: {
+        let x_ = x_.clone();
+        let exp_ = exp_.clone();
+        Box::new(move |txn, _state: RefMut<_>, output: LVal<_>| {
+          output.write(txn, |cap, token| {
+            let x = x_.get(txn);
+            let exp = exp_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            match cap {
+              WriteCap::Assign => {
+                *y = x.powi(*exp);
+              }
+              WriteCap::Accumulate => {
+                *y += x.powi(*exp);
+              }
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, this: Val<_>, _state: RefMut<Self>, sink: &mut Sink| {
+          if let Some(this_adj) = this.adjoint(sink) {
+            // FIXME
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::new(Rc::new(F2Op::new(PowerOp, ext, x_, exp_)))
   }
 }
