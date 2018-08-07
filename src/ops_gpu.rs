@@ -6237,6 +6237,25 @@ where T: Copy,
 {
 }
 
+impl ApplyGPUFlatMap<f32> for SqrtFlatMap<f32> {
+  fn apply_gpu_flat_map(&self, x: GPUDeviceArrayView1d<f32>, mut y: GPUDeviceArrayViewMut1d<f32>, conn: GPUDeviceConn) {
+    assert!(x.is_packed());
+    assert!(y.is_packed());
+    assert!(x.size() <= u32::max_value() as _);
+    assert_eq!(x.size(), y.size());
+    let x = x.wait(conn.clone());
+    let mut y = y.wait_mut(conn.clone());
+    let mut stream = conn.cuda_stream();
+    unsafe { anode_gpu_sqrt_flat_map_f32(
+        sz2uint(x.inner().size()),
+        x.as_dptr(),
+        y.as_mut_dptr(),
+        conn.cuda_kernel_config() as *const _,
+        stream.as_mut_ptr(),
+    ) };
+  }
+}
+
 impl ApplyGPUFlatMap<f32> for PositiveClipFlatMap<f32> {
   fn apply_gpu_flat_map(&self, x: GPUDeviceArrayView1d<f32>, mut y: GPUDeviceArrayViewMut1d<f32>, conn: GPUDeviceConn) {
     assert!(x.is_packed());
@@ -6633,6 +6652,99 @@ impl<F> FlatJoinOp<F> where F: Clone + 'static {
       }),*/
     };
     Val::from(Rc::new(FJoinOp::new(FlatJoinOp{f: f_config}, ext, xs_)))
+  }
+}
+
+impl SqrtExt<GPUDeviceArray1d<f32>> for Val<GPUDeviceArray1d<f32>> {
+  fn sqrt(self) -> Val<GPUDeviceArray1d<f32>> {
+    SqrtOp::build_device_op(self)
+  }
+}
+
+impl SqrtOp {
+  pub fn build_device_op<T, A>(old_x_: Val<A>) -> Val<A>
+  where T: ZeroBits + Default + 'static,
+        A: GPUDeviceAsync
+            + GPUDeviceZerosShape<T>
+            + DenseArray
+            + FlatView<FlatViewTy=GPUDeviceArrayView1d<T>>
+            + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<T>>
+            + 'static,
+        SqrtFlatMap<T>: ApplyGPUFlatMap<T>,
+        //SqrtFlatMap<T>: ApplyGPUFlatMapBwd<T>,
+  {
+    let new_x_ = old_x_.clone();
+    let ext = OpExt{
+      make_val: {
+        let x_ = new_x_.clone();
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            let y = A::zeros_shape(x.shape(), conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = new_x_.clone();
+        Box::new(move |txn: Txn, _state: RefMut<_>, output: LVal<_>| {
+          // TODO: check valrefs.
+          output.write(txn, |cap, token| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            guard._wait(x.async_state());
+            guard._wait(y.async_state());
+            let packed = x.is_packed() && y.is_packed();
+            if packed {
+              let x = x.flat_view().unwrap();
+              let y = y.flat_view_mut().unwrap();
+              match cap {
+                WriteCap::Assign => {
+                  let fmap: SqrtFlatMap<T> = Default::default();
+                  fmap.apply_gpu_flat_map(x, y, conn);
+                }
+                WriteCap::Accumulate => {
+                  unimplemented!();
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        let x_ = new_x_.clone();
+        Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // FIXME
+            unimplemented!();
+            /*let adj_x_ = SqrtBwdOp::build_device_op(adj_y_, y_);
+            x_.put_adjoint(adj_x_, sink);*/
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::new(Rc::new(F1Op::new(SqrtOp, ext, new_x_)))
   }
 }
 

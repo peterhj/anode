@@ -83,6 +83,7 @@ fn main() {
       .whitelist_function("anode_gpu_copy_flat_map_f32")
       .whitelist_function("anode_gpu_modulus_flat_map_f32")
       .whitelist_function("anode_gpu_square_flat_map_f32")
+      .whitelist_function("anode_gpu_sqrt_flat_map_f32")
       .whitelist_function("anode_gpu_positive_clip_flat_map_f32")
       .whitelist_function("anode_gpu_positive_clip_flat_map_bwd_f32")
       .whitelist_function("anode_gpu_unit_step_flat_map_f32")

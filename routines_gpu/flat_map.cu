@@ -67,6 +67,20 @@ public:
 };
 
 template <typename T>
+class SqrtFlatMap {
+public:
+  __forceinline__ __device__ static void FlatMapIndex(uint32_t idx, const T *x, T *y);
+};
+
+template <>
+class SqrtFlatMap<float> {
+public:
+  __forceinline__ __device__ static void FlatMapIndex(uint32_t idx, const float *x, float *y) {
+    y[idx] = sqrtf(x[idx]);
+  }
+};
+
+template <typename T>
 class PositiveClipFlatMap {
 public:
   __forceinline__ __device__ static void FlatMapIndex(uint32_t idx, const T *x, T *y);
@@ -247,6 +261,17 @@ extern "C" void anode_gpu_square_flat_map_f32(
     cudaStream_t stream)
 {
   anode_gpu_generic_flat_map_kernel<float, SquareFlatMap<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
+      len, x, y);
+}
+
+extern "C" void anode_gpu_sqrt_flat_map_f32(
+    uint32_t len,
+    const float *x,
+    float *y,
+    const KernelConfig *cfg,
+    cudaStream_t stream)
+{
+  anode_gpu_generic_flat_map_kernel<float, SqrtFlatMap<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
       len, x, y);
 }
 

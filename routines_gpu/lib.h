@@ -285,6 +285,12 @@ void anode_gpu_square_flat_map_f32(
     float *y,
     const struct KernelConfig *cfg,
     struct CUstream_st *stream);
+void anode_gpu_sqrt_flat_map_f32(
+    uint32_t len,
+    const float *x,
+    float *y,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
 void anode_gpu_positive_clip_flat_map_f32(
     uint32_t len,
     const float *x,

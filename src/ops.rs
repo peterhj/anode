@@ -19,7 +19,7 @@ use ::*;
 use std::intrinsics::{type_name};
 use std::iter::{FromIterator};
 use std::marker::{PhantomData};
-use std::ops::{Add, Mul};
+use std::ops::{Add, Mul, Div};
 use std::rc::{Rc};
 
 //pub struct DefaultOpVariant;
@@ -68,6 +68,7 @@ pub struct BatchBroadcastLikeOp;
 pub struct FlatMapOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatMapInplaceOp<FlatMapF> { pub f: FlatMapF }
 pub struct FlatJoinOp<FlatJoin> { pub f: FlatJoin }
+pub struct SqrtOp;
 pub struct PositiveClipOp;
 pub struct PositiveClipBwdOp;
 pub struct PositiveClipClobberOp;
@@ -141,6 +142,7 @@ pub struct DevectorizeOp;
 
 pub struct SumSpmdOp;
 
+#[derive(Clone, Default)] pub struct SqrtFlatMap<T: Copy + Default> { _mrk: PhantomData<(T, fn (*mut T))> }
 #[derive(Clone, Default)] pub struct PositiveClipFlatMap<T: Copy + Default> { _mrk: PhantomData<(T, fn (*mut T))> }
 
 #[derive(Clone)] pub struct IdentityFlatMapF;
@@ -1109,6 +1111,10 @@ pub trait SoftmaxNdCategoricalNLLExt<X, K, L> {
   fn softmax_nd_categorical_nll(self, feat_axis: isize, category_data_: Val<K>) -> (Val<L>, Val<X>);
 }
 
+pub trait SqrtExt<V> {
+  fn sqrt(self) -> Val<V> where Self: Sized;
+}
+
 pub trait PositiveClipExt<V> {
   fn positive_clip(self) -> Val<V> where Self: Sized;
 
@@ -1308,28 +1314,6 @@ impl<X, P> SumSpmdExt<X, P> for Val<X> where SumSpmdOp: SumSpmdOpExt<X, P> {
   }
 }
 
-pub trait OnlineAddVecExt<T> {
-  fn online_add_vec(self, c: Val<T>) -> NodeVec;
-}
-
-impl<T> OnlineAddVecExt<T> for NodeVec {
-  fn online_add_vec(self, c: Val<T>) -> NodeVec {
-    // TODO
-    unimplemented!();
-  }
-}
-
-pub trait GradientMomentumStepVecExt<T> {
-  fn gradient_momentum_step_vec(self, step_size: Val<T>, momentum: Val<T>, grads: NodeVec) -> NodeVec;
-}
-
-impl<T> GradientMomentumStepVecExt<T> for NodeVec {
-  fn gradient_momentum_step_vec(self, step_size: Val<T>, momentum: Val<T>, grads: NodeVec) -> NodeVec {
-    // TODO
-    unimplemented!();
-  }
-}
-
 pub trait GradientMomentumStepExt<T, X> {
   fn gradient_momentum_step(self, step_size: Val<T>, momentum: Val<T>, grad: Val<X>) -> Val<X>;
 }
@@ -1347,6 +1331,35 @@ where T: Copy,
     let step_update = self.online_add(step_size, grad_mavg_update.clone());
     //(step_update, grad_mavg_update)
     step_update
+  }
+}
+
+pub trait AdamStepExt<T, X> {
+  fn adam_step(self, step_size: Val<T>, decay_rate_1: Val<T>, decay_rate_2: Val<T>, epsilon: T, grad: Val<X>) -> Val<X>;
+}
+
+impl<T, X> AdamStepExt<T, X> for Val<X>
+where T: Copy,
+      X: 'static,
+      Val<X>: Add<T, Output=Val<X>>,
+      Val<X>: Mul<Val<T>, Output=Val<X>>,
+      Val<X>: Mul<Val<X>, Output=Val<X>>,
+      Val<X>: Div<Val<X>, Output=Val<X>>,
+      Val<X>: OnlineAddExt<T, X>,
+      Val<X>: OnlineAverageExt<T, X>,
+      Val<X>: SqrtExt<X>,
+      ZerosSrcOp: ZerosSrcOpLikeExt<X>,
+{
+  fn adam_step(self, step_size: Val<T>, decay_rate_1: Val<T>, decay_rate_2: Val<T>, epsilon: T, grad: Val<X>) -> Val<X> {
+    let grad_mavg = zeros_like(grad.clone());
+    let grad2_mavg = zeros_like(grad.clone());
+    let grad_mavg_update = grad_mavg.clone().online_average(decay_rate_1, grad.clone());
+    let grad2_mavg_update = grad2_mavg.clone().online_average(decay_rate_2, grad.clone() * grad.clone());
+    // FIXME: normalization.
+    let dir = grad_mavg / (grad2_mavg.sqrt() + epsilon);
+    let step_update = self.online_add(step_size, dir.clone());
+    unimplemented!();
+    //step_update
   }
 }
 
