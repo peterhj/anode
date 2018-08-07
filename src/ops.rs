@@ -1411,6 +1411,24 @@ impl<A: 'static> WriteSectionExt<A> for WriteSection {
   }
 }
 
+impl WriteSectionExt<f32> for WriteSection {
+  type Impl = ();
+
+  fn maybe() -> Option<Self::Impl> {
+    Some(())
+  }
+}
+
+impl WriteSectionImpl<f32> for () {
+  fn copy(&mut self, dst: &mut f32, src: &f32) {
+    *dst = *src;
+  }
+
+  fn add(&mut self, dst: &mut f32, src: &f32) {
+    *dst += *src;
+  }
+}
+
 pub fn pass_apply<F, A: 'static>(x_: Val<A>) -> Box<Fn(Txn, RefMut<F>, LVal<A>) -> bool> {
   let section = match <WriteSection as WriteSectionExt<A>>::maybe() {
     None => unimplemented!("pass_apply: missing WriteSection impl for data type '{}'", unsafe { type_name::<A>() }),
