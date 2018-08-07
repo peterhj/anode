@@ -79,6 +79,8 @@ pub struct ConstantSubtractOp;
 pub struct ConstantLSubtractOp;
 pub struct ConstantMultiplyOp;
 pub struct FlatLinearOp;
+pub struct FlatAffineOp;
+pub struct FlatDivideOp;
 pub struct FlatBroadcastAddOp;
 pub struct FlatBroadcastDivideOp;
 pub struct BroadcastLinearOp;
@@ -1180,6 +1182,10 @@ pub trait FlatAffineExt<A, X, Y, B> {
   fn flat_mult(self, x_: Val<X>, b_: Val<B>) -> Val<Y>;
 }
 
+pub trait FlatDivideExt<X> {
+  fn flat_div(self, rhs_: Val<X>) -> Val<X>;
+}
+
 pub trait Broadcast1dAddExt<A, X, Y> {
   fn broadcast_1d_add(self, axis: isize, x_: Val<X>) -> Val<Y>;
 }
@@ -1349,7 +1355,6 @@ pub trait AdamStepExt<T, X> {
 impl<X> AdamStepExt<f32, X> for Val<X>
 where X: 'static,
       Val<X>: Add<Val<f32>, Output=Val<X>>,
-      Val<X>: Mul<Val<f32>, Output=Val<X>>,
       Val<X>: Div<Val<f32>, Output=Val<X>>,
       Val<X>: Mul<Val<X>, Output=Val<X>>,
       Val<X>: Div<Val<X>, Output=Val<X>>,

@@ -5841,6 +5841,14 @@ impl Div<Val<f32>> for Val<GPUDeviceArray1d<f32>> {
   }
 }
 
+impl Div<Val<GPUDeviceArray1d<f32>>> for Val<GPUDeviceArray1d<f32>> {
+  type Output = Val<GPUDeviceArray1d<f32>>;
+
+  fn div(self, rhs_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+    FlatDivideOp::build_device_1d_f32_op(self, rhs_)
+  }
+}
+
 impl Div<Val<GPUDeviceOuterBatchScalar<f32>>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
   type Output = Val<GPUDeviceOuterBatchArray3d<f32>>;
 
@@ -7242,6 +7250,89 @@ impl ConstantMultiplyOp {
       inplace: None,
     };
     Val::new(Rc::new(F1Op::new(ConstantMultiplyOp, ext, x_)))
+  }
+}
+
+impl FlatDivideExt<GPUDeviceArray1d<f32>> for Val<GPUDeviceArray1d<f32>> {
+  fn flat_div(self, rhs_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+    FlatDivideOp::build_device_1d_f32_op(self, rhs_)
+  }
+}
+
+impl FlatDivideOp {
+  pub fn build_device_1d_f32_op(x_: Val<GPUDeviceArray1d<f32>>, rhs_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let y = GPUDeviceArray::zeros_shape(x.shape(), conn);
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        let rhs_ = rhs_.clone();
+        Box::new(move |txn: Txn, _state: RefMut<_>, output: LVal<_>| {
+          output.write(txn, |cap, token| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let rhs = rhs_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            // TODO: size checks.
+            assert_eq!(x.size(), rhs.size());
+            assert_eq!(x.size(), y.size());
+            y.set_shape(x.shape());
+            let packed = x.is_packed() && rhs.is_packed() && y.is_packed();
+            if packed {
+              let x = x.as_view();
+              let rhs = rhs.as_view();
+              let mut y = y.as_view_mut();
+              match cap {
+                WriteCap::Assign => {
+                  // TODO: could use a single divide routine `y.divide(x, rhs, conn)`.
+                  y.copy(x, conn.clone());
+                  y.div(rhs, conn.clone());
+                }
+                WriteCap::Accumulate => {
+                  unimplemented!();
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        let x_ = x_.clone();
+        let rhs_ = rhs_.clone();
+        Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // FIXME
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::new(Rc::new(F2Op::new(FlatDivideOp, ext, x_, rhs_)))
   }
 }
 
