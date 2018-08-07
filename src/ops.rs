@@ -60,7 +60,7 @@ pub struct SliceLikeOp;
 pub struct EmbedLikeOp;
 pub struct IsNonzeroOp;
 pub struct IsZeroOp;
-pub struct FlatSumOp;
+pub struct FlatReduceSumOp;
 pub struct ReduceSumOp;
 pub struct BatchSumOp;
 pub struct BatchBroadcastOp;
@@ -82,6 +82,7 @@ pub struct FlatLinearOp;
 pub struct FlatAffineOp;
 pub struct FlatDivideOp;
 pub struct FlatBroadcastAddOp;
+pub struct FlatBroadcastMultiplyOp;
 pub struct FlatBroadcastDivideOp;
 pub struct BroadcastLinearOp;
 pub struct BroadcastAffineOp;
@@ -896,6 +897,10 @@ pub trait IsZeroExt<V> {
   fn is_zero(self) -> Val<V>;
 }
 
+pub trait FlatReduceSumExt<V, W> {
+  fn flat_reduce_sum(self) -> Val<W>;
+}
+
 pub trait ReduceSumExt<V, W> {
   fn reduce_sum(self, axis: isize) -> Val<W>;
 }
@@ -1368,8 +1373,8 @@ where X: 'static,
     let grad2_mavg = zeros_like(grad.clone());
     let grad_mavg_update = grad_mavg.clone().online_average(decay_rate_1.clone(), grad.clone());
     let grad2_mavg_update = grad2_mavg.clone().online_average(decay_rate_2.clone(), grad.clone() * grad.clone());
-    let norm_1 = (1.0_f32 - (1.0_f32 - decay_rate_1.clone()).power(iter_ct.clone()));
-    let norm_2 = (1.0_f32 - (1.0_f32 - decay_rate_2.clone()).power(iter_ct.clone()));
+    let norm_1 = 1.0_f32 - (1.0_f32 - decay_rate_1.clone()).power(iter_ct.clone());
+    let norm_2 = 1.0_f32 - (1.0_f32 - decay_rate_2.clone()).power(iter_ct.clone());
     let dir = (grad_mavg / norm_1) / ((grad2_mavg / norm_2).sqrt() + epsilon);
     let step_update = self.online_add(step_size, dir.clone());
     step_update

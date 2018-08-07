@@ -5833,6 +5833,22 @@ impl Mul<f32> for Val<GPUDeviceOuterBatchArray3d<f32>>
   }
 }
 
+impl Mul<Val<f32>> for Val<GPUDeviceArray1d<f32>> {
+  type Output = Val<GPUDeviceArray1d<f32>>;
+
+  fn mul(self, rhs_: Val<f32>) -> Val<GPUDeviceArray1d<f32>> {
+    FlatBroadcastMultiplyOp::build_device_f32_op(self, rhs_)
+  }
+}
+
+impl Mul<Val<f32>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
+  type Output = Val<GPUDeviceOuterBatchArray3d<f32>>;
+
+  fn mul(self, rhs_: Val<f32>) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+    FlatBroadcastMultiplyOp::build_device_f32_op(self, rhs_)
+  }
+}
+
 impl Div<Val<f32>> for Val<GPUDeviceArray1d<f32>> {
   type Output = Val<GPUDeviceArray1d<f32>>;
 
@@ -7250,6 +7266,82 @@ impl ConstantMultiplyOp {
       inplace: None,
     };
     Val::new(Rc::new(F1Op::new(ConstantMultiplyOp, ext, x_)))
+  }
+}
+
+impl FlatBroadcastMultiplyOp {
+  pub fn build_device_f32_op<A>(x_: Val<A>, scalar_: Val<f32>) -> Val<A>
+  where A:
+            GPUDeviceZerosShape<f32>
+            + SetShape
+            + DenseArray
+            + AsViewMut
+            + 'static,
+        A::ViewMutTy: GPUDeviceArrayViewMutConstantOpsExt<f32, ViewTy=A::ViewTy>,
+  {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let y = A::zeros_shape(x.shape(), conn);
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        let scalar_ = scalar_.clone();
+        Box::new(move |txn: Txn, _state: RefMut<_>, output: LVal<_>| {
+          output.write(txn, |cap, token| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let scalar = scalar_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            y.set_shape(x.shape());
+            let x = x.as_view();
+            let mut y = y.as_view_mut();
+            match cap {
+              WriteCap::Assign => {
+                y.mult_constant(*scalar, x, conn.clone());
+              }
+              WriteCap::Accumulate => {
+                unimplemented!();
+              }
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        let x_ = x_.clone();
+        let scalar_ = scalar_.clone();
+        Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // FIXME: adjoint of `scalar_`.
+            let adj_x_ = FlatBroadcastMultiplyOp::build_device_f32_op(adj_y_.clone(), scalar_.clone());
+            x_.put_adjoint(adj_x_, sink);
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::new(Rc::new(F2Op::new(FlatBroadcastMultiplyOp, ext, x_, scalar_)))
   }
 }
 
