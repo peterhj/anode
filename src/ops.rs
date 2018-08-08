@@ -1347,8 +1347,7 @@ where T: Copy,
   fn gradient_momentum_step(self, step_size: Val<T>, momentum: Val<T>, grad: Val<X>) -> Val<X> {
     let grad_mavg = zeros_like(grad.clone());
     let grad_mavg = grad_mavg.online_discount(momentum, grad);
-    let step_update = self.online_add(step_size, grad_mavg.clone());
-    //(step_update, grad_mavg_update)
+    let step_update = self.online_add(step_size, grad_mavg);
     step_update
   }
 }
@@ -1371,12 +1370,12 @@ where X: 'static,
   fn adam_step(self, step_size: Val<f32>, decay_rate_1: Val<f32>, decay_rate_2: Val<f32>, iter_ct: Val<i32>, epsilon: Val<f32>, grad: Val<X>) -> Val<X> {
     let grad_mavg = zeros_like(grad.clone());
     let grad2_mavg = zeros_like(grad.clone());
-    let grad_mavg = grad_mavg.clone().online_average(decay_rate_1.clone(), grad.clone());
-    let grad2_mavg = grad2_mavg.clone().online_average(decay_rate_2.clone(), grad.clone() * grad.clone());
-    let norm_1 = 1.0_f32 - (1.0_f32 - decay_rate_1.clone()).power(iter_ct.clone());
-    let norm_2 = 1.0_f32 - (1.0_f32 - decay_rate_2.clone()).power(iter_ct.clone());
-    let dir = (grad_mavg.clone() / norm_1) / ((grad2_mavg.clone() / norm_2).sqrt() + epsilon);
-    let step_update = self.online_add(step_size, dir.clone());
+    let grad_mavg = grad_mavg.online_average(decay_rate_1.clone(), grad.clone());
+    let grad2_mavg = grad2_mavg.online_average(decay_rate_2.clone(), grad.clone() * grad.clone());
+    let norm_1 = 1.0_f32 - (1.0_f32 - decay_rate_1).power(iter_ct.clone());
+    let norm_2 = 1.0_f32 - (1.0_f32 - decay_rate_2).power(iter_ct.clone());
+    let dir = (grad_mavg / norm_1) / ((grad2_mavg / norm_2).sqrt() + epsilon);
+    let step_update = self.online_add(step_size, dir);
     step_update
   }
 }
