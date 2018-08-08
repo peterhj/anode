@@ -9,8 +9,9 @@ path = "src/lib.rs"
 
 [features]
 default = []
-cuda9 = ["gpu", "cuda_blas/cuda9", "gpudevicemem/cuda9"]
+cuda9 = ["gpu", "f16", "cuda_blas/cuda9", "gpudevicemem/cuda9"]
 experimental = []
+f16 = ["float", "memarray/f16", "cuda_dnn/f16", "gpudevicemem/f16"]
 gpu = ["cuda", "cuda_blas", "cuda_coll", "cuda_dnn", "gpudevicemem"]
 mpi = ["mpich", "minidata/mpi"]
 
@@ -32,7 +33,7 @@ cuda_blas = { git = "https://github.com/peterhj/cuda_blas", optional = true }
 cuda_coll = { git = "https://github.com/peterhj/cuda_coll", optional = true }
 cuda_dnn = { git = "https://github.com/peterhj/cuda_dnn", optional = true }
 #dot = "*"
-float = { git = "https://github.com/peterhj/float" }
+float = { git = "https://github.com/peterhj/float", optional = true }
 gpudevicemem = { git = "https://github.com/peterhj/gpudevicemem", optional = true }
 lazy_static = "*"
 memarray = { git = "https://github.com/peterhj/memarray", features = ["mkl"] }
@@ -54,7 +55,7 @@ sharedmem = { git = "https://github.com/peterhj/sharedmem" }
 "https://github.com/peterhj/cuda_blas" = { cuda_blas = { path = "../cuda_blas", optional = true } }
 "https://github.com/peterhj/cuda_coll" = { cuda_coll = { path = "../cuda_coll", optional = true } }
 "https://github.com/peterhj/cuda_dnn" = { cuda_dnn = { path = "../cuda_dnn", optional = true } }
-"https://github.com/peterhj/float" = { float = { path = "../float" } }
+"https://github.com/peterhj/float" = { float = { path = "../float", optional = true } }
 "https://github.com/peterhj/gpudevicemem" = { gpudevicemem = { path = "../gpudevicemem", optional = true } }
 "https://github.com/peterhj/memarray" = { memarray = { path = "../memarray", features = ["mkl"] } }
 "https://github.com/peterhj/minidata" = { minidata = { path = "../minidata", optional = true } }

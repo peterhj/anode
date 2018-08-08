@@ -622,7 +622,7 @@ impl UpcastOp {
           + 'static,
       B: FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<u32>>
           + Shape<Shape=S>
-          + SetShape
+          + Reshape
           + GPUDeviceZerosShape<u32>
           + DenseArray
           + 'static,
@@ -659,7 +659,7 @@ impl UpcastOp {
             let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let mut y = output.get_mut(txn, token);
-            y.set_shape(x.shape());
+            y.reshape(x.shape());
             let packed = x.is_packed() && y.is_packed();
             if packed {
               let x = x.flat_view().unwrap();
@@ -3383,7 +3383,7 @@ impl IsNonzeroOp {
   pub fn build_device_op<T, A>(x_: Val<A>) -> Val<A>
   where T: ZeroBits + 'static,
         A: GPUDeviceZerosShape<T>
-            + SetShape
+            + Reshape
             + DenseArray
             + AsViewMut
             + 'static,
@@ -3420,7 +3420,7 @@ impl IsNonzeroOp {
             let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let mut y = output.get_mut(txn, token);
-            y.set_shape(x.shape());
+            y.reshape(x.shape());
             let packed = x.is_packed() && y.is_packed();
             if packed {
               let x = x.as_view();
@@ -8255,7 +8255,7 @@ impl ConstantMultiplyOp {
   pub fn build_device_f32_op<A>(c: f32, x_: Val<A>) -> Val<A>
   where A:
             GPUDeviceZerosShape<f32>
-            + SetShape
+            + Reshape
             + DenseArray
             + AsViewMut
             + 'static,
@@ -8292,7 +8292,7 @@ impl ConstantMultiplyOp {
             let mut guard = section.push(conn.clone());
             let x = x_.get(txn);
             let mut y = output.get_mut(txn, token);
-            y.set_shape(x.shape());
+            y.reshape(x.shape());
             let x = x.as_view();
             let mut y = y.as_view_mut();
             match cap {
@@ -8327,7 +8327,7 @@ impl FlatBroadcastMultiplyOp {
   pub fn build_device_f32_op<A>(x_: Val<A>, scalar_: Val<f32>) -> Val<A>
   where A:
             GPUDeviceZerosShape<f32>
-            + SetShape
+            + Reshape
             + DenseArray
             + AsViewMut
             + 'static,
@@ -8366,7 +8366,7 @@ impl FlatBroadcastMultiplyOp {
             let x = x_.get(txn);
             let scalar = scalar_.get(txn);
             let mut y = output.get_mut(txn, token);
-            y.set_shape(x.shape());
+            y.reshape(x.shape());
             let x = x.as_view();
             let mut y = y.as_view_mut();
             match cap {
@@ -8443,7 +8443,7 @@ impl FlatDivideOp {
             // TODO: size checks.
             assert_eq!(x.size(), rhs.size());
             assert_eq!(x.size(), y.size());
-            y.set_shape(x.shape());
+            y.reshape(x.shape());
             let packed = x.is_packed() && rhs.is_packed() && y.is_packed();
             if packed {
               let x = x.as_view();
@@ -8519,7 +8519,7 @@ impl FlatBroadcastAddOp {
             let mut y = output.get_mut(txn, token);
             // TODO: size checks.
             assert_eq!(x.size(), y.size());
-            y.set_shape(x.shape());
+            y.reshape(x.shape());
             let packed = x.is_packed() && y.is_packed();
             if packed {
               let x = x.as_view();
@@ -8592,7 +8592,7 @@ impl FlatBroadcastDivideOp {
             let mut y = output.get_mut(txn, token);
             // TODO: size checks.
             assert_eq!(x.size(), y.size());
-            y.set_shape(x.shape());
+            y.reshape(x.shape());
             let packed = x.is_packed() && y.is_packed();
             if packed {
               let x = x.as_view();
@@ -8666,7 +8666,7 @@ impl FlatBroadcastDivideOp {
             // TODO: size checks.
             assert_eq!(x.size(), y.size());
             assert_eq!(x.batch_size(), rdivisor.batch_size());
-            y.set_shape(x.shape());
+            y.reshape(x.shape());
             let packed = x.is_packed() && rdivisor.is_packed() && y.is_packed();
             if packed {
               let x = x.flat_view().unwrap();
