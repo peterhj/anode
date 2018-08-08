@@ -98,6 +98,15 @@ pub struct BatchNormalize2dBwdMeanOp;
 pub struct BatchNormalize2dBwdVarianceOp;
 pub struct BatchNormalize2dFusedOp;
 pub struct BatchNormalize2dBwdFusedOp;
+pub struct BatchMean3dOp;
+pub struct BatchMean3dBwdOp;
+pub struct BatchVariance3dOp;
+pub struct BatchVariance3dBwdOp;
+pub struct BatchVariance3dBwdMeanOp;
+pub struct BatchNormalize3dOp;
+pub struct BatchNormalize3dBwdOp;
+pub struct BatchNormalize3dBwdMeanOp;
+pub struct BatchNormalize3dBwdVarianceOp;
 pub struct OnlineAddOp;
 pub struct OnlineDiscountOp;
 pub struct OnlineAverageOp;
@@ -959,12 +968,12 @@ pub trait BatchNormalize2dOpExt<T, X, M> {
   fn build(axes: [isize; 2], x_: Val<X>, mean_: Val<M>, var_: Val<M>) -> Val<X>;
 }
 
-pub trait BatchNormalizeExt<T, X, M> where T: Copy {
+pub trait BatchNormalize2dExt<T, X, M> where T: Copy {
   //fn batch_normalize_2d(self, axes: [isize; 2], online: TCell<bool>, avg_rate: TCell<T>, epsilon: T) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>);
   fn batch_normalize_2d(self, axes: [isize; 2], online: Val<bool>, avg_rate: Val<T>, epsilon: T) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>);
 }
 
-impl<T, X, M> BatchNormalizeExt<T, X, M> for Val<X>
+impl<T, X, M> BatchNormalize2dExt<T, X, M> for Val<X>
 where T: Copy + 'static,
       X: 'static,
       M: 'static,
@@ -984,6 +993,47 @@ where T: Copy + 'static,
     let avg_y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<T, X, M>>::build(axes, self.clone(), avg_mean_.clone(), avg_var_.clone()).fix();
     let y_ = switch(online, avg_y_, online_y_);*/
     let y_ = <BatchNormalize2dOp as BatchNormalize2dOpExt<T, X, M>>::build(
+        axes,
+        self.clone(),
+        switch(online.clone(), avg_mean_.clone(), mean_.clone()),
+        switch(online.clone(), avg_var_.clone(), var_.clone()),
+    );
+    (y_, mean_, var_, avg_mean_, avg_var_)
+  }
+}
+
+pub trait BatchMean3dOpExt<T, X, M> {
+  fn build(axes: [isize; 3], x_: Val<X>) -> Val<M>;
+}
+
+pub trait BatchVariance3dOpExt<T, X, M> {
+  fn build(axes: [isize; 3], epsilon: T, x_: Val<X>, mean_: Val<M>) -> Val<M>;
+}
+
+pub trait BatchNormalize3dOpExt<T, X, M> {
+  fn build(axes: [isize; 3], x_: Val<X>, mean_: Val<M>, var_: Val<M>) -> Val<X>;
+}
+
+pub trait BatchNormalize3dExt<T, X, M> where T: Copy {
+  fn batch_normalize_3d(self, axes: [isize; 3], online: Val<bool>, avg_rate: Val<T>, epsilon: T) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>);
+}
+
+impl<T, X, M> BatchNormalize3dExt<T, X, M> for Val<X>
+where T: Copy + 'static,
+      X: 'static,
+      M: 'static,
+      BatchMean3dOp: BatchMean3dOpExt<T, X, M>,
+      BatchVariance3dOp: BatchVariance3dOpExt<T, X, M>,
+      BatchNormalize3dOp: BatchNormalize3dOpExt<T, X, M>,
+      OnlineAverageOp: OnlineAverageOpExt<T, M>,
+      ZerosSrcOp: ZerosSrcOpLikeExt<M> + ZerosSrcOpLikeExt<X>,
+{
+  fn batch_normalize_3d(self, axes: [isize; 3], online: Val<bool>, avg_rate: Val<T>, epsilon: T) -> (Val<X>, Val<M>, Val<M>, Val<M>, Val<M>) {
+    let mean_ = <BatchMean3dOp as BatchMean3dOpExt<T, X, M>>::build(axes, self.clone());
+    let var_ = <BatchVariance3dOp as BatchVariance3dOpExt<T, X, M>>::build(axes, epsilon, self.clone(), mean_.clone());
+    let avg_mean_ = zeros_like(mean_.clone()).online_average(avg_rate.clone(), mean_.clone()).fix();
+    let avg_var_ = zeros_like(var_.clone()).online_average(avg_rate.clone(), var_.clone()).fix();
+    let y_ = <BatchNormalize3dOp as BatchNormalize3dOpExt<T, X, M>>::build(
         axes,
         self.clone(),
         switch(online.clone(), avg_mean_.clone(), mean_.clone()),

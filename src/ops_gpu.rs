@@ -4631,6 +4631,1028 @@ impl BatchNormalize2dBwdVarianceOp {
   }
 }
 
+impl BatchMean3dOpExt<f32, GPUDeviceOuterBatchArray4d<f32>, GPUDeviceArray1d<f32>> for BatchMean3dOp {
+  fn build(axes: [isize; 3], x_: Val<GPUDeviceOuterBatchArray4d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+    BatchMean3dOp::build_device_f32_op(axes, x_)
+  }
+}
+
+impl BatchVariance3dOpExt<f32, GPUDeviceOuterBatchArray4d<f32>, GPUDeviceArray1d<f32>> for BatchVariance3dOp {
+  fn build(axes: [isize; 3], epsilon: f32, x_: Val<GPUDeviceOuterBatchArray4d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+    BatchVariance3dOp::build_device_f32_op(axes, epsilon, x_, mean_)
+  }
+}
+
+impl BatchNormalize3dOpExt<f32, GPUDeviceOuterBatchArray4d<f32>, GPUDeviceArray1d<f32>> for BatchNormalize3dOp {
+  fn build(axes: [isize; 3], x_: Val<GPUDeviceOuterBatchArray4d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray4d<f32>> {
+    BatchNormalize3dOp::build_device_f32_op(axes, x_, mean_, var_)
+  }
+}
+
+impl BatchMean3dOp {
+  pub fn build_device_f32_op(axes: [isize; 3], x_: Val<GPUDeviceOuterBatchArray4d<f32>>) -> Val<GPUDeviceArray1d<f32>>
+  {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x_size = x_.get(txn).size();
+            // TODO: assuming NCHW layout.
+            let y = GPUDeviceArray1d::zeros(x_size.index_at(3), conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: LVal<GPUDeviceArray1d<f32>>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            //thread_ctx()._debug_print();
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let mut mean = output.get_mut(txn, token);
+            guard._wait(x.async_state());
+            guard._wait(mean.async_state());
+            // FIXME: size checks.
+            let packed = x.is_packed() && mean.is_packed();
+            if packed {
+              let x = x.as_view();
+              let mut mean = mean.as_view_mut();
+              // TODO: assuming NCHW layout.
+              assert_eq!([0, 1, 2], axes);
+              match cap {
+                WriteCap::Assign => {
+                  let x = x.wait(conn.clone());
+                  let mut mean = mean.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_mean_3d1_packed_f32(
+                      sz2uint(x.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(x.inner().size().index_at(3)),
+                      sz2uint(x.inner().size().index_at(4)),
+                      x.as_dptr(),
+                      mean.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  unimplemented!();
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        let x_ = x_.clone();
+        Box::new(move |_: Pass, mean_: Val<GPUDeviceArray1d<f32>>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_mean_) = mean_.adjoint(sink) {
+            //println!("DEBUG: BatchMean3dOp: found adjoint for primal: {:?} => {:?}", mean_._graph_key(), adj_mean_._graph_key());
+            let adj_x_ = BatchMean3dBwdOp::build_device_f32_op(axes, adj_mean_.clone(), x_.clone());
+            x_.put_adjoint(adj_x_, sink);
+          //} else {
+            //println!("WARNING: BatchMean3dOp: missing adjoint for primal: {:?}", mean_._graph_key());
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F1Op::new(BatchMean3dOp, ext, x_)))
+  }
+}
+
+impl BatchMean3dBwdOp {
+  pub fn build_device_f32_op(axes: [isize; 3], dmean_: Val<GPUDeviceArray1d<f32>>, x_: Val<GPUDeviceOuterBatchArray4d<f32>>) -> Val<GPUDeviceOuterBatchArray4d<f32>>
+  {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            let x_size = x.size();
+            let x_max_bsz = x.max_batch_size();
+            let y = GPUDeviceOuterBatchArray4d::zeros(x_size, x_max_bsz, conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let dmean_ = dmean_.clone();
+        let x_ = x_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: LVal<GPUDeviceOuterBatchArray4d<f32>>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            //thread_ctx()._debug_print();
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let dmean = dmean_.get(txn);
+            let x = x_.get(txn);
+            let mut dx = output.get_mut(txn, token);
+            guard._wait(dmean.async_state());
+            guard._wait(x.async_state());
+            guard._wait(dx.async_state());
+            // TODO: size checks.
+            assert_eq!(x.size(), dx.size());
+            // Set batch size.
+            dx.set_batch_size(x.batch_size());
+            let packed = dmean.is_packed() && x.is_packed() && dx.is_packed();
+            if packed {
+              let dmean = dmean.as_view();
+              let x = x.as_view();
+              let mut dx = dx.as_view_mut();
+              // TODO: assuming NCHW layout.
+              assert_eq!([0, 1, 2], axes);
+              match cap {
+                WriteCap::Assign => {
+                  let dmean = dmean.wait(conn.clone());
+                  let x = x.wait(conn.clone());
+                  let mut dx = dx.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_mean_bwd_3d1_packed_f32(
+                      sz2uint(x.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(x.inner().size().index_at(3)),
+                      sz2uint(x.inner().size().index_at(4)),
+                      dmean.as_dptr(),
+                      dx.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  let dmean = dmean.wait(conn.clone());
+                  let x = x.wait(conn.clone());
+                  let mut dx = dx.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_mean_bwd_3d1_packed_accumulate_f32(
+                      sz2uint(x.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(x.inner().size().index_at(3)),
+                      sz2uint(x.inner().size().index_at(4)),
+                      dmean.as_dptr(),
+                      dx.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, y_: Val<_>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // TODO
+            unimplemented!();
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F2Op::new(BatchMean3dBwdOp, ext, dmean_, x_)))
+  }
+}
+
+impl BatchVariance3dOp {
+  pub fn build_device_f32_op(axes: [isize; 3], epsilon: f32, x_: Val<GPUDeviceOuterBatchArray4d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>>
+  {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x_size = x_.get(txn).size();
+            // TODO: assuming NCHW layout.
+            let y = GPUDeviceArray1d::zeros(x_size.index_at(3), conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        let mean_ = mean_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: LVal<GPUDeviceArray1d<f32>>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            //thread_ctx()._debug_print();
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let mean = mean_.get(txn);
+            let mut var = output.get_mut(txn, token);
+            guard._wait(x.async_state());
+            guard._wait(mean.async_state());
+            guard._wait(var.async_state());
+            // FIXME: size checks.
+            let packed = x.is_packed() && mean.is_packed() && var.is_packed();
+            if packed {
+              let x = x.as_view();
+              let mean = mean.as_view();
+              let mut var = var.as_view_mut();
+              // TODO: assuming NCHW layout.
+              assert_eq!([0, 1, 2], axes);
+              match cap {
+                WriteCap::Assign => {
+                  let x = x.wait(conn.clone());
+                  let mean = mean.wait(conn.clone());
+                  let mut var = var.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_var_3d1_packed_f32(
+                      sz2uint(x.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(x.inner().size().index_at(3)),
+                      sz2uint(x.inner().size().index_at(4)),
+                      epsilon,
+                      x.as_dptr(),
+                      mean.as_dptr(),
+                      var.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  unimplemented!();
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        let x_ = x_.clone();
+        let mean_ = mean_.clone();
+        Box::new(move |_: Pass, var_: Val<GPUDeviceArray1d<f32>>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_var_) = var_.adjoint(sink) {
+            let adj_x_ = BatchVariance3dBwdOp::build_device_f32_op(axes, adj_var_.clone(), x_.clone(), mean_.clone());
+            let adj_mean_ = BatchVariance3dBwdMeanOp::build_device_f32_op(axes, adj_var_.clone(), x_.clone(), mean_.clone());
+            x_.put_adjoint(adj_x_, sink);
+            mean_.put_adjoint(adj_mean_, sink);
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F2Op::new(BatchVariance3dOp, ext, x_, mean_)))
+  }
+}
+
+impl BatchVariance3dBwdOp {
+  pub fn build_device_f32_op(axes: [isize; 3], dvar_: Val<GPUDeviceArray1d<f32>>, x_: Val<GPUDeviceOuterBatchArray4d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray4d<f32>>
+  {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            guard._wait(x.async_state());
+            let x_size = x.size();
+            let x_max_bsz = x.max_batch_size();
+            let y = GPUDeviceOuterBatchArray4d::zeros(x_size, x_max_bsz, conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let dvar_ = dvar_.clone();
+        let x_ = x_.clone();
+        let mean_ = mean_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: LVal<GPUDeviceOuterBatchArray4d<f32>>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            //thread_ctx()._debug_print();
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let dvar = dvar_.get(txn);
+            let x = x_.get(txn);
+            let mean = mean_.get(txn);
+            let mut dx = output.get_mut(txn, token);
+            guard._wait(dvar.async_state());
+            guard._wait(x.async_state());
+            guard._wait(mean.async_state());
+            guard._wait(dx.async_state());
+            // FIXME: size checks.
+            assert_eq!(mean.size(), dvar.size());
+            assert_eq!(x.size(), dx.size());
+            dx.set_batch_size(x.batch_size());
+            let packed = dvar.is_packed() && x.is_packed() && mean.is_packed();
+            if packed {
+              let dvar = dvar.as_view();
+              let x = x.as_view();
+              let mean = mean.as_view();
+              let mut dx = dx.as_view_mut();
+              // TODO: assuming NCHW layout.
+              assert_eq!([0, 1, 2], axes);
+              match cap {
+                WriteCap::Assign => {
+                  let dvar = dvar.wait(conn.clone());
+                  let x = x.wait(conn.clone());
+                  let mean = mean.wait(conn.clone());
+                  let mut dx = dx.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_var_bwd_3d1_packed_f32(
+                      sz2uint(x.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(x.inner().size().index_at(3)),
+                      sz2uint(x.inner().size().index_at(4)),
+                      dvar.as_dptr(),
+                      x.as_dptr(),
+                      mean.as_dptr(),
+                      dx.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  let dvar = dvar.wait(conn.clone());
+                  let x = x.wait(conn.clone());
+                  let mean = mean.wait(conn.clone());
+                  let mut dx = dx.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_var_bwd_3d1_packed_accumulate_f32(
+                      sz2uint(x.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(x.inner().size().index_at(3)),
+                      sz2uint(x.inner().size().index_at(4)),
+                      dvar.as_dptr(),
+                      x.as_dptr(),
+                      mean.as_dptr(),
+                      dx.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, y_: Val<_>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // TODO
+            unimplemented!();
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F3Op::new(BatchVariance3dBwdOp, ext, dvar_, x_, mean_)))
+  }
+}
+
+impl BatchVariance3dBwdMeanOp {
+  pub fn build_device_f32_op(axes: [isize; 3], dvar_: Val<GPUDeviceArray1d<f32>>, x_: Val<GPUDeviceOuterBatchArray4d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>>
+  {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x_size = x_.get(txn).size();
+            // TODO: assuming NCHW layout.
+            let y = GPUDeviceArray1d::zeros(x_size.index_at(3), conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let dvar_ = dvar_.clone();
+        let x_ = x_.clone();
+        let mean_ = mean_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: LVal<GPUDeviceArray1d<f32>>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            //thread_ctx()._debug_print();
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let dvar = dvar_.get(txn);
+            let x = x_.get(txn);
+            let mean = mean_.get(txn);
+            let mut dmean = output.get_mut(txn, token);
+            guard._wait(dvar.async_state());
+            guard._wait(x.async_state());
+            guard._wait(mean.async_state());
+            guard._wait(dmean.async_state());
+            // FIXME: size checks.
+            assert_eq!(mean.size(), dvar.size());
+            assert_eq!(mean.size(), dmean.size());
+            let packed = dvar.is_packed() && x.is_packed() && mean.is_packed() && dmean.is_packed();
+            if packed {
+              let dvar = dvar.as_view();
+              let x = x.as_view();
+              let mean = mean.as_view();
+              let mut dmean = dmean.as_view_mut();
+              // TODO: assuming NCHW layout.
+              assert_eq!([0, 1, 2], axes);
+              match cap {
+                WriteCap::Assign => {
+                  let dvar = dvar.wait(conn.clone());
+                  let x = x.wait(conn.clone());
+                  let mean = mean.wait(conn.clone());
+                  let mut dmean = dmean.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_var_bwd_mean_3d1_packed_f32(
+                      sz2uint(x.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(x.inner().size().index_at(3)),
+                      sz2uint(x.inner().size().index_at(4)),
+                      dvar.as_dptr(),
+                      x.as_dptr(),
+                      mean.as_dptr(),
+                      dmean.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  let dvar = dvar.wait(conn.clone());
+                  let x = x.wait(conn.clone());
+                  let mean = mean.wait(conn.clone());
+                  let mut dmean = dmean.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_var_bwd_mean_3d1_packed_accumulate_f32(
+                      sz2uint(x.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(x.inner().size().index_at(3)),
+                      sz2uint(x.inner().size().index_at(4)),
+                      dvar.as_dptr(),
+                      x.as_dptr(),
+                      mean.as_dptr(),
+                      dmean.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, y_: Val<GPUDeviceArray1d<f32>>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // TODO
+            unimplemented!();
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F3Op::new(BatchVariance3dBwdMeanOp, ext, dvar_, x_, mean_)))
+  }
+}
+
+impl BatchNormalize3dOp {
+  pub fn build_device_f32_op(axes: [isize; 3], x_: Val<GPUDeviceOuterBatchArray4d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray4d<f32>>
+  {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x_size = x_.get(txn).size();
+            let x_max_batch_sz = x_.get(txn).max_batch_size();
+            let y = GPUDeviceOuterBatchArray4d::zeros(x_size, x_max_batch_sz, conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        let mean_ = mean_.clone();
+        let var_ = var_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: LVal<GPUDeviceOuterBatchArray4d<f32>>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            //thread_ctx()._debug_print();
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let mean = mean_.get(txn);
+            let var = var_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            guard._wait(x.async_state());
+            guard._wait(mean.async_state());
+            guard._wait(var.async_state());
+            guard._wait(y.async_state());
+            // FIXME: size checks.
+            assert_eq!(mean.size(), var.size());
+            assert_eq!(x.batch_size(), y.batch_size());
+            // Set batch size.
+            y.set_batch_size(x.batch_size());
+            let packed = x.is_packed() && mean.is_packed() && var.is_packed() && y.is_packed();
+            if packed {
+              let x = x.as_view();
+              let mean = mean.as_view();
+              let var = var.as_view();
+              let mut y = y.as_view_mut();
+              // TODO: assuming NCHW layout.
+              assert_eq!([0, 1, 2], axes);
+              match cap {
+                WriteCap::Assign => {
+                  let x = x.wait(conn.clone());
+                  let mean = mean.wait(conn.clone());
+                  let var = var.wait(conn.clone());
+                  let mut y = y.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_norm_3d1_packed_f32(
+                      sz2uint(x.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(x.inner().size().index_at(3)),
+                      sz2uint(x.inner().size().index_at(4)),
+                      x.as_dptr(),
+                      mean.as_dptr(),
+                      var.as_dptr(),
+                      y.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  // TODO
+                  unimplemented!();
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        let x_ = x_.clone();
+        let mean_ = mean_.clone();
+        let var_ = var_.clone();
+        Box::new(move |_: Pass, y_: Val<GPUDeviceOuterBatchArray4d<f32>>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            //println!("DEBUG: BatchNormalize3dOp: found adjoint for primal: {:?} => {:?}", y_._graph_key(), adj_y_._graph_key());
+            let adj_x_ = BatchNormalize3dBwdOp::build_device_f32_op(axes, adj_y_.clone(), var_.clone());
+            let adj_mean_ = BatchNormalize3dBwdMeanOp::build_device_f32_op(axes, adj_y_.clone(), var_.clone());
+            let adj_var_ = BatchNormalize3dBwdVarianceOp::build_device_f32_op(axes, adj_y_.clone(), x_.clone(), mean_.clone(), var_.clone());
+            x_.put_adjoint(adj_x_, sink);
+            mean_.put_adjoint(adj_mean_, sink);
+            var_.put_adjoint(adj_var_, sink);
+          //} else {
+            //println!("WARNING: BatchNormalize3dOp: missing adjoint for primal: {:?}", y_._graph_key());
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F3Op::new(BatchNormalize3dOp, ext, x_, mean_, var_)))
+  }
+}
+
+impl BatchNormalize3dBwdOp {
+  pub fn build_device_f32_op(axes: [isize; 3], dy_: Val<GPUDeviceOuterBatchArray4d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray4d<f32>>
+  {
+    let ext = OpExt{
+      make_val: {
+        let dy_ = dy_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let dy_ = dy_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let dy = dy_.get(txn);
+            guard._wait(dy.async_state());
+            let x_size = dy.size();
+            let x_max_bsz = dy.max_batch_size();
+            let y = GPUDeviceOuterBatchArray4d::zeros(x_size, x_max_bsz, conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let dy_ = dy_.clone();
+        let var_ = var_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: LVal<GPUDeviceOuterBatchArray4d<f32>>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            //thread_ctx()._debug_print();
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let dy = dy_.get(txn);
+            let var = var_.get(txn);
+            let mut dx = output.get_mut(txn, token);
+            guard._wait(dy.async_state());
+            guard._wait(var.async_state());
+            guard._wait(dx.async_state());
+            // FIXME: size checks.
+            assert_eq!(dx.size(), dy.size());
+            // Set batch size.
+            dx.set_batch_size(dy.batch_size());
+            let packed = dy.is_packed() && var.is_packed() && dx.is_packed();
+            if packed {
+              let dy = dy.as_view();
+              let var = var.as_view();
+              let mut dx = dx.as_view_mut();
+              // TODO: assuming NCHW layout.
+              assert_eq!([0, 1, 2], axes);
+              match cap {
+                WriteCap::Assign => {
+                  let dy = dy.wait(conn.clone());
+                  let var = var.wait(conn.clone());
+                  let mut dx = dx.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_norm_bwd_3d1_packed_f32(
+                      sz2uint(dy.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(dy.inner().size().index_at(3)),
+                      sz2uint(dy.inner().size().index_at(4)),
+                      dy.as_dptr(),
+                      var.as_dptr(),
+                      dx.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  let dy = dy.wait(conn.clone());
+                  let var = var.wait(conn.clone());
+                  let mut dx = dx.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_norm_bwd_3d1_packed_accumulate_f32(
+                      sz2uint(dy.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(dy.inner().size().index_at(3)),
+                      sz2uint(dy.inner().size().index_at(4)),
+                      dy.as_dptr(),
+                      var.as_dptr(),
+                      dx.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, y_: Val<_>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // TODO
+            unimplemented!();
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F2Op::new(BatchNormalize3dBwdOp, ext, dy_, var_)))
+  }
+}
+
+impl BatchNormalize3dBwdMeanOp {
+  pub fn build_device_f32_op(axes: [isize; 3], dy_: Val<GPUDeviceOuterBatchArray4d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>>
+  {
+    let ext = OpExt{
+      make_val: {
+        let dy_ = dy_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let dy_ = dy_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let dy = dy_.get(txn);
+            guard._wait(dy.async_state());
+            let x_size = dy.size();
+            // TODO: assuming NCHW layout.
+            let y = GPUDeviceArray1d::zeros(x_size.index_at(3), conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let dy_ = dy_.clone();
+        let var_ = var_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: LVal<GPUDeviceArray1d<f32>>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            //thread_ctx()._debug_print();
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let dy = dy_.get(txn);
+            let var = var_.get(txn);
+            let mut dmean = output.get_mut(txn, token);
+            guard._wait(dy.async_state());
+            guard._wait(var.async_state());
+            guard._wait(dmean.async_state());
+            // FIXME: size checks.
+            assert_eq!(var.size(), dmean.size());
+            let packed = dy.is_packed() && var.is_packed() && dmean.is_packed();
+            if packed {
+              let dy = dy.as_view();
+              let var = var.as_view();
+              let mut dmean = dmean.as_view_mut();
+              // TODO: assuming NCHW layout.
+              assert_eq!([0, 1, 2], axes);
+              match cap {
+                WriteCap::Assign => {
+                  let dy = dy.wait(conn.clone());
+                  let var = var.wait(conn.clone());
+                  let mut dmean = dmean.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_norm_bwd_mean_3d1_packed_f32(
+                      sz2uint(dy.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(dy.inner().size().index_at(3)),
+                      sz2uint(dy.inner().size().index_at(4)),
+                      dy.as_dptr(),
+                      var.as_dptr(),
+                      dmean.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  let dy = dy.wait(conn.clone());
+                  let var = var.wait(conn.clone());
+                  let mut dmean = dmean.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_norm_bwd_mean_3d1_packed_accumulate_f32(
+                      sz2uint(dy.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(dy.inner().size().index_at(3)),
+                      sz2uint(dy.inner().size().index_at(4)),
+                      dy.as_dptr(),
+                      var.as_dptr(),
+                      dmean.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, y_: Val<GPUDeviceArray1d<f32>>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // TODO
+            unimplemented!();
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F2Op::new(BatchNormalize3dBwdMeanOp, ext, dy_, var_)))
+  }
+}
+
+impl BatchNormalize3dBwdVarianceOp {
+  pub fn build_device_f32_op(axes: [isize; 3], dy_: Val<GPUDeviceOuterBatchArray4d<f32>>, x_: Val<GPUDeviceOuterBatchArray4d<f32>>, mean_: Val<GPUDeviceArray1d<f32>>, var_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceArray1d<f32>>
+  {
+    let ext = OpExt{
+      make_val: {
+        let dy_ = dy_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let dy_ = dy_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let dy = dy_.get(txn);
+            guard._wait(dy.async_state());
+            let x_size = dy.size();
+            // TODO: assuming NCHW layout.
+            let y = GPUDeviceArray1d::zeros(x_size.index_at(3), conn);
+            guard._wait(y.async_state());
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let dy_ = dy_.clone();
+        let x_ = x_.clone();
+        let mean_ = mean_.clone();
+        let var_ = var_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: LVal<GPUDeviceArray1d<f32>>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            //thread_ctx()._debug_print();
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let dy = dy_.get(txn);
+            let x = x_.get(txn);
+            let mean = mean_.get(txn);
+            let var = var_.get(txn);
+            let mut dvar = output.get_mut(txn, token);
+            guard._wait(dy.async_state());
+            guard._wait(x.async_state());
+            guard._wait(mean.async_state());
+            guard._wait(var.async_state());
+            guard._wait(dvar.async_state());
+            // FIXME: size checks.
+            assert_eq!(mean.size(), var.size());
+            assert_eq!(mean.size(), dvar.size());
+            assert_eq!(x.size(), dy.size());
+            assert_eq!(x.batch_size(), dy.batch_size());
+            let packed = dy.is_packed() && x.is_packed() && mean.is_packed() && var.is_packed() && dvar.is_packed();
+            if packed {
+              let dy = dy.as_view();
+              let x = x.as_view();
+              let mean = mean.as_view();
+              let var = var.as_view();
+              let mut dvar = dvar.as_view_mut();
+              // TODO: assuming NCHW layout.
+              assert_eq!([0, 1, 2], axes);
+              match cap {
+                WriteCap::Assign => {
+                  let dy = dy.wait(conn.clone());
+                  let x = x.wait(conn.clone());
+                  let mean = mean.wait(conn.clone());
+                  let var = var.wait(conn.clone());
+                  let mut dvar = dvar.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_norm_bwd_var_3d1_packed_f32(
+                      sz2uint(dy.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(dy.inner().size().index_at(3)),
+                      sz2uint(dy.inner().size().index_at(4)),
+                      dy.as_dptr(),
+                      x.as_dptr(),
+                      mean.as_dptr(),
+                      var.as_dptr(),
+                      dvar.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  let dy = dy.wait(conn.clone());
+                  let x = x.wait(conn.clone());
+                  let mean = mean.wait(conn.clone());
+                  let var = var.wait(conn.clone());
+                  let mut dvar = dvar.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_batch_norm_bwd_var_3d1_packed_accumulate_f32(
+                      sz2uint(dy.inner().size().index_cut(4).index_cut(3).flat_len()),
+                      sz2uint(dy.inner().size().index_at(3)),
+                      sz2uint(dy.inner().size().index_at(4)),
+                      dy.as_dptr(),
+                      x.as_dptr(),
+                      mean.as_dptr(),
+                      var.as_dptr(),
+                      dvar.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, y_: Val<GPUDeviceArray1d<f32>>, state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // TODO
+            unimplemented!();
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::from(Rc::new(F4Op::new(BatchNormalize3dBwdVarianceOp, ext, dy_, x_, mean_, var_)))
+  }
+}
+
 impl OnlineAddOpExt<f32, GPUDeviceScalar<f32>> for OnlineAddOp {
   fn build(scalar: Val<f32>, x_: Val<GPUDeviceScalar<f32>>, y_: Val<GPUDeviceScalar<f32>>) -> Val<GPUDeviceScalar<f32>> {
     let ext = OpExt{
