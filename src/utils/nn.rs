@@ -149,3 +149,35 @@ impl<R: Rng> KaimingConv3dInit<f32, R> for GPUDeviceArray5d<f32> {
     })
   }
 }
+
+pub trait KaimingTransposeConv3dInit<T, R: Rng> {
+  type RValue;
+
+  fn kaiming_transpose_conv3d_init(ker_sz: [usize; 3], src: usize, dst: usize, seed_rng: &mut R) -> Self::RValue;
+}
+
+impl<R: Rng> KaimingTransposeConv3dInit<f32, R> for GPUDeviceArray5d<f32> {
+  type RValue = Rc<Fn(Txn, GPUDeviceConn) -> Self>;
+
+  fn kaiming_transpose_conv3d_init(ker_sz: [usize; 3], src_ch: usize, dst_ch: usize, seed_rng: &mut R) -> Self::RValue {
+    //let seed = seed_rng.next_u64();
+    Rc::new(move |_, conn: GPUDeviceConn| {
+      let shape = [ker_sz[0], ker_sz[1], ker_sz[2], src_ch, dst_ch];
+      // TODO: seed the local rng here.
+      let mut h_arr = MemArray5d::<f32>::zeros(shape);
+      {
+        let mean = 0.0;
+        let std = (2.0 / (dst_ch) as f64).sqrt();
+        let dist = Normal::new(mean, std);
+        let mut v = h_arr.as_view_mut();
+        let xs = v.flat_slice_mut().unwrap();
+        for x in xs.iter_mut() {
+          *x = dist.sample(&mut thread_rng()) as f32;
+        }
+      }
+      let mut arr = GPUDeviceArray5d::<f32>::zeros(shape, conn.clone());
+      arr.as_view_mut().sync_copy_mem(h_arr.as_view(), conn.clone());
+      arr
+    })
+  }
+}
