@@ -1,1 +1,47 @@
-Cargo.toml.devel
+[package]
+name = "anode"
+version = "0.0.1"
+authors = ["Peter Jin <peterhaijin@gmail.com>"]
+
+[lib]
+name = "anode"
+path = "src/lib.rs"
+
+[features]
+default = []
+cuda9 = ["gpu", "f16", "cuda_blas/cuda9", "gpudevicemem/cuda9"]
+experimental = []
+f16 = ["float", "memarray/f16", "cuda_dnn/f16", "gpudevicemem/f16"]
+gpu = ["cuda", "cuda_blas", "cuda_coll", "cuda_dnn", "gpudevicemem"]
+mpi = ["mpich", "minidata/mpi"]
+
+[build-dependencies]
+bindgen = "*"
+cc = "*"
+walkdir = "*"
+
+[dev-dependencies]
+colorimage = { path = "../colorimage" }
+rngtape = { path = "../rngtape" }
+stb_image = { path = "../rust-stb-image" }
+time = "*"
+
+[dependencies]
+arrayidx = { path = "../arrayidx" }
+cuda = { path = "../libcuda", optional = true }
+cuda_blas = { path = "../cuda_blas", optional = true }
+cuda_coll = { path = "../cuda_coll", optional = true }
+cuda_dnn = { path = "../cuda_dnn", optional = true }
+float = { path = "../float", optional = true }
+gpudevicemem = { path = "../gpudevicemem", optional = true }
+memarray = { path = "../memarray", features = ["mkl"] }
+minidata = { path = "../minidata", optional = true }
+mpich = { path = "../libmpich", optional = true }
+sharedmem = { path = "../sharedmem" }
+lazy_static = "*"
+num-traits = "*"
+parking_lot = { version = "^0.5", features = ["nightly"] }
+rand = "^0.5"
+#dot = "*"
+#rng = { path = "../rng" }
+#typemap = "*"
