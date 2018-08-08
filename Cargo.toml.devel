@@ -1,0 +1,62 @@
+[package]
+name = "anode"
+version = "0.0.1"
+authors = ["Peter Jin <peterhaijin@gmail.com>"]
+
+[lib]
+name = "anode"
+path = "src/lib.rs"
+
+[features]
+default = []
+cuda9 = ["gpu", "cuda_blas/cuda9", "gpudevicemem/cuda9"]
+experimental = []
+gpu = ["cuda", "cuda_blas", "cuda_coll", "cuda_dnn", "gpudevicemem"]
+mpi = ["mpich", "minidata/mpi"]
+
+[build-dependencies]
+bindgen = "*"
+cc = "*"
+walkdir = "*"
+
+[dev-dependencies]
+colorimage = { git = "https://github.com/peterhj/colorimage" }
+rngtape = { git = "https://github.com/peterhj/rngtape" }
+stb_image = { git = "https://github.com/peterhj/rust-stb-image", branch = "peterhj-resize" }
+time = "*"
+
+[dependencies]
+arrayidx = { git = "https://github.com/peterhj/arrayidx" }
+cuda = { git = "https://github.com/peterhj/libcuda", optional = true }
+cuda_blas = { git = "https://github.com/peterhj/cuda_blas", optional = true }
+cuda_coll = { git = "https://github.com/peterhj/cuda_coll", optional = true }
+cuda_dnn = { git = "https://github.com/peterhj/cuda_dnn", optional = true }
+#dot = "*"
+float = { git = "https://github.com/peterhj/float" }
+gpudevicemem = { git = "https://github.com/peterhj/gpudevicemem", optional = true }
+lazy_static = "*"
+memarray = { git = "https://github.com/peterhj/memarray", features = ["mkl"] }
+minidata = { git = "https://github.com/peterhj/minidata", optional = true }
+mpich = { git = "https://github.com/peterhj/libmpich", optional = true }
+num-traits = "*"
+parking_lot = { version = "^0.5", features = ["nightly"] }
+rand = "^0.5"
+#rng = { path = "../rng" }
+sharedmem = { git = "https://github.com/peterhj/sharedmem" }
+#typemap = "*"
+
+[patch]
+"https://github.com/peterhj/colorimage" = { colorimage = { path = "../colorimage" } }
+"https://github.com/peterhj/rngtape" = { rngtape = { path = "../rngtape" } }
+"https://github.com/peterhj/rust-stb-image" = { stb_image = { path = "../rust-stb-image" } }
+"https://github.com/peterhj/arrayidx" = { arrayidx = { path = "../arrayidx" } }
+"https://github.com/peterhj/libcuda" = { cuda = { path = "../libcuda", optional = true } }
+"https://github.com/peterhj/cuda_blas" = { cuda_blas = { path = "../cuda_blas", optional = true } }
+"https://github.com/peterhj/cuda_coll" = { cuda_coll = { path = "../cuda_coll", optional = true } }
+"https://github.com/peterhj/cuda_dnn" = { cuda_dnn = { path = "../cuda_dnn", optional = true } }
+"https://github.com/peterhj/float" = { float = { path = "../float" } }
+"https://github.com/peterhj/gpudevicemem" = { gpudevicemem = { path = "../gpudevicemem", optional = true } }
+"https://github.com/peterhj/memarray" = { memarray = { path = "../memarray", features = ["mkl"] } }
+"https://github.com/peterhj/minidata" = { minidata = { path = "../minidata", optional = true } }
+"https://github.com/peterhj/libmpich" = { mpich = { path = "../libmpich", optional = true } }
+"https://github.com/peterhj/sharedmem" = { sharedmem = { path = "../sharedmem" } }

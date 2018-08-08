@@ -76,6 +76,7 @@ use std::sync::mpsc::{SyncSender, Receiver};
 pub mod analysis;
 pub mod config;
 pub mod context;
+#[cfg(feature = "experimental")] pub mod experimental;
 pub mod ffi;
 #[cfg(feature = "gpu")] pub mod io_gpu;
 pub mod log;
