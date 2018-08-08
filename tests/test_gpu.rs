@@ -548,8 +548,8 @@ fn test_gpu_op_switch_adj() {
 }
 
 #[test]
-#[should_panic]
-fn test_gpu_adj_fail() {
+//#[should_panic]
+fn test_gpu_adj_1d() {
   println!();
   let x = zeros(Rc::new(|_, conn: GPUDeviceConn| {
     GPUDeviceArray1d::<f32>::zeros(1024, conn)
@@ -808,6 +808,64 @@ fn test_gpu_gradient_descent() {
 }
 
 #[test]
+fn test_gpu_gradient_adam_step() {
+  println!();
+  enable_static_graph_logging();
+  enable_dynamic_graph_logging();
+
+  let step_size: Val<f32> = src_init(0.0);
+  //let momentum: Val<f32> = src_init(0.0);
+  let decay_rate_1: Val<f32> = src_init(0.0);
+  let decay_rate_2: Val<f32> = src_init(0.0);
+  let iter_ct: Val<i32> = src_init(0);
+  let epsilon: Val<f32> = src_init(0.0);
+
+  let x = src(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceArray1d::<f32>::zeros(1, conn)
+  }));
+  let y = x.clone() * x.clone();
+
+  let mut y_sink = sink(y.clone());
+  let adj_x = x.adjoint(&mut y_sink).unwrap();
+
+  let grad_step = x.clone().adam_step(step_size.clone(), decay_rate_1.clone(), decay_rate_2.clone(), iter_ct.clone(), epsilon.clone(), adj_x.clone());
+
+  let mut x_h: MemArray1d<f32> = MemArray::zeros(1);
+  x_h.as_view_mut().flat_slice_mut().unwrap()[0] = 1.0;
+  //let mut y_h: f32 = 0.0;
+  let mut adj_x_h: MemArray1d<f32> = MemArray::zeros(1);
+
+  for iter_nr in 0 .. 10 {
+    println!("DEBUG: iteration {}...", iter_nr);
+
+    let t = txn();
+    if iter_nr == 0 {
+      x.deserialize(t, &mut x_h);
+    } else {
+      x.persist(t);
+    }
+    y.eval(t);
+    adj_x.eval(t);
+
+    x.serialize(t, &mut x_h);
+    //y.serialize(t, &mut y_h);
+    adj_x.serialize(t, &mut adj_x_h);
+    println!("DEBUG:   x:  {:?}", x_h.as_view().flat_slice().unwrap()[0]);
+    //println!("DEBUG: y:  {:?}", y_h);
+    println!("DEBUG:   dx: {:?}", adj_x_h.as_view().flat_slice().unwrap()[0]);
+
+    let step_t = txn();
+    step_size.set(step_t, -0.05);
+    decay_rate_1.set(step_t, 0.1);
+    decay_rate_2.set(step_t, 0.001);
+    iter_ct.set(step_t, (iter_nr + 1) as i32);
+    epsilon.set(step_t, 1.0e-8);
+    adj_x.persist(step_t);
+    grad_step.eval(step_t);
+  }
+}
+
+#[test]
 fn test_gpu_op_io_vectorize() {
   println!();
   let x1 = ones(Rc::new(|_, conn: GPUDeviceConn| {
@@ -857,5 +915,95 @@ fn test_gpu_op_io_devectorize() {
   for k in 0 .. 1024 {
     assert_eq!(x1_h.as_view().flat_slice().unwrap()[k], 1.0);
     assert_eq!(x2_h.as_view().flat_slice().unwrap()[k], 1.0);
+  }
+}
+
+#[test]
+fn test_gpu_op_conv3d() {
+  println!();
+  let x = ones(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceOuterBatchArray4d::<f32>::zeros([6, 7, 8, 9], 1, conn)
+  }));
+  let w = src(GPUDeviceArray5d::<f32>::ones_init([3, 3, 3, 9, 5]));
+  let mut conv1 = Conv3dShape::default_ncdhw();
+  conv1.src_dims = [6, 7, 8];
+  conv1.src_features = 9;
+  conv1.ker_dims = [3, 3, 3];
+  conv1.features = 5;
+  conv1.stride = [1, 1, 1];
+  conv1.zero_pad = [0, 0, 0];
+  let y = w.clone().conv(conv1, x.clone());
+  let mut y_h = MemArray5d::<f32>::zeros([4, 5, 6, 5, 1]);
+  let y_len = 4 * 5 * 6 * 5 * 1;
+
+  let t = txn();
+  w.persist(t);
+  y.eval(t);
+  y.serialize(t, &mut y_h);
+  println!("DEBUG: y: {:?}", &y_h.as_view().flat_slice().unwrap()[ .. 10]);
+  println!("DEBUG: y: {:?}", &y_h.as_view().flat_slice().unwrap()[y_len - 10 .. ]);
+  for k in 0 .. y_len {
+    assert_eq!(y_h.as_view().flat_slice().unwrap()[k], 243.0);
+  }
+}
+
+#[test]
+fn test_gpu_op_conv3d_big() {
+  println!();
+  let x = ones(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceOuterBatchArray4d::<f32>::zeros([100, 100, 100, 9], 1, conn)
+  }));
+  let w = src(GPUDeviceArray5d::<f32>::ones_init([1, 1, 1, 9, 5]));
+  let mut conv1 = Conv3dShape::default_ncdhw();
+  conv1.src_dims = [100, 100, 100];
+  conv1.src_features = 9;
+  conv1.ker_dims = [1, 1, 1];
+  conv1.features = 5;
+  conv1.stride = [1, 1, 1];
+  conv1.zero_pad = [0, 0, 0];
+  let y = w.clone().conv(conv1, x.clone());
+  let scale = src_init(0.0_f32);
+  let y = y * scale.clone();
+  let mut y_h = MemArray5d::<f32>::zeros([100, 100, 100, 5, 1]);
+  let y_len = 100 * 100 * 100 * 5 * 1;
+
+  let t = txn();
+  w.persist(t);
+  scale.set(t, 1.0e-6);
+  y.eval(t);
+  y.serialize(t, &mut y_h);
+  println!("DEBUG: y: {:?}", &y_h.as_view().flat_slice().unwrap()[ .. 10]);
+  println!("DEBUG: y: {:?}", &y_h.as_view().flat_slice().unwrap()[y_len - 10 .. ]);
+  for k in 0 .. y_len {
+    assert_eq!(y_h.as_view().flat_slice().unwrap()[k], 9.0 * 1.0e-6);
+  }
+}
+
+#[test]
+fn test_gpu_op_transpose_conv3d() {
+  println!();
+  let x = ones(Rc::new(|_, conn: GPUDeviceConn| {
+    GPUDeviceOuterBatchArray4d::<f32>::zeros([3, 4, 5, 9], 1, conn)
+  }));
+  let w = src(GPUDeviceArray5d::<f32>::ones_init([2, 2, 2, 9, 5]));
+  let mut conv1 = Conv3dShape::default_ncdhw();
+  conv1.src_dims = [6, 8, 10];
+  conv1.src_features = 5;
+  conv1.ker_dims = [2, 2, 2];
+  conv1.features = 9;
+  conv1.stride = [2, 2, 2];
+  conv1.zero_pad = [0, 0, 0];
+  let y = w.clone().left_transpose_conv(conv1, x.clone());
+  let mut y_h = MemArray5d::<f32>::zeros([6, 8, 10, 5, 1]);
+  let y_len = 6 * 8 * 10 * 5 * 1;
+
+  let t = txn();
+  w.persist(t);
+  y.eval(t);
+  y.serialize(t, &mut y_h);
+  println!("DEBUG: y: {:?}", &y_h.as_view().flat_slice().unwrap()[ .. 10]);
+  println!("DEBUG: y: {:?}", &y_h.as_view().flat_slice().unwrap()[y_len - 10 .. ]);
+  for k in 0 .. y_len {
+    assert_eq!(y_h.as_view().flat_slice().unwrap()[k], 9.0);
   }
 }

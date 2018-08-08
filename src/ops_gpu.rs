@@ -2022,6 +2022,30 @@ where T: Zero + One + Copy + 'static,
   }
 }
 
+impl<T> OnesSrcOpMaybeExt<GPUDeviceArray1d<T>> for OnesSrcOp
+where T: ZeroBits + Zero + One + Copy + 'static,
+      OnesSrcOp: OnesSrcOpLikeExt<GPUDeviceArray1d<T>>,
+{
+  fn maybe_build_like(x_: Val<GPUDeviceArray1d<T>>) -> Option<Val<GPUDeviceArray1d<T>>> {
+    Some(<Self as OnesSrcOpLikeExt<GPUDeviceArray1d<T>>>::build_like(x_))
+  }
+}
+
+impl<T> OnesSrcOpLikeExt<GPUDeviceArray1d<T>> for OnesSrcOp
+where T: ZeroBits + Zero + One + Copy + 'static,
+      OnesSrcOp: OnesSrcOpExt<GPUDeviceArray1d<T>, Rc<Fn(Txn, GPUDeviceConn) -> GPUDeviceArray1d<T>>>,
+{
+  fn build_like(x_: Val<GPUDeviceArray1d<T>>) -> Val<GPUDeviceArray1d<T>> {
+    <OnesSrcOp as OnesSrcOpExt<GPUDeviceArray1d<T>, _>>::build(
+        Rc::new(move |txn, conn| {
+          let x = x_.get(txn);
+          let y = GPUDeviceArray1d::zeros(x.size(), conn);
+          y
+        })
+    )
+  }
+}
+
 impl<T, F> OnesSrcOpExt<GPUDeviceArray1d<T>, Rc<F>> for OnesSrcOp
 where T: Zero + One + Copy + 'static,
       F: (Fn(Txn, GPUDeviceConn) -> GPUDeviceArray1d<T>) + 'static,
