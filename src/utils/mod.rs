@@ -74,6 +74,12 @@ pub trait ZerosInit<Shape> {
   fn zeros_init(shape: Shape) -> Self::RValue;
 }
 
+pub trait OnesInit<Shape> {
+  type RValue;
+
+  fn ones_init(shape: Shape) -> Self::RValue;
+}
+
 impl ZerosInit<usize> for MemArray1d<f32> {
   type RValue = Rc<Fn() -> Self>;
 
@@ -140,6 +146,40 @@ impl ZerosInit<[usize; 4]> for GPUDeviceArray4d<f32> {
   fn zeros_init(shape: [usize; 4]) -> Self::RValue {
     Rc::new(move |_, conn: GPUDeviceConn| {
       GPUDeviceArray4d::<f32>::zeros(shape, conn.clone())
+    })
+  }
+}
+
+impl OnesInit<[usize; 4]> for GPUDeviceArray4d<f32> {
+  type RValue = Rc<Fn(Txn, GPUDeviceConn) -> Self>;
+
+  fn ones_init(shape: [usize; 4]) -> Self::RValue {
+    Rc::new(move |_, conn: GPUDeviceConn| {
+      let mut x = GPUDeviceArray4d::<f32>::zeros(shape, conn.clone());
+      x.as_view_mut().set_constant(1.0, conn.clone());
+      x
+    })
+  }
+}
+
+impl ZerosInit<[usize; 5]> for GPUDeviceArray5d<f32> {
+  type RValue = Rc<Fn(Txn, GPUDeviceConn) -> Self>;
+
+  fn zeros_init(shape: [usize; 5]) -> Self::RValue {
+    Rc::new(move |_, conn: GPUDeviceConn| {
+      GPUDeviceArray5d::<f32>::zeros(shape, conn.clone())
+    })
+  }
+}
+
+impl OnesInit<[usize; 5]> for GPUDeviceArray5d<f32> {
+  type RValue = Rc<Fn(Txn, GPUDeviceConn) -> Self>;
+
+  fn ones_init(shape: [usize; 5]) -> Self::RValue {
+    Rc::new(move |_, conn: GPUDeviceConn| {
+      let mut x = GPUDeviceArray5d::<f32>::zeros(shape, conn.clone());
+      x.as_view_mut().set_constant(1.0, conn.clone());
+      x
     })
   }
 }

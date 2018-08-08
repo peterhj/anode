@@ -5849,6 +5849,14 @@ impl Mul<Val<f32>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
   }
 }
 
+impl Mul<Val<f32>> for Val<GPUDeviceOuterBatchArray4d<f32>> {
+  type Output = Val<GPUDeviceOuterBatchArray4d<f32>>;
+
+  fn mul(self, rhs_: Val<f32>) -> Val<GPUDeviceOuterBatchArray4d<f32>> {
+    FlatBroadcastMultiplyOp::build_device_f32_op(self, rhs_)
+  }
+}
+
 impl Div<Val<f32>> for Val<GPUDeviceArray1d<f32>> {
   type Output = Val<GPUDeviceArray1d<f32>>;
 
