@@ -134,7 +134,8 @@ __global__ void anode_gpu_batch_var_3d1_packed_deterministic_kernel_f32(
   extern __shared__ float cache[];
   uint32_t fused_inner_outer_dim = reduce_inner_dim * reduce_outer_dim;
   uint32_t rdup_fused_inner_outer_dim = (fused_inner_outer_dim + blockDim.x - 1) / blockDim.x * blockDim.x;
-  float norm2 = ((float)reduce_inner_dim - 1.0f) * ((float)reduce_outer_dim - 1.0f);
+  //float norm2 = ((float)reduce_inner_dim - 1.0f) * ((float)reduce_outer_dim - 1.0f);
+  float norm2 = ((float)reduce_inner_dim) * ((float)reduce_outer_dim);
   for (uint32_t blk1 = gblock(); blk1 < mid_dim; blk1 += gblockcount()) {
     float accumulator = 0.0f;
     float m = mean[blk1];
@@ -188,7 +189,8 @@ __global__ void anode_gpu_batch_var_bwd_3d1_packed_kernel_f32(
     const float *mean,
     float *dx)
 {
-  float norm2 = ((float)dim0 - 1.0f) * ((float)dim2 - 1.0f);
+  //float norm2 = ((float)dim0 - 1.0f) * ((float)dim2 - 1.0f);
+  float norm2 = ((float)dim0) * ((float)dim2);
   for (uint32_t idx = gtindex(); idx < len; idx += gtcount()) {
     uint32_t i0, i1, i2;
     Index3::Unpack(
@@ -248,7 +250,8 @@ __global__ void anode_gpu_batch_var_bwd_mean_3d1_packed_deterministic_kernel_f32
   extern __shared__ float cache[];
   uint32_t fused_inner_outer_dim = reduce_inner_dim * reduce_outer_dim;
   uint32_t rdup_fused_inner_outer_dim = (fused_inner_outer_dim + blockDim.x - 1) / blockDim.x * blockDim.x;
-  float norm2 = ((float)reduce_inner_dim - 1.0f) * ((float)reduce_outer_dim - 1.0f);
+  //float norm2 = ((float)reduce_inner_dim - 1.0f) * ((float)reduce_outer_dim - 1.0f);
+  float norm2 = ((float)reduce_inner_dim) * ((float)reduce_outer_dim);
   for (uint32_t blk1 = gblock(); blk1 < mid_dim; blk1 += gblockcount()) {
     float accumulator = 0.0f;
     float m = mean[blk1];
