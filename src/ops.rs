@@ -35,6 +35,7 @@ pub struct DeserializeOp;
 pub struct CastOp;
 pub struct UpcastOp;
 pub struct DequantizeOp<T> { pub lo: T, pub hi: T }
+pub struct OneHotOp;
 
 pub struct SwitchOp;
 
@@ -601,6 +602,10 @@ impl<T, V, W> DequantizeExt<T, V, W> for Val<V> where DequantizeOp<T>: Dequantiz
   fn dequantize(self, lo: T, hi: T) -> Val<W> {
     <DequantizeOp<T> as DequantizeOpExt<T, V, W>>::build(lo, hi, self)
   }
+}
+
+pub trait OneHotExt<Data, V> {
+  fn one_hot(self, num_categories: usize, axis: isize) -> Val<V>;
 }
 
 pub trait SwitchOpExt<V> {

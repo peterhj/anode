@@ -257,6 +257,17 @@ void anode_gpu_upcast_u8_packed_u32(
     const struct KernelConfig *cfg,
     struct CUstream_st *stream);
 
+// "discrete.cu"
+
+void anode_gpu_discrete_one_hot_3d1_packed_f32(
+    uint32_t dim0,
+    uint32_t cat_dim1,
+    uint32_t dim2,
+    const uint32_t *x,
+    float *y,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+
 // "flat_join.cu"
 void anode_gpu_M1_copy_map_M2_unit_step_map_R_product_reduce_flat_join_f32(
     uint32_t len,

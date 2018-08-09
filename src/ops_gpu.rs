@@ -873,6 +873,99 @@ impl DequantizeOp<f32> {
   }
 }
 
+impl OneHotExt<GPUDeviceOuterBatchArray3d<u32>, GPUDeviceOuterBatchArray4d<f32>> for Val<GPUDeviceOuterBatchArray3d<u32>> {
+  fn one_hot(self, num_categories: usize, axis: isize) -> Val<GPUDeviceOuterBatchArray4d<f32>> {
+    OneHotOp::build_device_obatch_3d_to_4d_op(num_categories, axis, self)
+  }
+}
+
+impl OneHotOp {
+  fn build_device_obatch_3d_to_4d_op(num_cats: usize, axis: isize, data_: Val<GPUDeviceOuterBatchArray3d<u32>>) -> Val<GPUDeviceOuterBatchArray4d<f32>> {
+    let ext = OpExt{
+      make_val: {
+        let data_ = data_.clone();
+        //Box::new(move || {
+        Box::new(move |state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let data_ = data_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let data = data_.get(txn);
+            let y_size = match axis {
+              3 => data.size().index_append(num_cats),
+              _ => unimplemented!(),
+            };
+            let y = GPUDeviceOuterBatchArray4d::zeros(y_size, data.max_batch_size(), conn);
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let data_ = data_.clone();
+        Box::new(move |txn: Txn, state: RefMut<_>, output: LVal<_>| {
+          //if let Some((cap, token)) = output.write(txn) {
+          output.write(txn, |cap, token| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let data = data_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            let expected_y_size = match axis {
+              3 => data.size().index_append(num_cats),
+              _ => unimplemented!(),
+            };
+            assert_eq!(y.size(), expected_y_size);
+            y.set_batch_size(data.batch_size());
+            let packed = data.is_packed() && y.is_packed();
+            if packed {
+              let data = data.as_view();
+              let mut y = y.as_view_mut();
+              match axis {
+                3 => {
+                  match cap {
+                    WriteCap::Assign => {
+                      let data = data.wait(conn.clone());
+                      let mut y = y.wait_mut(conn.clone());
+                      let mut stream = conn.cuda_stream();
+                      unsafe { anode_gpu_discrete_one_hot_3d1_packed_f32(
+                          sz2uint(y.inner().size().index_cut(4).index_cut(3).flat_len()),
+                          sz2uint(y.inner().size().index_at(3)),
+                          sz2uint(y.inner().size().index_at(4)),
+                          data.as_dptr(),
+                          y.as_mut_dptr(),
+                          conn.cuda_kernel_config() as *const _,
+                          stream.as_mut_ptr(),
+                      ) };
+                    }
+                    WriteCap::Accumulate => {
+                      unimplemented!();
+                    }
+                  }
+                }
+                _ => unimplemented!(),
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: None,
+      inplace: None,
+    };
+    Val::from(Rc::new(F1Op::new(OneHotOp, ext, data_)))
+  }
+}
+
 impl<A> SrcOpExt<A, Rc<Fn(Txn, GPUDeviceConn) -> A>> for SrcOp
 where A: GPUDeviceAsync + 'static,
 {
