@@ -120,6 +120,8 @@ pub struct Softmax2dCategoricalNLLBwdOp;
 pub struct Softmax3dOp;
 pub struct Softmax3dCategoricalNLLOp;
 pub struct Softmax3dCategoricalNLLBwdOp;
+pub struct NegativeF1Loss3dOp;
+pub struct NegativeF1Loss3dBwdOp;
 pub struct LinearOp;
 pub struct AffineOp;
 pub struct LeftTransposeLinearOp;
@@ -1175,6 +1177,10 @@ pub trait SoftmaxNdExt<X> {
 
 pub trait SoftmaxNdCategoricalNLLExt<X, K, L> {
   fn softmax_nd_categorical_nll(self, feat_axis: isize, category_data_: Val<K>) -> (Val<L>, Val<X>);
+}
+
+pub trait NegativeF1LossExt<X, K, L> {
+  fn negative_f1_loss(self, num_categories: usize, feat_axis: isize, category_data_: Val<K>) -> Val<L>;
 }
 
 pub trait PowerExt<V, E> {

@@ -51,6 +51,7 @@ fn main() {
       .file("routines_gpu/batch_norm_external.cu")
       .file("routines_gpu/cast.cu")
       .file("routines_gpu/discrete.cu")
+      .file("routines_gpu/f1.cu")
       .file("routines_gpu/flat_join.cu")
       .file("routines_gpu/flat_map.cu")
       .file("routines_gpu/quantize.cu")
@@ -82,6 +83,9 @@ fn main() {
       .whitelist_function("anode_gpu_upcast_u8_packed_u32")
       // "discrete.cu"
       .whitelist_function("anode_gpu_discrete_one_hot_3d1_packed_f32")
+      // "f1.cu"
+      .whitelist_function("anode_gpu_smooth_negative_f1_loss_3d1_packed_f32")
+      .whitelist_function("anode_gpu_smooth_negative_f1_loss_3d1_bwd_packed_f32")
       // "flat_map.cu"
       .whitelist_function("anode_gpu_copy_flat_map_f32")
       .whitelist_function("anode_gpu_modulus_flat_map_f32")

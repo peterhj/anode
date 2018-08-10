@@ -268,6 +268,30 @@ void anode_gpu_discrete_one_hot_3d1_packed_f32(
     const struct KernelConfig *cfg,
     struct CUstream_st *stream);
 
+// "f1.cu"
+
+void anode_gpu_smooth_negative_f1_loss_3d1_packed_f32(
+    uint32_t dim0,
+    uint32_t cat_dim1,
+    uint32_t dim2,
+    float epsilon,
+    const float *x,
+    const float *target,
+    float *y,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+void anode_gpu_smooth_negative_f1_loss_3d1_bwd_packed_f32(
+    uint32_t dim0,
+    uint32_t cat_dim1,
+    uint32_t dim2,
+    float epsilon,
+    const float *dy,
+    const float *x,
+    const float *target,
+    float *dx,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+
 // "flat_join.cu"
 void anode_gpu_M1_copy_map_M2_unit_step_map_R_product_reduce_flat_join_f32(
     uint32_t len,
