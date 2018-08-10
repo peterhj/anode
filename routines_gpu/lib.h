@@ -302,6 +302,21 @@ void anode_gpu_M1_copy_map_M2_unit_step_map_R_product_reduce_flat_join_f32(
     struct CUstream_st *stream);
 
 // "flat_map.cu"
+void anode_gpu_leaky_relu_flat_map_f32(
+    uint32_t len,
+    float c,
+    const float *x,
+    float *y,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+void anode_gpu_leaky_relu_flat_map_bwd_f32(
+    uint32_t len,
+    float c,
+    const float *dy,
+    const float *y,
+    float *dx,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
 void anode_gpu_copy_flat_map_f32(
     uint32_t len,
     const float *x,

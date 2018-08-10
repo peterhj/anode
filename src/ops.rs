@@ -75,6 +75,8 @@ pub struct PositiveClipOp;
 pub struct PositiveClipBwdOp;
 pub struct PositiveClipClobberOp;
 pub struct PositiveClipBwdClobberOp;
+pub struct LeakyReluOp;
+pub struct LeakyReluBwdOp;
 pub struct ConstantAddOp;
 pub struct ConstantSubtractOp;
 pub struct ConstantLSubtractOp;
@@ -607,7 +609,7 @@ impl<T, V, W> DequantizeExt<T, V, W> for Val<V> where DequantizeOp<T>: Dequantiz
 }
 
 pub trait OneHotExt<Data, V> {
-  fn one_hot(self, num_categories: usize, axis: isize) -> Val<V>;
+  fn one_hot(self, axis: isize, num_categories: usize) -> Val<V>;
 }
 
 pub trait SwitchOpExt<V> {
@@ -1180,7 +1182,7 @@ pub trait SoftmaxNdCategoricalNLLExt<X, K, L> {
 }
 
 pub trait NegativeF1LossExt<X, K, L> {
-  fn negative_f1_loss(self, num_categories: usize, feat_axis: isize, category_data_: Val<K>) -> Val<L>;
+  fn negative_f1_loss(self, feat_axis: isize, num_categories: usize, epsilon: f32, category_data_: Val<K>) -> Val<L>;
 }
 
 pub trait PowerExt<V, E> {
@@ -1214,6 +1216,10 @@ pub trait PositiveClipInplaceExt<V> {
   fn relu_inplace(self) -> Val<V> where Self: Sized {
     self.positive_clip_inplace()
   }
+}
+
+pub trait LeakyReluExt<T, V> {
+  fn leaky_relu(self, neg_slope: T) -> Val<V>;
 }
 
 pub trait PositiveClipFlatMapExt<V> {

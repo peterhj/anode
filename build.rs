@@ -87,6 +87,8 @@ fn main() {
       .whitelist_function("anode_gpu_smooth_negative_f1_loss_3d1_packed_f32")
       .whitelist_function("anode_gpu_smooth_negative_f1_loss_3d1_bwd_packed_f32")
       // "flat_map.cu"
+      .whitelist_function("anode_gpu_leaky_relu_flat_map_f32")
+      .whitelist_function("anode_gpu_leaky_relu_flat_map_bwd_f32")
       .whitelist_function("anode_gpu_copy_flat_map_f32")
       .whitelist_function("anode_gpu_modulus_flat_map_f32")
       .whitelist_function("anode_gpu_square_flat_map_f32")
