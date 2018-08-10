@@ -7189,6 +7189,22 @@ impl Mul<Val<f32>> for Val<GPUDeviceArray1d<f32>> {
   }
 }
 
+impl Mul<Val<f32>> for Val<GPUDeviceOuterBatchArray1d<f32>> {
+  type Output = Val<GPUDeviceOuterBatchArray1d<f32>>;
+
+  fn mul(self, rhs_: Val<f32>) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
+    FlatBroadcastMultiplyOp::build_device_f32_op(self, rhs_)
+  }
+}
+
+impl Mul<Val<f32>> for Val<GPUDeviceOuterBatchArray2d<f32>> {
+  type Output = Val<GPUDeviceOuterBatchArray2d<f32>>;
+
+  fn mul(self, rhs_: Val<f32>) -> Val<GPUDeviceOuterBatchArray2d<f32>> {
+    FlatBroadcastMultiplyOp::build_device_f32_op(self, rhs_)
+  }
+}
+
 impl Mul<Val<f32>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
   type Output = Val<GPUDeviceOuterBatchArray3d<f32>>;
 
@@ -9235,8 +9251,14 @@ impl BroadcastLinearOp {
   }
 }
 
+impl Broadcast1dAffineExt<GPUDeviceArray1d<f32>, GPUDeviceOuterBatchArray4d<f32>, GPUDeviceOuterBatchArray4d<f32>, GPUDeviceArray1d<f32>> for Val<GPUDeviceArray1d<f32>> {
+  fn broadcast_1d_mult_add(self, axis: isize, x_: Val<GPUDeviceOuterBatchArray4d<f32>>, b_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray4d<f32>> {
+    BroadcastAffineOp::build_device_obatch_4d_1d_f32_op(axis, self, x_, b_)
+  }
+}
+
 impl BroadcastAffineOp {
-  pub fn build_device_obatch_3d_1d_op_f32(axis: isize, a_: Val<GPUDeviceArray1d<f32>>, x_: Val<GPUDeviceOuterBatchArray3d<f32>>, b_: Val<GPUDeviceArray1d<f32>>)
+  /*pub fn build_device_obatch_3d_1d_op_f32(axis: isize, a_: Val<GPUDeviceArray1d<f32>>, x_: Val<GPUDeviceOuterBatchArray3d<f32>>, b_: Val<GPUDeviceArray1d<f32>>)
       -> Val<GPUDeviceOuterBatchArray3d<f32>>
   // TODO: `ZeroBits` should not be necessary here.
   //where T: Zero + One + ZeroBits + Copy + 'static,
@@ -9244,11 +9266,35 @@ impl BroadcastAffineOp {
   {
     // TODO
     unimplemented!();
+  }*/
+
+  fn build_device_obatch_4d_1d_f32_op(axis: isize, a_: Val<GPUDeviceArray1d<f32>>, x_: Val<GPUDeviceOuterBatchArray4d<f32>>, b_: Val<GPUDeviceArray1d<f32>>) -> Val<GPUDeviceOuterBatchArray4d<f32>> {
+    // TODO
+    unimplemented!();
+  }
+}
+
+impl Broadcast1dOuterLinearExt<GPUDeviceArray1d<f32>, GPUDeviceOuterBatchArray4d<f32>, GPUDeviceOuterBatchArray4d<f32>> for Val<GPUDeviceOuterBatchArray4d<f32>> {
+  fn broadcast_1d_outer_mult(self, axis: isize, x_: Val<GPUDeviceOuterBatchArray4d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+    BroadcastOuterLinearOp::build_device_obatch_4d_1d_f32_op(axis, self, x_)
+  }
+}
+
+impl BroadcastOuterLinearOp {
+  fn build_device_obatch_4d_1d_f32_op(axis: isize, a_: Val<GPUDeviceOuterBatchArray4d<f32>>, x_: Val<GPUDeviceOuterBatchArray4d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+    // TODO
+    unimplemented!();
+  }
+}
+
+impl Reduce1dSumExt<GPUDeviceOuterBatchArray4d<f32>, GPUDeviceArray1d<f32>> for Val<GPUDeviceOuterBatchArray4d<f32>> {
+  fn reduce_1d_sum(self, axis: isize) -> Val<GPUDeviceArray1d<f32>> {
+    ReduceSumOp::build_device_obatch_4d_1d_f32_op(axis, self)
   }
 }
 
 impl ReduceSumOp {
-  pub fn build_device_obatch_3d_1d_op_f32(axis: isize, x_: Val<GPUDeviceOuterBatchArray3d<f32>>)
+  /*pub fn build_device_obatch_3d_1d_op_f32(axis: isize, x_: Val<GPUDeviceOuterBatchArray3d<f32>>)
       -> Val<GPUDeviceArray1d<f32>>
   // TODO: `ZeroBits` should not be necessary here.
   //where T: Zero + One + ZeroBits + Copy + 'static,
@@ -9256,10 +9302,15 @@ impl ReduceSumOp {
   {
     // TODO
     unimplemented!();
+  }*/
+
+  fn build_device_obatch_4d_1d_f32_op(axis: isize, x_: Val<GPUDeviceOuterBatchArray4d<f32>>) -> Val<GPUDeviceArray1d<f32>> {
+    // TODO
+    unimplemented!();
   }
 }
 
-impl LinearReduceSumOp {
+/*impl ReduceSumOp {
   pub fn build_device_obatch_3d_1d_op_f32(axis: isize, x1_: Val<GPUDeviceOuterBatchArray3d<f32>>, x2_: Val<GPUDeviceOuterBatchArray3d<f32>>)
       -> Val<GPUDeviceArray1d<f32>>
   // TODO: `ZeroBits` should not be necessary here.
@@ -9269,7 +9320,7 @@ impl LinearReduceSumOp {
     // TODO
     unimplemented!();
   }
-}
+}*/
 
 impl<T> LinearExt<GPUDeviceArray2d<T>, GPUDeviceArray1d<T>, GPUDeviceArray1d<T>> for Val<GPUDeviceArray2d<T>>
 where T: Zero + One + ZeroBits + Copy + 'static,

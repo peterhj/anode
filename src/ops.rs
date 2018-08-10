@@ -89,7 +89,7 @@ pub struct FlatBroadcastMultiplyOp;
 pub struct FlatBroadcastDivideOp;
 pub struct BroadcastLinearOp;
 pub struct BroadcastAffineOp;
-pub struct LinearReduceSumOp;
+pub struct BroadcastOuterLinearOp;
 pub struct BatchMean2dOp;
 pub struct BatchMean2dBwdOp;
 pub struct BatchVariance2dOp;
@@ -1270,13 +1270,17 @@ pub trait Broadcast1dAffineExt<A, X, Y, B> {
   fn broadcast_1d_mult_add(self, axis: isize, x_: Val<X>, b_: Val<B>) -> Val<Y>;
 }
 
-pub trait Reduce1dSumExt<X, Y> {
-  fn reduce_1d_sum(self, axis: isize, x_: Val<X>) -> Val<Y>;
+pub trait Broadcast1dOuterLinearExt<A, X, Y> {
+  fn broadcast_1d_outer_mult(self, axis: isize, x_: Val<X>) -> Val<A>;
 }
 
-pub trait MultReduce1dSumExt<X, Y> {
-  fn mult_reduce_1d_sum(self, axis: isize, x1_: Val<X>, x2_: Val<X>) -> Val<Y>;
+pub trait Reduce1dSumExt<X, A> {
+  fn reduce_1d_sum(self, axis: isize) -> Val<A>;
 }
+
+/*pub trait MultReduce1dSumExt<X, Y> {
+  fn mult_reduce_1d_sum(self, axis: isize, x1_: Val<X>, x2_: Val<X>) -> Val<Y>;
+}*/
 
 pub trait LinearExt<A, X, Y> {
   fn mult(self, x: Val<X>) -> Val<Y>;
