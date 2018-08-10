@@ -1610,12 +1610,12 @@ impl UnimplOp {
       make_val: {
         //Box::new(move || {
         Box::new(move |_state: RefMut<_>| {
-          unimplemented!("This is a purposefully unimplemented placeholder op.");
+          unimplemented!("This is a purposefully unimplemented placeholder op for type: {:?}", unsafe { type_name::<A>() });
         })
       },
       apply: {
         Box::new(move |_txn: Txn, _state: RefMut<_>, _output: LVal<_>| {
-          unimplemented!("This is a purposefully unimplemented placeholder op.");
+          unimplemented!("This is a purposefully unimplemented placeholder op for type: {:?}", unsafe { type_name::<A>() });
         })
       },
       build: None,
