@@ -27,7 +27,7 @@ use std::rc::{Rc};
 
 pub struct PassOp;
 pub struct FixOp;
-pub struct DuplicateOp;
+pub struct UnimplOp;
 
 pub struct SerializeOp;
 pub struct DeserializeOp;
@@ -1597,6 +1597,33 @@ impl<A: 'static> FixOpExt<A> for FixOp
     };
     let x_value = x_._static_value();
     Val::with_value(Rc::new(F1Op::new(FixOp, ext, x_)), x_value)
+  }
+}
+
+impl UnimplOp {
+  pub fn new<A: 'static>() -> Val<A> {
+    Self::build()
+  }
+
+  fn build<A: 'static>() -> Val<A> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          unimplemented!("This is a purposefully unimplemented placeholder op.");
+        })
+      },
+      apply: {
+        Box::new(move |_txn: Txn, _state: RefMut<_>, _output: LVal<_>| {
+          unimplemented!("This is a purposefully unimplemented placeholder op.");
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: None,
+      inplace: None,
+    };
+    Val::new(Rc::new(FSrcOp::new(FixOp, ext)))
   }
 }
 
