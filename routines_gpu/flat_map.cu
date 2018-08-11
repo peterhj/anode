@@ -194,6 +194,37 @@ public:
 };
 
 template <typename T>
+class LogisticFlatMap {
+public:
+  __forceinline__ __device__ static void FlatMapIndex(uint32_t idx, const T *x, T *y);
+};
+
+template <>
+class LogisticFlatMap<float> {
+public:
+  __forceinline__ __device__ static void FlatMapIndex(uint32_t idx, const float *x, float *y) {
+    float x_i = x[idx];
+    y[idx] = 1.0f / (1.0f + expf(-x_i));
+  }
+};
+
+template <typename T>
+class LogisticFlatMapBwd {
+public:
+  __forceinline__ __device__ static void FlatMapBwdIndex(uint32_t idx, const T *dy, const T *y, T *dx);
+};
+
+template <>
+class LogisticFlatMapBwd<float> {
+public:
+  __forceinline__ __device__ static void FlatMapBwdIndex(uint32_t idx, const float *dy, const float *y, float *dx) {
+    float dy_i = dy[idx];
+    float y_i = y[idx];
+    dx[idx] = dy_i * y_i * (1.0f - y_i);
+  }
+};
+
+template <typename T>
 class UnitStepFlatMap {
 public:
   __forceinline__ __device__ static void FlatMapIndex(uint32_t idx, const T *x, T *y);
@@ -378,6 +409,29 @@ extern "C" void anode_gpu_positive_clip_flat_map_bwd_f32(
     cudaStream_t stream)
 {
   anode_gpu_generic_flat_map_bwd_kernel<float, PositiveClipFlatMapBwd<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
+      len, dy, y, dx);
+}
+
+extern "C" void anode_gpu_logistic_flat_map_f32(
+    uint32_t len,
+    const float *x,
+    float *y,
+    const KernelConfig *cfg,
+    cudaStream_t stream)
+{
+  anode_gpu_generic_flat_map_kernel<float, LogisticFlatMap<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
+      len, x, y);
+}
+
+extern "C" void anode_gpu_logistic_flat_map_bwd_f32(
+    uint32_t len,
+    const float *dy,
+    const float *y,
+    float *dx,
+    const KernelConfig *cfg,
+    cudaStream_t stream)
+{
+  anode_gpu_generic_flat_map_bwd_kernel<float, LogisticFlatMapBwd<float>><<<cfg->flat_grid_dim(len), cfg->flat_block_dim(), 0, stream>>>(
       len, dy, y, dx);
 }
 

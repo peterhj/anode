@@ -78,6 +78,8 @@ pub struct PositiveClipClobberOp;
 pub struct PositiveClipBwdClobberOp;
 pub struct LeakyReluOp;
 pub struct LeakyReluBwdOp;
+pub struct LogisticOp;
+pub struct LogisticBwdOp;
 pub struct ConstantAddOp;
 pub struct ConstantSubtractOp;
 pub struct ConstantLSubtractOp;
@@ -1221,6 +1223,10 @@ pub trait PositiveClipInplaceExt<V> {
 
 pub trait LeakyReluExt<T, V> {
   fn leaky_relu(self, neg_slope: T) -> Val<V>;
+}
+
+pub trait LogisticExt<T, V> {
+  fn logistic(self) -> Val<V>;
 }
 
 pub trait PositiveClipFlatMapExt<V> {

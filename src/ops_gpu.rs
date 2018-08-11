@@ -8957,6 +8957,207 @@ impl LeakyReluBwdOp {
   }
 }
 
+impl LogisticExt<f32, GPUDeviceOuterBatchArray1d<f32>> for Val<GPUDeviceOuterBatchArray1d<f32>> {
+  fn logistic(self) -> Val<GPUDeviceOuterBatchArray1d<f32>> {
+    LogisticOp::build_device_f32_op(self)
+  }
+}
+
+impl LogisticExt<f32, GPUDeviceOuterBatchArray2d<f32>> for Val<GPUDeviceOuterBatchArray2d<f32>> {
+  fn logistic(self) -> Val<GPUDeviceOuterBatchArray2d<f32>> {
+    LogisticOp::build_device_f32_op(self)
+  }
+}
+
+impl LogisticExt<f32, GPUDeviceOuterBatchArray3d<f32>> for Val<GPUDeviceOuterBatchArray3d<f32>> {
+  fn logistic(self) -> Val<GPUDeviceOuterBatchArray3d<f32>> {
+    LogisticOp::build_device_f32_op(self)
+  }
+}
+
+impl LogisticExt<f32, GPUDeviceOuterBatchArray4d<f32>> for Val<GPUDeviceOuterBatchArray4d<f32>> {
+  fn logistic(self) -> Val<GPUDeviceOuterBatchArray4d<f32>> {
+    LogisticOp::build_device_f32_op(self)
+  }
+}
+
+impl LogisticOp {
+  pub fn build_device_f32_op<A>(x_: Val<A>) -> Val<A>
+  where A: GPUDeviceAsync
+            + GPUDeviceZerosShape<f32>
+            + Reshape
+            + DenseArray
+            + FlatView<FlatViewTy=GPUDeviceArrayView1d<f32>>
+            + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<f32>>
+            + 'static,
+  {
+    let ext = OpExt{
+      make_val: {
+        let x_ = x_.clone();
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let x_ = x_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let y = A::zeros_shape(x.shape(), conn);
+            y
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let x_ = x_.clone();
+        Box::new(move |txn: Txn, _state: RefMut<_>, output: LVal<_>| {
+          output.write(txn, |cap, token| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let x = x_.get(txn);
+            let mut y = output.get_mut(txn, token);
+            y.reshape(x.shape());
+            let packed = x.is_packed() && y.is_packed();
+            if packed {
+              let x = x.flat_view().unwrap();
+              let mut y = y.flat_view_mut().unwrap();
+              match cap {
+                WriteCap::Assign => {
+                  let x = x.wait(conn.clone());
+                  let mut y = y.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_logistic_flat_map_f32(
+                      sz2uint(x.inner().size()),
+                      x.as_dptr(),
+                      y.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  unimplemented!();
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        let x_ = x_.clone();
+        Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            let adj_x_ = LogisticBwdOp::build_device_f32_op(adj_y_, y_);
+            x_.put_adjoint(adj_x_, sink);
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::new(Rc::new(F1Op::new(LogisticOp, ext, x_)))
+  }
+}
+
+impl LogisticBwdOp {
+  pub fn build_device_f32_op<A>(adj_y_: Val<A>, y_: Val<A>) -> Val<A>
+  where A: GPUDeviceAsync
+            + GPUDeviceZerosShape<f32>
+            + Reshape
+            + DenseArray
+            + FlatView<FlatViewTy=GPUDeviceArrayView1d<f32>>
+            + FlatViewMut<FlatViewMutTy=GPUDeviceArrayViewMut1d<f32>>
+            + 'static,
+  {
+    let ext = OpExt{
+      make_val: {
+        let adj_y_ = adj_y_.clone();
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          let section = GPULazyAsyncSection::default();
+          let adj_y_ = adj_y_.clone();
+          RWVal::from(Arc::new(move |txn| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let adj_y = adj_y_.get(txn);
+            let adj_x = A::zeros_shape(adj_y.shape(), conn);
+            adj_x
+          }))
+        })
+      },
+      apply: {
+        let section = GPULazyAsyncSection::default();
+        let adj_y_ = adj_y_.clone();
+        let y_ = y_.clone();
+        Box::new(move |txn: Txn, _state: RefMut<_>, output: LVal<_>| {
+          output.write(txn, |cap, token| {
+            let ctx = thread_ctx().gpu();
+            let mut pool = ctx.pool();
+            let conn = pool.conn();
+            let mut section = section.clone();
+            let mut guard = section.push(conn.clone());
+            let adj_y = adj_y_.get(txn);
+            let y = y_.get(txn);
+            let mut adj_x = output.get_mut(txn, token);
+            assert_eq!(adj_y.shape(), y.shape());
+            adj_x.reshape(adj_y.shape());
+            let packed = adj_y.is_packed() && y.is_packed() && adj_x.is_packed();
+            if packed {
+              let adj_y = adj_y.flat_view().unwrap();
+              let y = y.flat_view().unwrap();
+              let mut adj_x = adj_x.flat_view_mut().unwrap();
+              match cap {
+                WriteCap::Assign => {
+                  let adj_y = adj_y.wait(conn.clone());
+                  let y = y.wait(conn.clone());
+                  let mut adj_x = adj_x.wait_mut(conn.clone());
+                  let mut stream = conn.cuda_stream();
+                  unsafe { anode_gpu_logistic_flat_map_bwd_f32(
+                      sz2uint(adj_y.inner().size()),
+                      adj_y.as_dptr(),
+                      y.as_dptr(),
+                      adj_x.as_mut_dptr(),
+                      conn.cuda_kernel_config() as *const _,
+                      stream.as_mut_ptr(),
+                  ) };
+                }
+                WriteCap::Accumulate => {
+                  unimplemented!();
+                }
+              }
+            } else {
+              unimplemented!();
+            }
+          })
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: Some({
+        Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
+          if let Some(adj_y_) = y_.adjoint(sink) {
+            // TODO
+            unimplemented!();
+          }
+        })
+      }),
+      inplace: None,
+    };
+    Val::new(Rc::new(F2Op::new(LogisticBwdOp, ext, adj_y_, y_)))
+  }
+}
+
 impl ConstantMultiplyOp {
   pub fn build_device_f32_op<A>(c: f32, x_: Val<A>) -> Val<A>
   where A:

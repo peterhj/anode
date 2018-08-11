@@ -354,6 +354,19 @@ void anode_gpu_positive_clip_flat_map_bwd_f32(
     float *dx,
     const struct KernelConfig *cfg,
     struct CUstream_st *stream);
+void anode_gpu_logistic_flat_map_f32(
+    uint32_t len,
+    const float *x,
+    float *y,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
+void anode_gpu_logistic_flat_map_bwd_f32(
+    uint32_t len,
+    const float *dy,
+    const float *y,
+    float *dx,
+    const struct KernelConfig *cfg,
+    struct CUstream_st *stream);
 void anode_gpu_unit_step_flat_map_f32(
     uint32_t len,
     const float *x,
