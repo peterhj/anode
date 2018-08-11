@@ -9096,7 +9096,7 @@ impl FlatBroadcastMultiplyOp {
             let adj_x_ = FlatBroadcastMultiplyOp::build_device_f32_op(adj_y_.clone(), scalar_.clone());
             x_.put_adjoint(adj_x_, sink);
             // FIXME: adjoint of `scalar_`.
-            //scalar_.put_adjoint(UnimplOp::new(), sink);
+            scalar_.put_adjoint(UnimplAdjointOp::new::<Self, _>(), sink);
           }
         })
       }),
@@ -9326,8 +9326,8 @@ impl FlatBroadcastDivideOp {
         Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
           if let Some(adj_y_) = y_.adjoint(sink) {
             // FIXME
-            //x_.put_adjoint(UnimplOp::new(), sink);
-            //rdivisor_.put_adjoint(UnimplOp::new(), sink);
+            x_.put_adjoint(UnimplAdjointOp::new::<Self, _>(), sink);
+            rdivisor_.put_adjoint(UnimplAdjointOp::new::<Self, _>(), sink);
           }
         })
       }),
@@ -9418,7 +9418,7 @@ impl FlatBroadcastDivideOp {
             let adj_x_ = adj_y_ / rdivisor_.clone();
             x_.put_adjoint(adj_x_, sink);
             // FIXME: no adjoint for rdivisor yet.
-            //rdivisor_.put_adjoint(UnimplOp::new(), sink);
+            rdivisor_.put_adjoint(UnimplAdjointOp::new::<Self, _>(), sink);
           }
         })
       }),
@@ -9504,7 +9504,7 @@ impl BroadcastLinearOp {
         Box::new(move |_: Pass, y_: Val<_>, _state: RefMut<_>, sink: &mut Sink| {
           if let Some(adj_y_) = y_.adjoint(sink) {
             // FIXME: no adjoint for `a` yet.
-            //a_.put_adjoint(UnimplOp::new(), sink);
+            a_.put_adjoint(UnimplAdjointOp::new::<Self, _>(), sink);
             let adj_x_ = BroadcastLinearOp::build_device_obatch_1d_1d_f32_op(axis, a_.clone(), adj_y_);
             x_.put_adjoint(adj_x_, sink);
           }

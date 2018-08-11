@@ -28,6 +28,7 @@ use std::rc::{Rc};
 pub struct PassOp;
 pub struct FixOp;
 pub struct UnimplOp;
+pub struct UnimplAdjointOp;
 
 pub struct SerializeOp;
 pub struct DeserializeOp;
@@ -1623,7 +1624,34 @@ impl UnimplOp {
       adjoint: None,
       inplace: None,
     };
-    Val::new(Rc::new(FSrcOp::new(FixOp, ext)))
+    Val::new(Rc::new(FSrcOp::new(UnimplOp, ext)))
+  }
+}
+
+impl UnimplAdjointOp {
+  pub fn new<Op, A: 'static>() -> Val<A> {
+    Self::build::<Op, A>()
+  }
+
+  fn build<Op, A: 'static>() -> Val<A> {
+    let ext = OpExt{
+      make_val: {
+        //Box::new(move || {
+        Box::new(move |_state: RefMut<_>| {
+          unimplemented!("This is a purposefully unimplemented adjoint for op: {:?} and type: {:?}", unsafe { type_name::<Op>() }, unsafe { type_name::<A>() });
+        })
+      },
+      apply: {
+        Box::new(move |_txn: Txn, _state: RefMut<_>, _output: LVal<_>| {
+          unimplemented!("This is a purposefully unimplemented adjoint for op: {:?} and type: {:?}", unsafe { type_name::<Op>() }, unsafe { type_name::<A>() });
+        })
+      },
+      build: None,
+      tangent: None,
+      adjoint: None,
+      inplace: None,
+    };
+    Val::new(Rc::new(FSrcOp::new(UnimplAdjointOp, ext)))
   }
 }
 
